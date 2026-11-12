@@ -1,0 +1,52 @@
+' SKIP_GO
+' EXPECT_OUT: status: Active
+' EXPECT_OUT: circle area: 78
+' EXPECT_OUT: rect area: 24
+' EXPECT_OUT: empty area: 0
+
+enum Status
+    Pending
+    Active
+    Closed
+end enum
+
+type RectData
+    width as int
+    height as int
+end type
+
+union Shape
+    Circle as int
+    Rect as RectData
+    Empty as bool
+end union
+
+fn calcArea(s as Shape) as int
+    select case s
+        case Circle as r
+            return 3 * r * r
+        case Rect as rect
+            return rect.width * rect.height
+        case else
+            return 0
+    end select
+end fn
+
+fn main() as int
+    dim st = Status.Active
+    select case st
+        case Status.Active
+            print("status: Active")
+        case else
+            print("status: Other")
+    end select
+
+    dim s1 = Shape.Circle(5)
+    dim s2 = Shape.Rect(RectData(4, 6))
+    dim s3 = Shape.Empty(true)
+
+    print("circle area: ", calcArea(s1))
+    print("rect area: ", calcArea(s2))
+    print("empty area: ", calcArea(s3))
+    return 0
+end fn

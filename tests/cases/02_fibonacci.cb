@@ -1,0 +1,49 @@
+' EXPECT_OUT: Iterative Fib(10) = 55
+' EXPECT_OUT: Recursive Fib(10) = 55
+' EXPECT_OUT: While sum = 15
+
+public fn fibIterative(n as int) as int
+    if n <= 0
+        return 0
+    else if n == 1
+        return 1
+    end if
+
+    dim a = 0
+    dim b = 1
+    dim nextVal = 0
+
+    for i = 2 to n
+        nextVal = a + b
+        a = b
+        b = nextVal
+    end for
+
+    return b
+end fn
+
+public fn fibRecursive(n as int) as int
+    if n <= 0
+        return 0
+    else if n == 1
+        return 1
+    end if
+
+    return fibRecursive(n - 1) + fibRecursive(n - 2)
+end fn
+
+fn main() as int
+    const target = 10
+    print("Iterative Fib(", target, ") = ", fibIterative(target))
+    print("Recursive Fib(", target, ") = ", fibRecursive(target))
+
+    dim count = 1
+    dim total = 0
+    while count <= 5
+        total = total + count
+        count = count + 1
+    end while
+    print("While sum = ", total)
+
+    return 0
+end fn

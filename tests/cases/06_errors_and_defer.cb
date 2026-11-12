@@ -1,0 +1,51 @@
+' SKIP_GO
+' EXPECT_OUT: defer cleanup: conn=1
+' EXPECT_OUT: caught expected error (code=408): IP cannot be empty
+' EXPECT_OUT: success: 100
+
+type Connection
+    id as int
+end type
+
+fn connect(ip as str) as Connection can error
+    if ip == ""
+        error("IP cannot be empty", code=408)
+    end if
+    return Connection(1)
+end fn
+
+fn closeConnection(conn as Connection)
+    print("defer cleanup: conn=", conn.id)
+end fn
+
+fn processNetwork(ip as str) as int can error
+    dim conn = connect(ip)
+    defer
+        closeConnection(conn)
+    end defer
+
+    if ip == "bad-route"
+        error("Routing failed", code=500)
+    end if
+
+    return 100
+end fn
+
+fn main() as int
+    try
+        dim v1 = processNetwork("")
+        print("unreachable: ", v1)
+    catch e
+        print($"caught expected error (code={e.code}): {e.msg}")
+    end try
+
+    try
+        dim v2 = processNetwork("192.168.1.1")
+        print("success: ", v2)
+    catch e
+        print("unexpected: ", e.msg)
+        return 1
+    end try
+
+    return 0
+end fn

@@ -1,0 +1,42 @@
+' SKIP_GO
+' EXPECT_OUT: containers: sum=160, loopTotal=6
+' EXPECT_OUT: interp: User=Alice, Score=100
+' EXPECT_OUT: prelude: alpha-beta:42
+
+type User
+    name as str
+    score as int
+end type
+
+fn mutateContainers(byref nums as list[int], byref d as dict[str, int])
+    nums[0] = 50
+    d["present"] = 100
+end fn
+
+fn main() as int
+    dim nums as list[int] = [1, 2]
+    dim d as dict[str, int] = {"present": 7}
+    mutateContainers(nums, d)
+
+    ' Out-of-bounds read nums[99] safely yields 0; d.get falls back to 10
+    dim sum = nums[0] + nums[99] + d["present"] + d.get("missing", 10)
+
+    dim loopTotal = 0
+    for x in [1, 2, 3]
+        loopTotal = loopTotal + x
+    end for
+    print($"containers: sum={sum}, loopTotal={loopTotal}")
+
+    dim u = User("Alice", 100)
+    print($"interp: User={u.name}, Score={u.score}")
+
+    dim raw = "  alpha,beta,42  "
+    dim trimmed = raw.trim()
+    dim parts = trimmed.split(",")
+    dim joined = str.join([parts[0], parts[1]], "-")
+    if trimmed.contains("beta")
+        print($"prelude: {joined}:{parts[2]}")
+    end if
+
+    return 0
+end fn

@@ -1,0 +1,28 @@
+' SKIP_GO
+' EXPECT_OUT: default:  | 0 | false
+' EXPECT_OUT: hero: Alice | 60 | true
+
+type Player
+    name as str
+    health as int
+    active as bool
+end type
+
+fn heal(byref p as Player, amount as int)
+    p.health = p.health + amount
+end fn
+
+fn summary(p as Player) as str
+    return p.name & " | " & p.health & " | " & p.active
+end fn
+
+fn main() as int
+    dim blank = Player()
+    print("default: " & blank.summary())
+
+    dim hero = Player("Alice", 10, true)
+    ' Same-module UFCS mutating via byref
+    hero.heal(50)
+    print("hero: " & hero.summary())
+    return 0
+end fn
