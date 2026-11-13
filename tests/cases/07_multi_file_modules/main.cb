@@ -1,0 +1,28 @@
+' EXPECT_OUT: Arya hp=100
+' EXPECT_OUT: hit=25 hp=75
+' EXPECT_OUT: Arya hp=90
+' EXPECT_OUT: hits=1
+
+import "entities/hero.cb"
+import "combat/actions.cb" as act
+
+fn main() as int
+    dim st = hero.Stats(hero.MAX_HP, 20)
+    dim p = hero.Hero("Arya", hero.Role.Warrior, st)
+    print(hero.describe(p))
+
+    dim res = act.strike(p, 25)
+    select case res
+        case act.Outcome.Hit as dmg
+            print("hit=" & dmg & " hp=" & p.stats.hp)
+        case act.Outcome.Blocked as reason
+            print("blocked=" & reason)
+    end select
+
+    hero.heal(p, 15)
+    print(hero.describe(p))
+
+    dim combatStats = act.Stats(1)
+    print(act.describe(combatStats))
+    return 0
+end fn

@@ -19,9 +19,60 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 	e := &emitter{
 		prog: prog,
 	}
-	bodyCode, err := e.emitProgram(prog.Main)
-	if err != nil {
-		return "", err
+	var bodyBuf strings.Builder
+	if len(prog.Modules) > 0 {
+		for _, mod := range prog.Modules {
+			if mod.IsStdlib || mod.Program == nil {
+				continue
+			}
+			e.currentMod = mod
+			modCode, err := e.emitProgram(mod.Program)
+			if err != nil {
+				return "", err
+			}
+			bodyBuf.WriteString(modCode)
+		}
+	} else {
+		modCode, err := e.emitProgram(prog.Main)
+		if err != nil {
+			return "", err
+		}
+		bodyBuf.WriteString(modCode)
+	}
+
+	if mainSym, ok := prog.Functions["main"]; ok {
+		if mainSym.ReturnType.Equals(sema.IntType) {
+			e.usedOs = true
+			bodyBuf.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\tos.Exit(int(code))\n\t}\n}\n")
+		} else {
+			bodyBuf.WriteString("func main() {\n\tcb_main()\n}\n")
+		}
+	}
+	bodyCode := bodyBuf.String()
+
+	if e.usedStdFs {
+		e.usedOs = true
+		e.usedCbError = true
+	}
+	if e.usedStdOs {
+		e.usedOs = true
+	}
+	if e.usedStdOsExec {
+		e.usedBytes = true
+		e.usedOsExec = true
+		e.usedCbError = true
+	}
+	if e.usedStdJson {
+		e.usedEncodingJson = true
+		e.usedFmt = true
+		e.usedStrconv = true
+		e.usedCbError = true
+	}
+	if e.usedStdCli {
+		e.usedFmt = true
+		e.usedOs = true
+		e.usedStrings = true
+		e.usedCbError = true
 	}
 
 	var helpers strings.Builder
@@ -42,12 +93,23 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 		helpers.WriteString("func cbStrToInt(s string) int64 {\n\tv, _ := strconv.ParseInt(s, 10, 64)\n\treturn v\n}\n\n")
 	}
 
+	e.emitStdlibHelpers(&helpers)
+
 	var imports []string
+	if e.usedBytes {
+		imports = append(imports, "bytes")
+	}
+	if e.usedEncodingJson {
+		imports = append(imports, "encoding/json")
+	}
 	if e.usedFmt {
 		imports = append(imports, "fmt")
 	}
 	if e.usedOs {
 		imports = append(imports, "os")
+	}
+	if e.usedOsExec {
+		imports = append(imports, "os/exec")
 	}
 	if e.usedStrconv {
 		imports = append(imports, "strconv")
@@ -74,8 +136,13 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 
 type emitter struct {
 	prog             *sema.TypedProgram
+	currentMod       *sema.ModuleInfo
+	currentFnSym     *sema.FnSymbol
+	usedBytes        bool
+	usedEncodingJson bool
 	usedFmt          bool
 	usedOs           bool
+	usedOsExec       bool
 	usedStrings      bool
 	usedStrconv      bool
 	usedListGet      bool
@@ -83,6 +150,11 @@ type emitter struct {
 	usedDictContains bool
 	usedStrToInt     bool
 	usedCbError      bool
+	usedStdFs        bool
+	usedStdOs        bool
+	usedStdOsExec    bool
+	usedStdJson      bool
+	usedStdCli       bool
 	byRefVars        map[string]bool
 	currentFn        *ast.FnDecl
 	currentTryID     int
@@ -92,45 +164,99 @@ type emitter struct {
 	liftedExprs      map[ast.Expr]string
 }
 
+func (e *emitter) markStdlibUsage(goName string) {
+	switch {
+	case strings.HasPrefix(goName, "cbStdFs"):
+		e.usedStdFs = true
+	case goName == "cbStdOsExec":
+		e.usedStdOs = true
+		e.usedStdOsExec = true
+	case strings.HasPrefix(goName, "cbStdOs"):
+		e.usedStdOs = true
+	case strings.HasPrefix(goName, "cbStdJson"):
+		e.usedStdJson = true
+	case strings.HasPrefix(goName, "cbStdCli"):
+		e.usedStdCli = true
+	}
+}
+
 func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 	var sb strings.Builder
 
 	for _, decl := range prog.Decls {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
-			sb.WriteString(fmt.Sprintf("type %s struct {\n", d.Name))
-			for _, f := range d.Fields {
-				sb.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, e.goType(f.Type)))
+			var structSym *sema.StructSymbol
+			if e.currentMod != nil {
+				structSym = e.currentMod.Structs[d.Name]
+			}
+			goName := d.Name
+			if structSym != nil && structSym.GoName != "" {
+				goName = structSym.GoName
+			}
+			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
+			for i, f := range d.Fields {
+				fType := e.goType(f.Type)
+				if structSym != nil && i < len(structSym.Fields) {
+					fType = e.goSemaType(structSym.Fields[i].Type)
+				}
+				sb.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, fType))
 			}
 			sb.WriteString("}\n\n")
 
 		case *ast.EnumDecl:
-			sb.WriteString(fmt.Sprintf("type %s int64\n\nconst (\n", d.Name))
+			var enumSym *sema.EnumSymbol
+			if e.currentMod != nil {
+				enumSym = e.currentMod.Enums[d.Name]
+			}
+			goName := d.Name
+			if enumSym != nil && enumSym.GoName != "" {
+				goName = enumSym.GoName
+			}
+			sb.WriteString(fmt.Sprintf("type %s int64\n\nconst (\n", goName))
 			for i, v := range d.Variants {
 				if i == 0 {
-					sb.WriteString(fmt.Sprintf("\t%s_%s %s = iota\n", d.Name, v, d.Name))
+					sb.WriteString(fmt.Sprintf("\t%s_%s %s = iota\n", goName, v, goName))
 				} else {
-					sb.WriteString(fmt.Sprintf("\t%s_%s\n", d.Name, v))
+					sb.WriteString(fmt.Sprintf("\t%s_%s\n", goName, v))
 				}
 			}
 			sb.WriteString(")\n\n")
 
 		case *ast.UnionDecl:
-			sb.WriteString(fmt.Sprintf("type %s interface {\n\tis%s()\n}\n\n", d.Name, d.Name))
-			for _, v := range d.Variants {
-				vStruct := fmt.Sprintf("%s_%s", d.Name, v.Name)
-				sb.WriteString(fmt.Sprintf("type %s struct {\n\tValue %s\n}\n", vStruct, e.goType(v.Type)))
-				sb.WriteString(fmt.Sprintf("func (%s) is%s() {}\n\n", vStruct, d.Name))
+			var unionSym *sema.UnionSymbol
+			if e.currentMod != nil {
+				unionSym = e.currentMod.Unions[d.Name]
+			}
+			goName := d.Name
+			if unionSym != nil && unionSym.GoName != "" {
+				goName = unionSym.GoName
+			}
+			sb.WriteString(fmt.Sprintf("type %s interface {\n\tis%s()\n}\n\n", goName, goName))
+			for i, v := range d.Variants {
+				vStruct := fmt.Sprintf("%s_%s", goName, v.Name)
+				vType := e.goType(v.Type)
+				if unionSym != nil && i < len(unionSym.Variants) {
+					vType = e.goSemaType(unionSym.Variants[i].Type)
+				}
+				sb.WriteString(fmt.Sprintf("type %s struct {\n\tValue %s\n}\n", vStruct, vType))
+				sb.WriteString(fmt.Sprintf("func (%s) is%s() {}\n\n", vStruct, goName))
 			}
 
 		case *ast.ConstDecl:
+			goName := d.Name
+			if e.currentMod != nil {
+				if sym, ok := e.currentMod.GlobalVars.Lookup(d.Name); ok && sym.GoName != "" {
+					goName = sym.GoName
+				}
+			}
 			typeStr := ""
 			if cType, ok := e.prog.ConstTypes[d]; ok && !cType.IsVoid() {
 				typeStr = " " + e.goSemaType(cType)
 			} else if d.Type != nil {
 				typeStr = " " + e.goType(*d.Type)
 			}
-			sb.WriteString(fmt.Sprintf("var %s%s = %s\n\n", d.Name, typeStr, e.emitExpr(d.Value)))
+			sb.WriteString(fmt.Sprintf("var %s%s = %s\n\n", goName, typeStr, e.emitExpr(d.Value)))
 
 		case *ast.FnDecl:
 			if d.Extern {
@@ -145,40 +271,44 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 		}
 	}
 
-	if mainSym, ok := e.prog.Functions["main"]; ok {
-		if mainSym.ReturnType.Equals(sema.IntType) {
-			e.usedOs = true
-			sb.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\tos.Exit(int(code))\n\t}\n}\n")
-		} else {
-			sb.WriteString("func main() {\n\tcb_main()\n}\n")
-		}
-	}
-
 	return sb.String(), nil
 }
 
 func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 	var sb strings.Builder
+	var fnSym *sema.FnSymbol
+	if e.currentMod != nil {
+		fnSym = e.currentMod.Functions[fn.Name]
+	}
 	name := fn.Name
-	if name == "main" {
+	if fnSym != nil && fnSym.GoName != "" {
+		name = fnSym.GoName
+	}
+	if name == "main" && (e.currentMod == nil || e.currentMod.IsEntry) {
 		name = "cb_main"
 	}
 
 	prevByRef := e.byRefVars
 	prevFn := e.currentFn
+	prevFnSym := e.currentFnSym
 	prevTryID := e.currentTryID
 	e.byRefVars = make(map[string]bool)
 	e.currentFn = fn
+	e.currentFnSym = fnSym
 	e.currentTryID = 0
 	defer func() {
 		e.byRefVars = prevByRef
 		e.currentFn = prevFn
+		e.currentFnSym = prevFnSym
 		e.currentTryID = prevTryID
 	}()
 
 	var params []string
-	for _, p := range fn.Params {
+	for i, p := range fn.Params {
 		paramGoType := e.goType(p.Type)
+		if fnSym != nil && i < len(fnSym.Params) {
+			paramGoType = e.goSemaType(fnSym.Params[i].Type)
+		}
 		if p.ByRef {
 			e.byRefVars[p.Name] = true
 			paramGoType = "*" + paramGoType
@@ -189,11 +319,15 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 	retType := ""
 	if fn.CanError {
 		e.usedCbError = true
-		if fn.ReturnType != nil {
+		if fnSym != nil && !fnSym.ReturnType.IsVoid() {
+			retType = fmt.Sprintf(" (%s, error)", e.goSemaType(fnSym.ReturnType))
+		} else if fn.ReturnType != nil {
 			retType = fmt.Sprintf(" (%s, error)", e.goType(*fn.ReturnType))
 		} else {
 			retType = " error"
 		}
+	} else if fnSym != nil && !fnSym.ReturnType.IsVoid() {
+		retType = " " + e.goSemaType(fnSym.ReturnType)
 	} else if fn.ReturnType != nil {
 		retType = " " + e.goType(*fn.ReturnType)
 	}
@@ -205,10 +339,14 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 	if fn.ReturnType != nil {
 		if len(fn.Body) > 0 {
 			if _, isRet := fn.Body[len(fn.Body)-1].(*ast.ReturnStmt); !isRet {
+				zeroVal := e.goZeroValue(fn.ReturnType)
+				if fnSym != nil && !fnSym.ReturnType.IsVoid() {
+					zeroVal = e.goSemaZeroValue(fnSym.ReturnType)
+				}
 				if fn.CanError {
-					sb.WriteString(fmt.Sprintf("\treturn %s, nil\n", e.goZeroValue(fn.ReturnType)))
+					sb.WriteString(fmt.Sprintf("\treturn %s, nil\n", zeroVal))
 				} else {
-					sb.WriteString(fmt.Sprintf("\treturn %s\n", e.goZeroValue(fn.ReturnType)))
+					sb.WriteString(fmt.Sprintf("\treturn %s\n", zeroVal))
 				}
 			}
 		}
@@ -237,6 +375,17 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		e.usedCbError = true
 		return "CbError"
 	case sema.KindStruct, sema.KindEnum, sema.KindUnion:
+		switch t.ModuleID {
+		case "std/os":
+			e.usedStdOs = true
+		case "std/json":
+			e.usedStdJson = true
+		case "std/cli":
+			e.usedStdCli = true
+		}
+		if t.GoName != "" {
+			return t.GoName
+		}
 		return t.Name
 	case sema.KindList:
 		if t.ElemType != nil {
@@ -328,6 +477,33 @@ func (e *emitter) goZeroValue(t *ast.TypeExpr) string {
 	return fmt.Sprintf("*new(%s)", e.goType(*t))
 }
 
+func (e *emitter) goSemaZeroValue(t sema.Type) string {
+	switch t.Kind {
+	case sema.KindInt:
+		return "int64(0)"
+	case sema.KindFloat:
+		return "float64(0)"
+	case sema.KindStr:
+		return `""`
+	case sema.KindBool:
+		return "false"
+	case sema.KindErr:
+		e.usedCbError = true
+		return "CbError{}"
+	case sema.KindList, sema.KindDict, sema.KindUnion:
+		return "nil"
+	case sema.KindEnum:
+		return e.goSemaType(t) + "(0)"
+	case sema.KindStruct:
+		if strings.HasPrefix(t.GoName, "*") {
+			return "nil"
+		}
+		return e.goSemaType(t) + "{}"
+	default:
+		return "nil"
+	}
+}
+
 func (e *emitter) emitErrorJumpOrReturn(sb *strings.Builder, indent, errExpr string) {
 	if e.currentTryID > 0 {
 		if e.tryUsedCatch == nil {
@@ -336,6 +512,10 @@ func (e *emitter) emitErrorJumpOrReturn(sb *strings.Builder, indent, errExpr str
 		e.tryUsedCatch[e.currentTryID] = true
 		sb.WriteString(fmt.Sprintf("%s_tryErr_%d = %s\n", indent, e.currentTryID, errExpr))
 		sb.WriteString(fmt.Sprintf("%sgoto _catch_%d\n", indent, e.currentTryID))
+		return
+	}
+	if e.currentFnSym != nil && !e.currentFnSym.ReturnType.IsVoid() {
+		sb.WriteString(fmt.Sprintf("%sreturn %s, %s\n", indent, e.goSemaZeroValue(e.currentFnSym.ReturnType), errExpr))
 		return
 	}
 	if e.currentFn != nil && e.currentFn.ReturnType != nil {
@@ -407,12 +587,14 @@ func (e *emitter) liftFallibleCalls(sb *strings.Builder, expr ast.Expr, indent s
 			e.emitErrorJumpOrReturn(sb, indent, cbErr)
 			return true
 		}
-		if (ci.Kind == sema.CallFunc || ci.Kind == sema.CallUFCS) && ci.Fn != nil && ci.Fn.CanError {
+		isFallibleMethod := ci.Kind == sema.CallMethod && (ci.MethodName == "std/cli.parse" || ci.MethodName == "std/cli.parseArgs")
+		if isFallibleMethod || ((ci.Kind == sema.CallFunc || ci.Kind == sema.CallUFCS) && ci.Fn != nil && ci.Fn.CanError) {
 			callStr := e.emitCallExprRaw(ex)
 			e.errCounter++
 			id := e.errCounter
 			errVar := fmt.Sprintf("_err_%d", id)
-			if !ci.Fn.ReturnType.IsVoid() {
+			hasRet := isFallibleMethod || (ci.Fn != nil && !ci.Fn.ReturnType.IsVoid())
+			if hasRet {
 				valVar := fmt.Sprintf("_val_%d", id)
 				if e.liftedExprs == nil {
 					e.liftedExprs = make(map[ast.Expr]string)
@@ -461,7 +643,8 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					e.liftFallibleCalls(sb, s.Expr, indent)
 					return
 				}
-				if (ci.Kind == sema.CallFunc || ci.Kind == sema.CallUFCS) && ci.Fn != nil && ci.Fn.CanError {
+				isFallibleMethod := ci.Kind == sema.CallMethod && (ci.MethodName == "std/cli.parse" || ci.MethodName == "std/cli.parseArgs")
+				if isFallibleMethod || ((ci.Kind == sema.CallFunc || ci.Kind == sema.CallUFCS) && ci.Fn != nil && ci.Fn.CanError) {
 					e.liftFallibleCalls(sb, s.Expr, indent)
 					if valVar, lifted := e.liftedExprs[call]; lifted {
 						sb.WriteString(fmt.Sprintf("%s_ = %s\n", indent, valVar))
@@ -560,8 +743,22 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 	case *ast.SelectStmt:
 		e.liftFallibleCalls(sb, s.Target, indent)
 		if unionSym, isUnion := e.prog.SelectUnion[s]; isUnion {
-			sb.WriteString(fmt.Sprintf("%sswitch cbSwitch := (%s).(type) {\n", indent, e.emitExpr(s.Target)))
+			unionGoName := unionSym.Name
+			if unionSym.GoName != "" {
+				unionGoName = unionSym.GoName
+			}
 			hasBinding := false
+			for _, cc := range s.Cases {
+				if cc.Binding != "" {
+					hasBinding = true
+					break
+				}
+			}
+			if hasBinding {
+				sb.WriteString(fmt.Sprintf("%sswitch cbSwitch := (%s).(type) {\n", indent, e.emitExpr(s.Target)))
+			} else {
+				sb.WriteString(fmt.Sprintf("%sswitch (%s).(type) {\n", indent, e.emitExpr(s.Target)))
+			}
 			for _, cc := range s.Cases {
 				var caseTypes []string
 				for _, val := range cc.Values {
@@ -572,7 +769,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					case *ast.FieldAccessExpr:
 						vName = p.Field
 					}
-					caseTypes = append(caseTypes, fmt.Sprintf("%s_%s", unionSym.Name, vName))
+					caseTypes = append(caseTypes, fmt.Sprintf("%s_%s", unionGoName, vName))
 				}
 				sb.WriteString(fmt.Sprintf("%scase %s:\n", indent, strings.Join(caseTypes, ", ")))
 				if cc.Binding != "" {
@@ -704,6 +901,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 func (e *emitter) emitExpr(expr ast.Expr) string {
 	switch ex := expr.(type) {
 	case *ast.IdentExpr:
+		if e.prog != nil {
+			if goName, ok := e.prog.IdentGoNames[ex]; ok {
+				return goName
+			}
+		}
 		if e.byRefVars != nil && e.byRefVars[ex.Name] {
 			return fmt.Sprintf("(*%s)", ex.Name)
 		}
@@ -767,6 +969,11 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("%s{}", e.goSemaType(t))
 
 	case *ast.FieldAccessExpr:
+		if e.prog != nil {
+			if goName, ok := e.prog.IdentGoNames[ex]; ok {
+				return goName
+			}
+		}
 		if id, ok := ex.Target.(*ast.IdentExpr); ok && e.prog != nil && e.prog.Enums[id.Name] != nil {
 			return fmt.Sprintf("%s_%s", id.Name, ex.Field)
 		}
@@ -820,10 +1027,18 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 						fields = append(fields, e.emitExpr(a.Value))
 					}
 				}
-				return fmt.Sprintf("%s{%s}", ci.Struct.Name, strings.Join(fields, ", "))
+				structGoName := ci.Struct.Name
+				if ci.Struct.GoName != "" {
+					structGoName = ci.Struct.GoName
+				}
+				return fmt.Sprintf("%s{%s}", structGoName, strings.Join(fields, ", "))
 
 			case sema.CallUnionCtor:
-				return fmt.Sprintf("%s_%s{Value: %s}", ci.Union.Name, ci.VariantName, e.emitExpr(ex.Args[0].Value))
+				unionGoName := ci.Union.Name
+				if ci.Union.GoName != "" {
+					unionGoName = ci.Union.GoName
+				}
+				return fmt.Sprintf("%s_%s{Value: %s}", unionGoName, ci.VariantName, e.emitExpr(ex.Args[0].Value))
 
 			case sema.CallMethod:
 				switch ci.MethodName {
@@ -861,6 +1076,50 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				case "str.contains":
 					e.usedStrings = true
 					return fmt.Sprintf("strings.Contains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "std/json.stringify":
+					e.usedStdJson = true
+					return fmt.Sprintf("cbStdJsonStringify(%s)", e.emitExpr(ex.Args[0].Value))
+				case "std/json.isNull", "std/json.asStr", "std/json.asInt", "std/json.asFloat", "std/json.asBool", "std/json.asList", "std/json.asDict":
+					e.usedStdJson = true
+					method := strings.TrimPrefix(ci.MethodName, "std/json.")
+					return fmt.Sprintf("%s.%s()", e.emitExpr(ci.Receiver), method)
+				case "std/json.get", "std/json.has":
+					e.usedStdJson = true
+					method := strings.TrimPrefix(ci.MethodName, "std/json.")
+					return fmt.Sprintf("%s.%s(%s)", e.emitExpr(ci.Receiver), method, e.emitExpr(ex.Args[0].Value))
+				case "std/cli.addFlag", "std/cli.addOption", "std/cli.addArg", "std/cli.parse", "std/cli.parseArgs", "std/cli.printUsage", "std/cli.hasFlag", "std/cli.getOption", "std/cli.getArg":
+					e.usedStdCli = true
+					method := strings.TrimPrefix(ci.MethodName, "std/cli.")
+					var mArgs []string
+					for _, a := range ex.Args {
+						mArgs = append(mArgs, e.emitExpr(a.Value))
+					}
+					return fmt.Sprintf("%s.%s(%s)", e.emitExpr(ci.Receiver), method, strings.Join(mArgs, ", "))
+				}
+
+			case sema.CallFunc:
+				if ci.Fn != nil {
+					e.markStdlibUsage(ci.Fn.GoName)
+					var args []string
+					for i, a := range ex.Args {
+						if i < len(ci.Fn.Params) && ci.Fn.Params[i].ByRef {
+							if argId, ok := a.Value.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
+								args = append(args, argId.Name)
+							} else {
+								args = append(args, "&"+e.emitExpr(a.Value))
+							}
+						} else {
+							args = append(args, e.emitExpr(a.Value))
+						}
+					}
+					fnGoName := ci.Fn.GoName
+					if fnGoName == "" {
+						fnGoName = ci.Fn.Name
+					}
+					if fnGoName == "main" {
+						fnGoName = "cb_main"
+					}
+					return fmt.Sprintf("%s(%s)", fnGoName, strings.Join(args, ", "))
 				}
 
 			case sema.CallUFCS:
@@ -885,7 +1144,11 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 						args = append(args, e.emitExpr(a.Value))
 					}
 				}
-				return fmt.Sprintf("%s(%s)", ci.Fn.Name, strings.Join(args, ", "))
+				fnGoName := ci.Fn.GoName
+				if fnGoName == "" {
+					fnGoName = ci.Fn.Name
+				}
+				return fmt.Sprintf("%s(%s)", fnGoName, strings.Join(args, ", "))
 			}
 		}
 	}

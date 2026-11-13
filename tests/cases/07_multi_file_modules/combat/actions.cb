@@ -1,0 +1,25 @@
+import "../entities/hero.cb" as h
+
+public type Stats
+    hits as int
+end type
+
+public union Outcome
+    Hit as int
+    Blocked as str
+end union
+
+public fn describe(s as Stats) as str
+    return "hits=" & s.hits
+end fn
+
+public fn strike(byref target as h.Hero, dmg as int) as Outcome
+    target.stats.hp = target.stats.hp - dmg
+    if target.stats.hp < 0
+        target.stats.hp = 0
+    end if
+    if dmg <= 0
+        return Outcome.Blocked("zero")
+    end if
+    return Outcome.Hit(dmg)
+end fn

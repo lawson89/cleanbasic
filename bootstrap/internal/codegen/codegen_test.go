@@ -255,3 +255,103 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		t.Errorf("phase4 edge cases output = %q, want %q\ngo:\n%s", got, want, goCode)
 	}
 }
+
+func TestEmitGoPhase5MultiFileAndStdlib(t *testing.T) {
+	t.Run("multi-file mangling", func(t *testing.T) {
+		prog, err := sema.LoadAndAnalyze("../../../tests/cases/07_multi_file_modules/main.cb")
+		if err != nil {
+			t.Fatalf("LoadAndAnalyze failed: %v", err)
+		}
+		goCode, err := EmitGo(prog)
+		if err != nil {
+			t.Fatalf("EmitGo failed: %v", err)
+		}
+		for _, want := range []string{
+			"cb_entities_hero__Stats",
+			"cb_combat_actions__Stats",
+			"cb_entities_hero__heal",
+			"cb_combat_actions__strike",
+		} {
+			if !strings.Contains(goCode, want) {
+				t.Errorf("expected mangled symbol %q in generated Go:\n%s", want, goCode)
+			}
+		}
+	})
+
+	t.Run("stdlib helpers on demand", func(t *testing.T) {
+		prog, err := sema.LoadAndAnalyze("../../../tests/cases/08_stdlib_fs_os_cli.cb")
+		if err != nil {
+			t.Fatalf("LoadAndAnalyze failed: %v", err)
+		}
+		goCode, err := EmitGo(prog)
+		if err != nil {
+			t.Fatalf("EmitGo failed: %v", err)
+		}
+		for _, want := range []string{
+			"cbStdFsReadFile",
+			"cbStdOsExec",
+			"cbStdJsonParse",
+			"cbStdCliNewParser",
+		} {
+			if !strings.Contains(goCode, want) {
+				t.Errorf("expected stdlib helper %q in generated Go", want)
+			}
+		}
+	})
+
+	t.Run("can error returning str and standalone cli parseArgs", func(t *testing.T) {
+		src := `import "std/fs"
+import "std/cli"
+
+fn readOrFail(path as str, failNow as bool) as str can error
+	if failNow
+		error("forced failure")
+	end if
+	return fs.readFile(path)
+end fn
+
+fn main()
+	try
+		dim s as str = readOrFail("/nonexistent/path/for/test.txt", true)
+		print(s)
+	catch errVal
+		print(errVal.msg)
+	end try
+
+	dim p = cli.newParser("app", "1.0", "desc")
+	p.addFlag("verbose", "v", "verbose")
+	try
+		p.parseArgs(["--verbose"])
+		print("parsed-ok")
+	catch e
+		print(e.msg)
+	end try
+end fn
+`
+		prog, err := sema.AnalyzeSource(src, "fallible_str_cli.cb")
+		if err != nil {
+			t.Fatalf("AnalyzeSource failed: %v", err)
+		}
+		goCode, err := EmitGo(prog)
+		if err != nil {
+			t.Fatalf("EmitGo failed: %v", err)
+		}
+		tmpDir := t.TempDir()
+		outGoPath := filepath.Join(tmpDir, "main.go")
+		if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		cmd := exec.Command("go", "run", outGoPath)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
+		}
+		got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+		want := "forced failure\nparsed-ok"
+		if got != want {
+			t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
+		}
+	})
+}

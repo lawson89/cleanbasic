@@ -3,6 +3,7 @@ package sema
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"cleanbasic/bootstrap/internal/ast"
 	"cleanbasic/bootstrap/internal/parser"
@@ -30,6 +31,8 @@ const (
 type Type struct {
 	Kind     TypeKind
 	Name     string
+	ModuleID string
+	GoName   string
 	ElemType *Type
 	KeyType  *Type
 	ValType  *Type
@@ -70,7 +73,25 @@ func (t Type) IsVoid() bool {
 }
 
 func (t Type) Equals(other Type) bool {
-	return t.String() == other.String()
+	if t.Kind != other.Kind {
+		return false
+	}
+	switch t.Kind {
+	case KindStruct, KindEnum, KindUnion:
+		return t.Name == other.Name && t.ModuleID == other.ModuleID
+	case KindList:
+		if t.ElemType == nil || other.ElemType == nil {
+			return t.ElemType == other.ElemType
+		}
+		return t.ElemType.Equals(*other.ElemType)
+	case KindDict:
+		if t.KeyType == nil || other.KeyType == nil || t.ValType == nil || other.ValType == nil {
+			return false
+		}
+		return t.KeyType.Equals(*other.KeyType) && t.ValType.Equals(*other.ValType)
+	default:
+		return true
+	}
 }
 
 // SemaError represents a semantic analysis error with File:Line:Column location.
@@ -93,8 +114,10 @@ func newSemaError(pos token.Position, format string, args ...any) error {
 // VarSymbol represents a top-level constant, function parameter, local variable, or loop counter.
 type VarSymbol struct {
 	Name    string
+	GoName  string
 	Type    Type
 	IsConst bool
+	Public  bool
 	ByRef   bool
 	Pos     token.Position
 }
@@ -110,6 +133,7 @@ type ParamSymbol struct {
 // FnSymbol represents a declared or built-in function signature.
 type FnSymbol struct {
 	Name       string
+	GoName     string
 	Params     []ParamSymbol
 	ReturnType Type
 	CanError   bool
@@ -163,6 +187,8 @@ type FieldSymbol struct {
 // StructSymbol represents a user-defined struct type.
 type StructSymbol struct {
 	Name     string
+	GoName   string
+	ModuleID string
 	Fields   []FieldSymbol
 	FieldMap map[string]FieldSymbol
 	Public   bool
@@ -173,6 +199,8 @@ type StructSymbol struct {
 // EnumSymbol represents a user-defined enum type.
 type EnumSymbol struct {
 	Name       string
+	GoName     string
+	ModuleID   string
 	Variants   []string
 	VariantSet map[string]bool
 	Public     bool
@@ -190,6 +218,8 @@ type UnionVariantSymbol struct {
 // UnionSymbol represents a user-defined discriminated union type.
 type UnionSymbol struct {
 	Name       string
+	GoName     string
+	ModuleID   string
 	Variants   []UnionVariantSymbol
 	VariantMap map[string]UnionVariantSymbol
 	Public     bool
@@ -223,18 +253,22 @@ type CallInfo struct {
 
 // TypedProgram holds the AST and semantic type information for an analyzed CleanBasic program.
 type TypedProgram struct {
-	EntryFile   string
-	Main        *ast.Program
-	ExprTypes   map[ast.Expr]Type
-	VarTypes    map[*ast.VarDecl]Type
-	ConstTypes  map[*ast.ConstDecl]Type
-	Functions   map[string]*FnSymbol
-	Structs     map[string]*StructSymbol
-	Enums       map[string]*EnumSymbol
-	Unions      map[string]*UnionSymbol
-	CallInfos   map[*ast.CallExpr]*CallInfo
-	SelectUnion map[*ast.SelectStmt]*UnionSymbol
-	GlobalVars  *Scope
+	EntryFile    string
+	Main         *ast.Program
+	Modules      []*ModuleInfo
+	EntryModule  *ModuleInfo
+	ModuleByID   map[string]*ModuleInfo
+	ExprTypes    map[ast.Expr]Type
+	VarTypes     map[*ast.VarDecl]Type
+	ConstTypes   map[*ast.ConstDecl]Type
+	IdentGoNames map[ast.Expr]string
+	Functions    map[string]*FnSymbol
+	Structs      map[string]*StructSymbol
+	Enums        map[string]*EnumSymbol
+	Unions       map[string]*UnionSymbol
+	CallInfos    map[*ast.CallExpr]*CallInfo
+	SelectUnion  map[*ast.SelectStmt]*UnionSymbol
+	GlobalVars   *Scope
 }
 
 // AnalyzedProgram is an alias for TypedProgram for backwards compatibility.
@@ -258,40 +292,62 @@ func AnalyzeSource(src string, filename string) (*TypedProgram, error) {
 	return Analyze(prog)
 }
 
-// Analyze performs semantic analysis on a parsed *ast.Program.
+// Analyze performs semantic analysis on a parsed *ast.Program (and any imported modules).
 func Analyze(prog *ast.Program) (*TypedProgram, error) {
 	if prog == nil {
 		return nil, fmt.Errorf("nil AST program")
 	}
 
-	tp := &TypedProgram{
-		EntryFile:   prog.File,
-		Main:        prog,
-		ExprTypes:   make(map[ast.Expr]Type),
-		VarTypes:    make(map[*ast.VarDecl]Type),
-		ConstTypes:  make(map[*ast.ConstDecl]Type),
-		Functions:   make(map[string]*FnSymbol),
-		Structs:     make(map[string]*StructSymbol),
-		Enums:       make(map[string]*EnumSymbol),
-		Unions:      make(map[string]*UnionSymbol),
-		CallInfos:   make(map[*ast.CallExpr]*CallInfo),
-		SelectUnion: make(map[*ast.SelectStmt]*UnionSymbol),
-		GlobalVars:  NewScope(nil),
+	rootDir := ""
+	if prog.File != "" {
+		if abs, err := filepath.Abs(prog.File); err == nil {
+			rootDir = filepath.Dir(abs)
+		}
+	}
+	loader := newModuleLoader(rootDir)
+	topoOrder, entryMod, byID, err := loader.loadEntry(prog.File, prog)
+	if err != nil {
+		return nil, err
 	}
 
-	// Register built-in variadic print function
-	tp.Functions["print"] = &FnSymbol{
-		Name:       "print",
-		ReturnType: VoidType,
-		IsVariadic: true,
+	tp := &TypedProgram{
+		EntryFile:    prog.File,
+		Main:         prog,
+		Modules:      topoOrder,
+		EntryModule:  entryMod,
+		ModuleByID:   byID,
+		ExprTypes:    make(map[ast.Expr]Type),
+		VarTypes:     make(map[*ast.VarDecl]Type),
+		ConstTypes:   make(map[*ast.ConstDecl]Type),
+		IdentGoNames: make(map[ast.Expr]string),
+		Functions:    entryMod.Functions,
+		Structs:      entryMod.Structs,
+		Enums:        entryMod.Enums,
+		Unions:       entryMod.Unions,
+		CallInfos:    make(map[*ast.CallExpr]*CallInfo),
+		SelectUnion:  make(map[*ast.SelectStmt]*UnionSymbol),
+		GlobalVars:   entryMod.GlobalVars,
 	}
 
 	a := &analyzer{
 		prog: tp,
 	}
 
-	if err := a.analyzeProgram(prog); err != nil {
-		return nil, err
+	for _, mod := range topoOrder {
+		if mod.IsStdlib {
+			continue
+		}
+		a.mod = mod
+		// Register built-in variadic print function in each module
+		mod.Functions["print"] = &FnSymbol{
+			Name:       "print",
+			GoName:     "print",
+			ReturnType: VoidType,
+			IsVariadic: true,
+		}
+		if err := a.analyzeProgram(mod.Program); err != nil {
+			return nil, err
+		}
 	}
 
 	return tp, nil
@@ -299,10 +355,29 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 
 type analyzer struct {
 	prog       *TypedProgram
+	mod        *ModuleInfo
 	currentFn  *FnSymbol
 	loopDepth  int
 	tryDepth   int
 	deferDepth int
+}
+
+func (a *analyzer) lookupStruct(t Type) *StructSymbol {
+	if t.ModuleID != "" {
+		if m, ok := a.prog.ModuleByID[t.ModuleID]; ok {
+			return m.Structs[t.Name]
+		}
+	}
+	return a.mod.Structs[t.Name]
+}
+
+func (a *analyzer) lookupUnion(t Type) *UnionSymbol {
+	if t.ModuleID != "" {
+		if m, ok := a.prog.ModuleByID[t.ModuleID]; ok {
+			return m.Unions[t.Name]
+		}
+	}
+	return a.mod.Unions[t.Name]
 }
 
 func (a *analyzer) analyzeProgram(prog *ast.Program) error {
@@ -313,8 +388,10 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 			if err := a.predeclareType(d.Name, d.Pos); err != nil {
 				return err
 			}
-			a.prog.Structs[d.Name] = &StructSymbol{
+			a.mod.Structs[d.Name] = &StructSymbol{
 				Name:     d.Name,
+				GoName:   a.mod.symbolGoName(d.Name),
+				ModuleID: a.mod.ID,
 				FieldMap: make(map[string]FieldSymbol),
 				Public:   d.Public,
 				Decl:     d,
@@ -324,8 +401,10 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 			if err := a.predeclareType(d.Name, d.Pos); err != nil {
 				return err
 			}
-			a.prog.Enums[d.Name] = &EnumSymbol{
+			a.mod.Enums[d.Name] = &EnumSymbol{
 				Name:       d.Name,
+				GoName:     a.mod.symbolGoName(d.Name),
+				ModuleID:   a.mod.ID,
 				VariantSet: make(map[string]bool),
 				Public:     d.Public,
 				Decl:       d,
@@ -335,8 +414,10 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 			if err := a.predeclareType(d.Name, d.Pos); err != nil {
 				return err
 			}
-			a.prog.Unions[d.Name] = &UnionSymbol{
+			a.mod.Unions[d.Name] = &UnionSymbol{
 				Name:       d.Name,
+				GoName:     a.mod.symbolGoName(d.Name),
+				ModuleID:   a.mod.ID,
 				VariantMap: make(map[string]UnionVariantSymbol),
 				Public:     d.Public,
 				Decl:       d,
@@ -400,20 +481,20 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 }
 
 func (a *analyzer) predeclareType(name string, pos token.Position) error {
-	if _, exists := a.prog.Structs[name]; exists {
+	if _, exists := a.mod.Structs[name]; exists {
 		return newSemaError(pos, "type %q is already declared", name)
 	}
-	if _, exists := a.prog.Enums[name]; exists {
+	if _, exists := a.mod.Enums[name]; exists {
 		return newSemaError(pos, "type %q is already declared", name)
 	}
-	if _, exists := a.prog.Unions[name]; exists {
+	if _, exists := a.mod.Unions[name]; exists {
 		return newSemaError(pos, "type %q is already declared", name)
 	}
 	return nil
 }
 
 func (a *analyzer) resolveTypeDecl(d *ast.TypeDecl) error {
-	sym := a.prog.Structs[d.Name]
+	sym := a.mod.Structs[d.Name]
 	for _, f := range d.Fields {
 		if _, dup := sym.FieldMap[f.Name]; dup {
 			return newSemaError(f.Pos, "duplicate field %q in type %q", f.Name, d.Name)
@@ -430,7 +511,7 @@ func (a *analyzer) resolveTypeDecl(d *ast.TypeDecl) error {
 }
 
 func (a *analyzer) resolveEnumDecl(d *ast.EnumDecl) error {
-	sym := a.prog.Enums[d.Name]
+	sym := a.mod.Enums[d.Name]
 	for _, v := range d.Variants {
 		if sym.VariantSet[v] {
 			return newSemaError(d.Pos, "duplicate variant %q in enum %q", v, d.Name)
@@ -442,7 +523,7 @@ func (a *analyzer) resolveEnumDecl(d *ast.EnumDecl) error {
 }
 
 func (a *analyzer) resolveUnionDecl(d *ast.UnionDecl) error {
-	sym := a.prog.Unions[d.Name]
+	sym := a.mod.Unions[d.Name]
 	for _, v := range d.Variants {
 		if _, dup := sym.VariantMap[v.Name]; dup {
 			return newSemaError(v.Pos, "duplicate variant %q in union %q", v.Name, d.Name)
@@ -459,10 +540,10 @@ func (a *analyzer) resolveUnionDecl(d *ast.UnionDecl) error {
 }
 
 func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
-	if existing, exists := a.prog.Functions[fn.Name]; exists {
+	if existing, exists := a.mod.Functions[fn.Name]; exists {
 		return newSemaError(fn.Pos, "function %q is already declared (previous declaration at %s)", fn.Name, existing.Pos.String())
 	}
-	if existingVar, exists := a.prog.GlobalVars.Lookup(fn.Name); exists {
+	if existingVar, exists := a.mod.GlobalVars.Lookup(fn.Name); exists {
 		return newSemaError(fn.Pos, "function name %q conflicts with constant declared at %s", fn.Name, existingVar.Pos.String())
 	}
 
@@ -506,8 +587,9 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 		}
 	}
 
-	a.prog.Functions[fn.Name] = &FnSymbol{
+	a.mod.Functions[fn.Name] = &FnSymbol{
 		Name:       fn.Name,
+		GoName:     a.mod.symbolGoName(fn.Name),
 		Params:     params,
 		ReturnType: retType,
 		CanError:   fn.CanError,
@@ -520,11 +602,11 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 }
 
 func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
-	if existingFn, exists := a.prog.Functions[d.Name]; exists {
+	if existingFn, exists := a.mod.Functions[d.Name]; exists {
 		return newSemaError(d.Pos, "constant %q conflicts with function declared at %s", d.Name, existingFn.Pos.String())
 	}
 
-	valType, err := a.inferExpr(d.Value, a.prog.GlobalVars)
+	valType, err := a.inferExpr(d.Value, a.mod.GlobalVars)
 	if err != nil {
 		return err
 	}
@@ -546,11 +628,13 @@ func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
 
 	sym := &VarSymbol{
 		Name:    d.Name,
+		GoName:  a.mod.symbolGoName(d.Name),
 		Type:    finalType,
 		IsConst: true,
+		Public:  d.Public,
 		Pos:     d.Pos,
 	}
-	if err := a.prog.GlobalVars.Define(sym); err != nil {
+	if err := a.mod.GlobalVars.Define(sym); err != nil {
 		return err
 	}
 	a.prog.ConstTypes[d] = finalType
@@ -562,14 +646,14 @@ func (a *analyzer) analyzeFnBody(fn *ast.FnDecl) error {
 		return nil
 	}
 
-	fnSym := a.prog.Functions[fn.Name]
+	fnSym := a.mod.Functions[fn.Name]
 	prevFn := a.currentFn
 	a.currentFn = fnSym
 	defer func() {
 		a.currentFn = prevFn
 	}()
 
-	fnScope := NewScope(a.prog.GlobalVars)
+	fnScope := NewScope(a.mod.GlobalVars)
 	for _, p := range fnSym.Params {
 		err := fnScope.Define(&VarSymbol{
 			Name:    p.Name,
@@ -983,7 +1067,7 @@ func (a *analyzer) analyzeSelectStmt(s *ast.SelectStmt, scope *Scope) error {
 	}
 
 	if exprType.Kind == KindUnion {
-		unionSym := a.prog.Unions[exprType.Name]
+		unionSym := a.lookupUnion(exprType)
 		a.prog.SelectUnion[s] = unionSym
 		for _, cc := range s.Cases {
 			if cc.Binding != "" && len(cc.Values) != 1 {
@@ -996,11 +1080,24 @@ func (a *analyzer) analyzeSelectStmt(s *ast.SelectStmt, scope *Scope) error {
 				case *ast.IdentExpr:
 					variantName = p.Name
 				case *ast.FieldAccessExpr:
-					objIdent, ok := p.Target.(*ast.IdentExpr)
-					if !ok || objIdent.Name != unionSym.Name {
+					if objIdent, ok := p.Target.(*ast.IdentExpr); ok {
+						if objIdent.Name != unionSym.Name || unionSym.ModuleID != a.mod.ID {
+							return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
+						}
+						variantName = p.Field
+					} else if innerFA, ok := p.Target.(*ast.FieldAccessExpr); ok {
+						modIdent, ok2 := innerFA.Target.(*ast.IdentExpr)
+						if !ok2 {
+							return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
+						}
+						impMod, modOk := a.mod.Imports[modIdent.Name]
+						if !modOk || impMod.ID != unionSym.ModuleID || innerFA.Field != unionSym.Name {
+							return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
+						}
+						variantName = p.Field
+					} else {
 						return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
 					}
-					variantName = p.Field
 				default:
 					return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
 				}
@@ -1160,6 +1257,9 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 		sym, ok := scope.Lookup(e.Name)
 		if !ok {
 			return VoidType, newSemaError(e.Pos, "undefined identifier %q", e.Name)
+		}
+		if sym.GoName != "" {
+			a.prog.IdentGoNames[e] = sym.GoName
 		}
 		resolved = sym.Type
 	case *ast.UnaryExpr:
@@ -1333,11 +1433,40 @@ func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr) (Type, err
 
 func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (Type, error) {
 	if objIdent, ok := e.Target.(*ast.IdentExpr); ok {
-		if enumSym, isEnum := a.prog.Enums[objIdent.Name]; isEnum {
+		if enumSym, isEnum := a.mod.Enums[objIdent.Name]; isEnum {
 			if !enumSym.VariantSet[e.Field] {
 				return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
 			}
-			return Type{Kind: KindEnum, Name: enumSym.Name}, nil
+			a.prog.IdentGoNames[e] = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
+			return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
+		}
+		if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
+			sym, found := impMod.GlobalVars.Lookup(e.Field)
+			if !found {
+				return VoidType, newSemaError(e.Pos, "module %q has no constant %q", objIdent.Name, e.Field)
+			}
+			if !sym.Public {
+				return VoidType, newSemaError(e.Pos, "constant %q in module %q is private", e.Field, objIdent.Name)
+			}
+			a.prog.IdentGoNames[e] = sym.GoName
+			return sym.Type, nil
+		}
+	}
+	if innerFA, ok := e.Target.(*ast.FieldAccessExpr); ok {
+		if modIdent, ok2 := innerFA.Target.(*ast.IdentExpr); ok2 {
+			if impMod, isMod := a.mod.Imports[modIdent.Name]; isMod {
+				if enumSym, isEnum := impMod.Enums[innerFA.Field]; isEnum {
+					if !enumSym.Public {
+						return VoidType, newSemaError(e.Pos, "enum %q in module %q is private", innerFA.Field, modIdent.Name)
+					}
+					if !enumSym.VariantSet[e.Field] {
+						return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
+					}
+					a.prog.IdentGoNames[e] = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
+					return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
+				}
+				return VoidType, newSemaError(e.Pos, "module %q has no enum %q", modIdent.Name, innerFA.Field)
+			}
 		}
 	}
 	objType, err := a.inferExpr(e.Target, scope)
@@ -1357,7 +1486,10 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 	if objType.Kind != KindStruct {
 		return VoidType, newSemaError(e.Pos, "cannot access field %q on non-struct type %s", e.Field, objType.String())
 	}
-	structSym := a.prog.Structs[objType.Name]
+	structSym := a.lookupStruct(objType)
+	if structSym == nil {
+		return VoidType, newSemaError(e.Pos, "unknown struct type %s", objType.String())
+	}
 	fs, exists := structSym.FieldMap[e.Field]
 	if !exists {
 		return VoidType, newSemaError(e.Pos, "struct %q has no field %q", structSym.Name, e.Field)
@@ -1403,11 +1535,11 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 		return a.inferErrorCall(e, scope)
 	}
 
-	if structSym, isStruct := a.prog.Structs[calleeIdent.Name]; isStruct {
+	if structSym, isStruct := a.mod.Structs[calleeIdent.Name]; isStruct {
 		return a.inferStructCtorCall(e, structSym, scope)
 	}
 
-	fnSym, exists := a.prog.Functions[calleeIdent.Name]
+	fnSym, exists := a.mod.Functions[calleeIdent.Name]
 	if !exists {
 		return VoidType, newSemaError(calleeIdent.Pos, "undefined function %q", calleeIdent.Name)
 	}
@@ -1503,7 +1635,7 @@ func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
 }
 
 func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *Scope) (Type, error) {
-	retType := Type{Kind: KindStruct, Name: s.Name}
+	retType := Type{Kind: KindStruct, Name: s.Name, ModuleID: s.ModuleID, GoName: s.GoName}
 	if len(e.Args) == 0 {
 		a.prog.CallInfos[e] = &CallInfo{
 			Kind:   CallStructCtor,
@@ -1565,29 +1697,120 @@ func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *
 	return retType, nil
 }
 
+func (a *analyzer) validateFnCallArgs(e *ast.CallExpr, fnSym *FnSymbol, scope *Scope) error {
+	if len(e.Args) != len(fnSym.Params) {
+		return newSemaError(e.Pos, "function %q expects %d argument(s), got %d", fnSym.Name, len(fnSym.Params), len(e.Args))
+	}
+	for i, arg := range e.Args {
+		param := fnSym.Params[i]
+		if arg.Name != "" && arg.Name != param.Name {
+			return newSemaError(arg.Pos, "named argument %q does not match parameter %q of function %q", arg.Name, param.Name, fnSym.Name)
+		}
+		argType, err := a.inferExpr(arg.Value, scope)
+		if err != nil {
+			return err
+		}
+		if !param.Type.Equals(argType) {
+			return newSemaError(arg.Pos, "argument %d (%q) to function %q has type %s, expected %s",
+				i+1, param.Name, fnSym.Name, argType.String(), param.Type.String())
+		}
+		if param.ByRef {
+			argIdent, isIdent := arg.Value.(*ast.IdentExpr)
+			if !isIdent {
+				return newSemaError(arg.Pos, "argument %d (%q) to byref parameter of %q must be a mutable variable", i+1, param.Name, fnSym.Name)
+			}
+			sym, found := scope.Lookup(argIdent.Name)
+			if !found || sym.IsConst {
+				return newSemaError(arg.Pos, "cannot pass constant %q to byref parameter %q of %q", argIdent.Name, param.Name, fnSym.Name)
+			}
+		}
+	}
+	if fnSym.CanError {
+		if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+			return newSemaError(e.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnSym.Name)
+		}
+	}
+	return nil
+}
+
+func (a *analyzer) inferUnionCtorCall(e *ast.CallExpr, unionSym *UnionSymbol, variantName string, scope *Scope) (Type, error) {
+	uv, exists := unionSym.VariantMap[variantName]
+	if !exists {
+		return VoidType, newSemaError(e.Pos, "union %q has no variant %q", unionSym.Name, variantName)
+	}
+	if len(e.Args) != 1 || e.Args[0].Name != "" {
+		return VoidType, newSemaError(e.Pos, "union constructor %s.%s expects 1 positional argument", unionSym.Name, variantName)
+	}
+	argType, err := a.inferExpr(e.Args[0].Value, scope)
+	if err != nil {
+		return VoidType, err
+	}
+	if !uv.Type.Equals(argType) {
+		return VoidType, newSemaError(e.Args[0].Pos, "union constructor %s.%s expects %s, got %s", unionSym.Name, variantName, uv.Type.String(), argType.String())
+	}
+	a.prog.CallInfos[e] = &CallInfo{
+		Kind:        CallUnionCtor,
+		Union:       unionSym,
+		VariantName: variantName,
+	}
+	return Type{Kind: KindUnion, Name: unionSym.Name, ModuleID: unionSym.ModuleID, GoName: unionSym.GoName}, nil
+}
+
 func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
+	// Cross-module union constructor: modAlias.Union.Variant(arg)
+	if innerFA, ok := fa.Target.(*ast.FieldAccessExpr); ok {
+		if modIdent, ok2 := innerFA.Target.(*ast.IdentExpr); ok2 {
+			if impMod, isMod := a.mod.Imports[modIdent.Name]; isMod {
+				unionSym, isUnion := impMod.Unions[innerFA.Field]
+				if !isUnion {
+					return VoidType, newSemaError(e.Pos, "module %q has no union %q", modIdent.Name, innerFA.Field)
+				}
+				if !unionSym.Public {
+					return VoidType, newSemaError(e.Pos, "union %q in module %q is private", innerFA.Field, modIdent.Name)
+				}
+				return a.inferUnionCtorCall(e, unionSym, fa.Field, scope)
+			}
+		}
+	}
+
 	if objIdent, ok := fa.Target.(*ast.IdentExpr); ok {
-		if unionSym, isUnion := a.prog.Unions[objIdent.Name]; isUnion {
-			uv, exists := unionSym.VariantMap[fa.Field]
-			if !exists {
-				return VoidType, newSemaError(e.Pos, "union %q has no variant %q", unionSym.Name, fa.Field)
+		// Cross-module function or struct constructor: modAlias.Symbol(...)
+		if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
+			if impMod.IsStdlib && impMod.ID == "std/json" && fa.Field == "stringify" {
+				if len(e.Args) != 1 {
+					return VoidType, newSemaError(e.Pos, "json.stringify expects 1 argument, got %d", len(e.Args))
+				}
+				argType, err := a.inferExpr(e.Args[0].Value, scope)
+				if err != nil {
+					return VoidType, err
+				}
+				if argType.IsVoid() {
+					return VoidType, newSemaError(e.Args[0].Pos, "json.stringify argument cannot be void")
+				}
+				a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.stringify"}
+				return StrType, nil
 			}
-			if len(e.Args) != 1 || e.Args[0].Name != "" {
-				return VoidType, newSemaError(e.Pos, "union constructor %s.%s expects 1 positional argument", unionSym.Name, fa.Field)
+			if structSym, isStruct := impMod.Structs[fa.Field]; isStruct {
+				if !structSym.Public {
+					return VoidType, newSemaError(e.Pos, "type %q in module %q is private", fa.Field, objIdent.Name)
+				}
+				return a.inferStructCtorCall(e, structSym, scope)
 			}
-			argType, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
-				return VoidType, err
+			if fnSym, isFn := impMod.Functions[fa.Field]; isFn {
+				if !fnSym.Public {
+					return VoidType, newSemaError(e.Pos, "function %q in module %q is private", fa.Field, objIdent.Name)
+				}
+				if err := a.validateFnCallArgs(e, fnSym, scope); err != nil {
+					return VoidType, err
+				}
+				a.prog.CallInfos[e] = &CallInfo{Kind: CallFunc, Fn: fnSym}
+				return fnSym.ReturnType, nil
 			}
-			if !uv.Type.Equals(argType) {
-				return VoidType, newSemaError(e.Args[0].Pos, "union constructor %s.%s expects %s, got %s", unionSym.Name, fa.Field, uv.Type.String(), argType.String())
-			}
-			a.prog.CallInfos[e] = &CallInfo{
-				Kind:        CallUnionCtor,
-				Union:       unionSym,
-				VariantName: fa.Field,
-			}
-			return Type{Kind: KindUnion, Name: unionSym.Name}, nil
+			return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
+		}
+
+		if unionSym, isUnion := a.mod.Unions[objIdent.Name]; isUnion {
+			return a.inferUnionCtorCall(e, unionSym, fa.Field, scope)
 		}
 
 		if objIdent.Name == "str" && fa.Field == "join" {
@@ -1739,10 +1962,18 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.contains", Receiver: fa.Target}
 			return BoolType, nil
 		}
+
+	case KindStruct:
+		if recvType.ModuleID == "std/json" && recvType.Name == "JsonValue" {
+			return a.inferStdJsonMethod(e, fa, scope)
+		}
+		if recvType.ModuleID == "std/cli" {
+			return a.inferStdCliMethod(e, fa, recvType.Name, scope)
+		}
 	}
 
-	// Same-module UFCS fallback
-	fnSym, exists := a.prog.Functions[fa.Field]
+	// Same-module UFCS fallback (strictly local to current module)
+	fnSym, exists := a.mod.Functions[fa.Field]
 	if !exists || len(fnSym.Params) == 0 || !fnSym.Params[0].Type.Equals(recvType) {
 		return VoidType, newSemaError(e.Pos, "no method or UFCS function %q for receiver type %s", fa.Field, recvType.String())
 	}
@@ -1840,16 +2071,189 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 	case ast.TypeQualified:
 		if len(t.Parts) == 1 {
 			name := t.Parts[0]
-			if _, ok := a.prog.Structs[name]; ok {
-				return Type{Kind: KindStruct, Name: name}, nil
+			if sym, ok := a.mod.Structs[name]; ok {
+				return Type{Kind: KindStruct, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
 			}
-			if _, ok := a.prog.Enums[name]; ok {
-				return Type{Kind: KindEnum, Name: name}, nil
+			if sym, ok := a.mod.Enums[name]; ok {
+				return Type{Kind: KindEnum, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
 			}
-			if _, ok := a.prog.Unions[name]; ok {
-				return Type{Kind: KindUnion, Name: name}, nil
+			if sym, ok := a.mod.Unions[name]; ok {
+				return Type{Kind: KindUnion, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
+			}
+		} else if len(t.Parts) == 2 {
+			modAlias, typeName := t.Parts[0], t.Parts[1]
+			impMod, ok := a.mod.Imports[modAlias]
+			if !ok {
+				return VoidType, newSemaError(t.Pos, "unknown module %q in type %q", modAlias, t.String())
+			}
+			if sym, ok := impMod.Structs[typeName]; ok {
+				if !sym.Public {
+					return VoidType, newSemaError(t.Pos, "type %q in module %q is private", typeName, modAlias)
+				}
+				return Type{Kind: KindStruct, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
+			}
+			if sym, ok := impMod.Enums[typeName]; ok {
+				if !sym.Public {
+					return VoidType, newSemaError(t.Pos, "enum %q in module %q is private", typeName, modAlias)
+				}
+				return Type{Kind: KindEnum, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
+			}
+			if sym, ok := impMod.Unions[typeName]; ok {
+				if !sym.Public {
+					return VoidType, newSemaError(t.Pos, "union %q in module %q is private", typeName, modAlias)
+				}
+				return Type{Kind: KindUnion, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
 			}
 		}
 	}
 	return VoidType, newSemaError(t.Pos, "unknown or unsupported type %q", t.String())
+}
+
+func (a *analyzer) inferStdJsonMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
+	jvType := Type{Kind: KindStruct, Name: "JsonValue", ModuleID: "std/json", GoName: "CbStdJsonValue"}
+	switch fa.Field {
+	case "isNull":
+		if len(e.Args) != 0 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.isNull() expects 0 arguments, got %d", len(e.Args))
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.isNull", Receiver: fa.Target}
+		return BoolType, nil
+	case "asStr":
+		if len(e.Args) != 0 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.asStr() expects 0 arguments, got %d", len(e.Args))
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asStr", Receiver: fa.Target}
+		return StrType, nil
+	case "asInt":
+		if len(e.Args) != 0 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.asInt() expects 0 arguments, got %d", len(e.Args))
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asInt", Receiver: fa.Target}
+		return IntType, nil
+	case "asFloat":
+		if len(e.Args) != 0 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.asFloat() expects 0 arguments, got %d", len(e.Args))
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asFloat", Receiver: fa.Target}
+		return FloatType, nil
+	case "asBool":
+		if len(e.Args) != 0 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.asBool() expects 0 arguments, got %d", len(e.Args))
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asBool", Receiver: fa.Target}
+		return BoolType, nil
+	case "get", "has":
+		if len(e.Args) != 1 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.%s() expects 1 argument, got %d", fa.Field, len(e.Args))
+		}
+		kt, err := a.inferExpr(e.Args[0].Value, scope)
+		if err != nil {
+			return VoidType, err
+		}
+		if !kt.Equals(StrType) {
+			return VoidType, newSemaError(e.Args[0].Pos, "JsonValue.%s() key must be str, got %s", fa.Field, kt.String())
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json." + fa.Field, Receiver: fa.Target}
+		if fa.Field == "has" {
+			return BoolType, nil
+		}
+		return jvType, nil
+	case "asList":
+		if len(e.Args) != 0 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.asList() expects 0 arguments, got %d", len(e.Args))
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asList", Receiver: fa.Target}
+		return Type{Kind: KindList, ElemType: &jvType}, nil
+	case "asDict":
+		if len(e.Args) != 0 {
+			return VoidType, newSemaError(e.Pos, "JsonValue.asDict() expects 0 arguments, got %d", len(e.Args))
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asDict", Receiver: fa.Target}
+		return Type{Kind: KindDict, KeyType: &StrType, ValType: &jvType}, nil
+	}
+	return VoidType, newSemaError(e.Pos, "JsonValue has no method %q", fa.Field)
+}
+
+func (a *analyzer) inferStdCliMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, typeName string, scope *Scope) (Type, error) {
+	argsType := Type{Kind: KindStruct, Name: "ParsedArgs", ModuleID: "std/cli", GoName: "CbStdCliArgs"}
+	if typeName == "Parser" {
+		switch fa.Field {
+		case "addFlag", "addOption", "addArg":
+			expected := 3
+			if fa.Field == "addOption" {
+				expected = 4
+			} else if fa.Field == "addArg" {
+				expected = 2
+			}
+			if len(e.Args) != expected {
+				return VoidType, newSemaError(e.Pos, "Parser.%s() expects %d arguments, got %d", fa.Field, expected, len(e.Args))
+			}
+			for _, arg := range e.Args {
+				at, err := a.inferExpr(arg.Value, scope)
+				if err != nil {
+					return VoidType, err
+				}
+				if !at.Equals(StrType) {
+					return VoidType, newSemaError(arg.Pos, "Parser.%s() arguments must be str, got %s", fa.Field, at.String())
+				}
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli." + fa.Field, Receiver: fa.Target}
+			return VoidType, nil
+		case "parse":
+			if len(e.Args) != 0 {
+				return VoidType, newSemaError(e.Pos, "Parser.parse() expects 0 arguments, got %d", len(e.Args))
+			}
+			if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method Parser.parse() must be inside a 'try' block or a 'can error' function")
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parse", Receiver: fa.Target}
+			return argsType, nil
+		case "parseArgs":
+			if len(e.Args) != 1 {
+				return VoidType, newSemaError(e.Pos, "Parser.parseArgs() expects 1 argument, got %d", len(e.Args))
+			}
+			at, err := a.inferExpr(e.Args[0].Value, scope)
+			if err != nil {
+				return VoidType, err
+			}
+			listStr := Type{Kind: KindList, ElemType: &StrType}
+			if !at.Equals(listStr) {
+				return VoidType, newSemaError(e.Args[0].Pos, "Parser.parseArgs() expects list[str], got %s", at.String())
+			}
+			if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method Parser.parseArgs() must be inside a 'try' block or a 'can error' function")
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parseArgs", Receiver: fa.Target}
+			return argsType, nil
+		case "printUsage":
+			if len(e.Args) != 0 {
+				return VoidType, newSemaError(e.Pos, "Parser.printUsage() expects 0 arguments, got %d", len(e.Args))
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.printUsage", Receiver: fa.Target}
+			return VoidType, nil
+		}
+		return VoidType, newSemaError(e.Pos, "Parser has no method %q", fa.Field)
+	}
+	if typeName == "ParsedArgs" {
+		switch fa.Field {
+		case "hasFlag", "getOption", "getArg":
+			if len(e.Args) != 1 {
+				return VoidType, newSemaError(e.Pos, "ParsedArgs.%s() expects 1 argument, got %d", fa.Field, len(e.Args))
+			}
+			at, err := a.inferExpr(e.Args[0].Value, scope)
+			if err != nil {
+				return VoidType, err
+			}
+			if !at.Equals(StrType) {
+				return VoidType, newSemaError(e.Args[0].Pos, "ParsedArgs.%s() expects str, got %s", fa.Field, at.String())
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli." + fa.Field, Receiver: fa.Target}
+			if fa.Field == "hasFlag" {
+				return BoolType, nil
+			}
+			return StrType, nil
+		}
+		return VoidType, newSemaError(e.Pos, "ParsedArgs has no method %q", fa.Field)
+	}
+	return VoidType, newSemaError(e.Pos, "unknown std/cli type %q", typeName)
 }

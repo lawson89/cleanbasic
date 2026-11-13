@@ -1,0 +1,36 @@
+public const MAX_HP = 100
+const SECRET_BONUS = 999
+
+public enum Role
+    Warrior
+    Mage
+end enum
+
+public type Stats
+    hp as int
+    atk as int
+end type
+
+public type Hero
+    name as str
+    role as Role
+    stats as Stats
+end type
+
+fn clampHp(hp as int) as int
+    if hp > MAX_HP
+        return MAX_HP
+    end if
+    if hp < 0
+        return 0
+    end if
+    return hp
+end fn
+
+public fn heal(byref p as Hero, amount as int)
+    p.stats.hp = clampHp(p.stats.hp + amount)
+end fn
+
+public fn describe(p as Hero) as str
+    return p.name & " hp=" & p.stats.hp
+end fn

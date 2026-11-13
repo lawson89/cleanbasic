@@ -1,6 +1,7 @@
 package sema
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -426,6 +427,141 @@ end fn
 			_, err := AnalyzeSource(tc.src, "test.cb")
 			if err == nil {
 				t.Fatalf("expected semantic error containing %q, but got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+func TestMultiFileImportErrors(t *testing.T) {
+	writeFiles := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		for rel, content := range files {
+			full := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+				t.Fatalf("mkdir failed: %v", err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+				t.Fatalf("write failed: %v", err)
+			}
+		}
+		return filepath.Join(dir, "main.cb")
+	}
+
+	tests := []struct {
+		name    string
+		files   map[string]string
+		wantErr string
+	}{
+		{
+			name: "circular import",
+			files: map[string]string{
+				"main.cb": `import "a.cb"
+fn main() as int
+    return 0
+end fn
+`,
+				"a.cb": `import "b.cb"
+`,
+				"b.cb": `import "a.cb"
+`,
+			},
+			wantErr: "circular import detected",
+		},
+		{
+			name: "missing imported file",
+			files: map[string]string{
+				"main.cb": `import "missing.cb"
+fn main() as int
+    return 0
+end fn
+`,
+			},
+			wantErr: `cannot import "missing.cb"`,
+		},
+		{
+			name: "duplicate module alias",
+			files: map[string]string{
+				"main.cb": `import "a.cb" as mod
+import "b.cb" as mod
+fn main() as int
+    return 0
+end fn
+`,
+				"a.cb": "public const X = 1\n",
+				"b.cb": "public const Y = 2\n",
+			},
+			wantErr: `duplicate import alias "mod"`,
+		},
+		{
+			name: "access private function from imported module",
+			files: map[string]string{
+				"main.cb": `import "helper.cb"
+fn main() as int
+    helper.secret()
+    return 0
+end fn
+`,
+				"helper.cb": "fn secret()\nend fn\n",
+			},
+			wantErr: `function "secret" in module "helper" is private`,
+		},
+		{
+			name: "access private struct from imported module",
+			files: map[string]string{
+				"main.cb": `import "helper.cb"
+fn main() as int
+    dim x = helper.Hidden(1)
+    return 0
+end fn
+`,
+				"helper.cb": "type Hidden\n    v as int\nend type\n",
+			},
+			wantErr: `type "Hidden" in module "helper" is private`,
+		},
+		{
+			name: "access private const from imported module",
+			files: map[string]string{
+				"main.cb": `import "helper.cb"
+fn main() as int
+    print(helper.SECRET)
+    return 0
+end fn
+`,
+				"helper.cb": "const SECRET = 42\n",
+			},
+			wantErr: `constant "SECRET" in module "helper" is private`,
+		},
+		{
+			name: "cross-module UFCS rejected",
+			files: map[string]string{
+				"main.cb": `import "helper.cb"
+fn main() as int
+    dim b = helper.Box(1)
+    b.bump()
+    return 0
+end fn
+`,
+				"helper.cb": `public type Box
+    v as int
+end type
+public fn bump(byref b as Box)
+    b.v = b.v + 1
+end fn
+`,
+			},
+			wantErr: `no method or UFCS function "bump" for receiver type Box`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := writeFiles(t, tc.files)
+			_, err := LoadAndAnalyze(entry)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)

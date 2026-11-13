@@ -1,0 +1,74 @@
+' EXPECT_OUT: exists=true
+' EXPECT_OUT: content=hello stdlib
+' EXPECT_OUT: files=1
+' EXPECT_OUT: envNonEmpty=true
+' EXPECT_OUT: exec=0:hello-exec
+' EXPECT_OUT: json=ok:42:true
+' EXPECT_OUT: cli=true:res.txt:myPat:false
+' EXPECT_OUT: cliHelp=true
+
+import "std/fs"
+import "std/os"
+import "std/json"
+import "std/cli"
+
+fn main() as int
+    dim dir = "/tmp/cb_test_08_dir"
+    dim file = dir & "/hello.txt"
+
+    try
+        fs.mkdirAll(dir)
+        fs.writeFile(file, "hello stdlib")
+        print("exists=" & fs.exists(file))
+        dim text = fs.readFile(file)
+        print("content=" & text)
+        dim entries = fs.listDir(dir)
+        print("files=" & entries.len())
+    catch e
+        print("fs error: " & e.msg)
+        return 1
+    end try
+
+    dim argsList = os.args()
+    dim argc = argsList.len()
+    if argc < 0
+        return 1
+    end if
+    dim pathEnv = os.getEnv("PATH")
+    print("envNonEmpty=" & (pathEnv.len() > 0))
+
+    try
+        dim res = os.exec("echo", ["hello-exec"])
+        print("exec=" & res.exitCode & ":" & res.stdout.trim())
+    catch e
+        print("exec error: " & e.msg)
+        return 1
+    end try
+
+    dim rawJson = json.stringify({"name": "ok", "count": "42"})
+    try
+        dim jv = json.parse(rawJson)
+        print("json=" & jv.get("name").asStr() & ":" & jv.get("count").asInt() & ":" & jv.has("name"))
+    catch e
+        print("json error: " & e.msg)
+        return 1
+    end try
+
+    dim p = cli.newParser(name="cbgrep", version="1.0", description="Search files")
+    p.addFlag("ignore-case", "i", "Case-insensitive")
+    p.addOption("output", "o", "Output path", "out.txt")
+    p.addArg("pattern", "Search pattern")
+
+    try
+        dim parsed = p.parseArgs(["-i", "--output", "res.txt", "myPat"])
+        print("cli=" & parsed.hasFlag("ignore-case") & ":" & parsed.getOption("output") & ":" & parsed.getArg("pattern") & ":" & parsed.helpRequested)
+
+        dim helpParsed = p.parseArgs(["--help"])
+        print("cliHelp=" & helpParsed.helpRequested)
+    catch e
+        print("cli error: " & e.msg)
+        return 1
+    end try
+
+    return 0
+end fn
