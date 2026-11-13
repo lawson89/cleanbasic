@@ -1,0 +1,220 @@
+import "std/cli"
+import "std/fs"
+import "std/os"
+import "std/regex"
+
+type GrepConfig
+    pattern as str
+    fixedNeedle as str
+    ignoreCase as bool
+    lineNumber as bool
+    countOnly as bool
+    invertMatch as bool
+    fixedStrings as bool
+    recursive as bool
+    showFilename as bool
+    re as regex.Regex
+end type
+
+fn lineMatches(cfg as GrepConfig, line as str) as bool
+    dim matched = false
+    if cfg.fixedStrings
+        if cfg.ignoreCase
+            matched = line.toLower().contains(cfg.fixedNeedle)
+        else
+            matched = line.contains(cfg.fixedNeedle)
+        end if
+    else
+        matched = cfg.re.isMatch(line)
+    end if
+    if cfg.invertMatch
+        return not matched
+    end if
+    return matched
+end fn
+
+fn searchText(cfg as GrepConfig, label as str, content as str) as int
+    dim normalized = content.replace("\r\n", "\n")
+    if normalized.len() == 0
+        if cfg.countOnly
+            if cfg.showFilename
+                print(label & ":0")
+            else
+                print("0")
+            end if
+        end if
+        return 0
+    end if
+
+    dim lines = normalized.split("\n")
+    dim limit = lines.len()
+    if normalized.endsWith("\n") and limit > 0
+        limit = limit - 1
+    end if
+
+    dim matches = 0
+    for idx = 0 to limit - 1
+        dim line = lines[idx]
+        if lineMatches(cfg, line)
+            matches = matches + 1
+            if not cfg.countOnly
+                dim prefix = ""
+                if cfg.showFilename
+                    prefix = prefix & label & ":"
+                end if
+                if cfg.lineNumber
+                    prefix = prefix & (idx + 1) & ":"
+                end if
+                print(prefix & line)
+            end if
+        end if
+    end for
+
+    if cfg.countOnly
+        if cfg.showFilename
+            print(label & ":" & matches)
+        else
+            print(matches)
+        end if
+    end if
+    return matches
+end fn
+
+fn collectFiles(target as str, recursive as bool, byref outFiles as list[str]) can error
+    if fs.isDir(target)
+        if not recursive
+            error("cbgrep: " & target & ": is a directory (use -r for recursive search)")
+        end if
+        dim entries = fs.listDir(target)
+        for entry in entries
+            if entry == ".git"
+                continue
+            end if
+            dim fullPath = fs.join(target, entry)
+            if fs.isDir(fullPath)
+                collectFiles(fullPath, recursive, outFiles)
+            else
+                outFiles.push(fullPath)
+            end if
+        end for
+        return
+    end if
+    if not fs.exists(target)
+        error("cbgrep: " & target & ": no such file or directory")
+    end if
+    outFiles.push(target)
+end fn
+
+fn main() as int
+    dim p = cli.newParser("cbgrep", "1.0.0", "Search for patterns in files or standard input")
+    p.addFlag("ignore-case", "i", "Ignore case distinctions")
+    p.addFlag("line-number", "n", "Prefix each line of output with the 1-based line number")
+    p.addFlag("count", "c", "Print only a count of matching lines per file")
+    p.addFlag("invert-match", "v", "Select non-matching lines")
+    p.addFlag("fixed-strings", "F", "Interpret pattern as a fixed literal string")
+    p.addFlag("recursive", "r", "Recursively search directories")
+    p.addArg("pattern", "Pattern to search for")
+
+    dim parsed = cli.ParsedArgs()
+    try
+        parsed = p.parseArgs(os.args())
+    catch e
+        print("cbgrep: " & e.msg)
+        return 2
+    end try
+
+    if parsed.helpRequested
+        p.printUsage()
+        return 0
+    end if
+
+    dim pattern = parsed.getArg("pattern")
+    dim ignoreCase = parsed.hasFlag("ignore-case")
+    dim lineNumber = parsed.hasFlag("line-number")
+    dim countOnly = parsed.hasFlag("count")
+    dim invertMatch = parsed.hasFlag("invert-match")
+    dim fixedStrings = parsed.hasFlag("fixed-strings")
+    dim recursive = parsed.hasFlag("recursive")
+
+    dim cfg = GrepConfig()
+    cfg.pattern = pattern
+    cfg.ignoreCase = ignoreCase
+    cfg.lineNumber = lineNumber
+    cfg.countOnly = countOnly
+    cfg.invertMatch = invertMatch
+    cfg.fixedStrings = fixedStrings
+    cfg.recursive = recursive
+    cfg.showFilename = false
+
+    if fixedStrings
+        if ignoreCase
+            cfg.fixedNeedle = pattern.toLower()
+        else
+            cfg.fixedNeedle = pattern
+        end if
+    else
+        dim regexPattern = pattern
+        if ignoreCase
+            regexPattern = "(?i)" & pattern
+        end if
+        try
+            cfg.re = regex.compile(regexPattern)
+        catch e
+            print("cbgrep: invalid regex: " & e.msg)
+            return 2
+        end try
+    end if
+
+    dim targets = list[str]()
+    dim posCount = parsed.positionals.len()
+    if posCount > 1
+        for i = 1 to posCount - 1
+            targets.push(parsed.positionals[i])
+        end for
+    end if
+
+    if targets.len() == 0
+        try
+            dim stdinText = os.readStdin()
+            dim matched = searchText(cfg, "(standard input)", stdinText)
+            if matched > 0
+                return 0
+            end if
+            return 1
+        catch e
+            print("cbgrep: failed reading stdin: " & e.msg)
+            return 2
+        end try
+    end if
+
+    dim files = list[str]()
+    try
+        for target in targets
+            collectFiles(target, recursive, files)
+        end for
+    catch e
+        print(e.msg)
+        return 2
+    end try
+
+    if files.len() > 1 or recursive
+        cfg.showFilename = true
+    end if
+
+    dim totalMatches = 0
+    for filePath in files
+        try
+            dim content = fs.readFile(filePath)
+            dim fileMatches = searchText(cfg, filePath, content)
+            totalMatches = totalMatches + fileMatches
+        catch e
+            print("cbgrep: " & filePath & ": " & e.msg)
+            return 2
+        end try
+    end for
+
+    if totalMatches > 0
+        return 0
+    end if
+    return 1
+end fn

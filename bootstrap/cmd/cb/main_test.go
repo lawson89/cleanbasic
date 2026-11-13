@@ -135,3 +135,114 @@ end fn
 		t.Errorf("cb run with -- output mismatch:\ngot:\n%s\nwant:\n%s", got2, want2)
 	}
 }
+
+func TestCBGrepExample(t *testing.T) {
+	cbgrepFile := filepath.Join("..", "..", "..", "examples", "cbgrep", "main.cb")
+
+	// Verify cb check passes on examples/cbgrep/main.cb
+	if code := run([]string{"check", cbgrepFile}); code != 0 {
+		t.Fatalf("cb check %s returned %d, want 0", cbgrepFile, code)
+	}
+
+	tmpDir := t.TempDir()
+	cbgrepBin := filepath.Join(tmpDir, "cbgrep")
+	if code := run([]string{"build", cbgrepFile, "-o", cbgrepBin}); code != 0 {
+		t.Fatalf("cb build %s returned %d, want 0", cbgrepFile, code)
+	}
+
+	cbBin := filepath.Join(tmpDir, "cb")
+	if out, err := exec.Command("go", "build", "-o", cbBin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("failed to build cb binary: %v\n%s", err, string(out))
+	}
+
+	// Prepare fixture files and directories
+	searchDir := filepath.Join(tmpDir, "fixtures")
+	subDir := filepath.Join(searchDir, "sub")
+	gitDir := filepath.Join(searchDir, ".git")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("mkdir subDir: %v", err)
+	}
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatalf("mkdir gitDir: %v", err)
+	}
+
+	alphaPath := filepath.Join(searchDir, "alpha.txt")
+	betaPath := filepath.Join(subDir, "beta.txt")
+	ignoredGitPath := filepath.Join(gitDir, "config")
+	if err := os.WriteFile(alphaPath, []byte("First line\nHello CleanBasic 42\nAnother line\nHELLO world\n"), 0644); err != nil {
+		t.Fatalf("write alpha.txt: %v", err)
+	}
+	if err := os.WriteFile(betaPath, []byte("nested match 99\nplain line\n"), 0644); err != nil {
+		t.Fatalf("write beta.txt: %v", err)
+	}
+	if err := os.WriteFile(ignoredGitPath, []byte("hello from git\n"), 0644); err != nil {
+		t.Fatalf("write .git/config: %v", err)
+	}
+
+	// (a) -i -n regex matching with 1-based line numbers
+	outA, err := exec.Command(cbgrepBin, "-i", "-n", "hello.*[0-9]+", alphaPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cbgrep -i -n failed: %v\n%s", err, string(outA))
+	}
+	gotA := strings.TrimSpace(strings.ReplaceAll(string(outA), "\r\n", "\n"))
+	if gotA != "2:Hello CleanBasic 42" {
+		t.Errorf("-i -n mismatch: got %q, want %q", gotA, "2:Hello CleanBasic 42")
+	}
+
+	// (b) -F -v -c fixed-string inverted match count (regex metacharacters treated literally)
+	outB, err := exec.Command(cbgrepBin, "-F", "-v", "-c", "Hello CleanBasic 42", alphaPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cbgrep -F -v -c failed: %v\n%s", err, string(outB))
+	}
+	gotB := strings.TrimSpace(strings.ReplaceAll(string(outB), "\r\n", "\n"))
+	if gotB != "3" {
+		t.Errorf("-F -v -c mismatch: got %q, want %q", gotB, "3")
+	}
+
+	// (c) -r -n recursive directory traversal (must skip .git)
+	outC, err := exec.Command(cbgrepBin, "-r", "-n", "-i", "hello|nested", searchDir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cbgrep -r -n failed: %v\n%s", err, string(outC))
+	}
+	gotC := strings.TrimSpace(strings.ReplaceAll(string(outC), "\r\n", "\n"))
+	if !strings.Contains(gotC, alphaPath+":2:Hello CleanBasic 42") ||
+		!strings.Contains(gotC, alphaPath+":4:HELLO world") ||
+		!strings.Contains(gotC, betaPath+":1:nested match 99") {
+		t.Errorf("-r -n missing expected matches in output:\n%s", gotC)
+	}
+	if strings.Contains(gotC, ".git") {
+		t.Errorf("-r -n should skip .git directory, got:\n%s", gotC)
+	}
+
+	// (d) stdin input piping via cb run examples/cbgrep/main.cb
+	cmdD := exec.Command(cbBin, "run", cbgrepFile, "-i", "-n", "cleanbasic")
+	cmdD.Stdin = strings.NewReader("one\ntwo CleanBasic\nthree\n")
+	outD, err := cmdD.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cb run cbgrep stdin failed: %v\n%s", err, string(outD))
+	}
+	gotD := strings.TrimSpace(strings.ReplaceAll(string(outD), "\r\n", "\n"))
+	if gotD != "2:two CleanBasic" {
+		t.Errorf("stdin piping mismatch: got %q, want %q", gotD, "2:two CleanBasic")
+	}
+
+	// (e) exit codes: 0 (--help), 1 (no match), 2 (invalid regex / missing file)
+	if err := exec.Command(cbgrepBin, "--help").Run(); err != nil {
+		t.Errorf("--help returned non-zero: %v", err)
+	}
+
+	noMatchCmd := exec.Command(cbgrepBin, "does_not_exist_anywhere", alphaPath)
+	if err := noMatchCmd.Run(); err == nil || noMatchCmd.ProcessState.ExitCode() != 1 {
+		t.Errorf("no-match exit code = %v, want 1", err)
+	}
+
+	badRegexCmd := exec.Command(cbgrepBin, "[unclosed", alphaPath)
+	if err := badRegexCmd.Run(); err == nil || badRegexCmd.ProcessState.ExitCode() != 2 {
+		t.Errorf("invalid regex exit code = %v, want 2", err)
+	}
+
+	missingFileCmd := exec.Command(cbgrepBin, "hello", filepath.Join(tmpDir, "missing.txt"))
+	if err := missingFileCmd.Run(); err == nil || missingFileCmd.ProcessState.ExitCode() != 2 {
+		t.Errorf("missing file exit code = %v, want 2", err)
+	}
+}
