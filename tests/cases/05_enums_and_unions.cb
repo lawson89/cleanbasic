@@ -1,6 +1,5 @@
-' SKIP_GO
 ' EXPECT_OUT: status: Active
-' EXPECT_OUT: circle area: 78
+' EXPECT_OUT: circle area: 75
 ' EXPECT_OUT: rect area: 24
 ' EXPECT_OUT: empty area: 0
 

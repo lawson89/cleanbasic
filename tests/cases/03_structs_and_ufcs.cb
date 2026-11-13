@@ -1,4 +1,3 @@
-' SKIP_GO
 ' EXPECT_OUT: default:  | 0 | false
 ' EXPECT_OUT: hero: Alice | 60 | true
 

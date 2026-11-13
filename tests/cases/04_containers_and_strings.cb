@@ -1,4 +1,3 @@
-' SKIP_GO
 ' EXPECT_OUT: containers: sum=160, loopTotal=6
 ' EXPECT_OUT: interp: User=Alice, Score=100
 ' EXPECT_OUT: prelude: alpha-beta:42

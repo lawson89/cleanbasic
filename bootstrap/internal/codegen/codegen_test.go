@@ -83,3 +83,26 @@ func TestEmitGoOmitsUnusedFmtImport(t *testing.T) {
 		t.Errorf("expected os import for main() as int exit handling, got:\n%s", goCode)
 	}
 }
+
+func TestEmitGoPhase3Cases(t *testing.T) {
+	cases := []string{
+		"../../../tests/cases/03_structs_and_ufcs.cb",
+		"../../../tests/cases/04_containers_and_strings.cb",
+		"../../../tests/cases/05_enums_and_unions.cb",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			prog, err := sema.LoadAndAnalyze(path)
+			if err != nil {
+				t.Fatalf("LoadAndAnalyze(%s) failed: %v", path, err)
+			}
+			goCode, err := EmitGo(prog)
+			if err != nil {
+				t.Fatalf("EmitGo(%s) failed: %v", path, err)
+			}
+			if !strings.Contains(goCode, "package main") {
+				t.Errorf("expected package main in generated Go for %s", path)
+			}
+		})
+	}
+}

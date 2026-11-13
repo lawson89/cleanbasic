@@ -12,6 +12,9 @@ func TestAnalyzeCase01AndCase02(t *testing.T) {
 	cases := []string{
 		filepath.Join("..", "..", "..", "tests", "cases", "01_hello_and_math.cb"),
 		filepath.Join("..", "..", "..", "tests", "cases", "02_fibonacci.cb"),
+		filepath.Join("..", "..", "..", "tests", "cases", "03_structs_and_ufcs.cb"),
+		filepath.Join("..", "..", "..", "tests", "cases", "04_containers_and_strings.cb"),
+		filepath.Join("..", "..", "..", "tests", "cases", "05_enums_and_unions.cb"),
 	}
 
 	for _, tc := range cases {
@@ -182,6 +185,138 @@ fn main() as int
 end fn
 `,
 			wantErr: `break statement is not inside a loop`,
+		},
+		{
+			name: "pass const to byref parameter",
+			src: `
+fn inc(byref x as int)
+    x = x + 1
+end fn
+fn main() as int
+    const c = 10
+    inc(c)
+    return 0
+end fn
+`,
+			wantErr: `cannot pass constant "c" to byref parameter`,
+		},
+		{
+			name: "pass literal to byref UFCS method",
+			src: `
+type Box
+    v as int
+end type
+fn bump(byref b as Box)
+    b.v = b.v + 1
+end fn
+fn main() as int
+    Box(1).bump()
+    return 0
+end fn
+`,
+			wantErr: `target expression is not mutable`,
+		},
+		{
+			name: "mutate field of const struct",
+			src: `
+type Box
+    v as int
+end type
+fn main() as int
+    const b = Box(1)
+    b.v = 2
+    return 0
+end fn
+`,
+			wantErr: `cannot mutate constant "b"`,
+		},
+		{
+			name: "untyped empty list literal",
+			src: `
+fn main() as int
+    dim xs = []
+    return 0
+end fn
+`,
+			wantErr: `cannot infer type of empty list literal []`,
+		},
+		{
+			name: "untyped empty dict literal",
+			src: `
+fn main() as int
+    dim d = {}
+    return 0
+end fn
+`,
+			wantErr: `cannot infer type of empty dict literal {}`,
+		},
+		{
+			name: "unknown named field in struct constructor",
+			src: `
+type Box
+    v as int
+end type
+fn main() as int
+    dim b = Box(nope=1)
+    return 0
+end fn
+`,
+			wantErr: `struct "Box" has no field "nope"`,
+		},
+		{
+			name: "non-existent enum variant",
+			src: `
+enum Color
+    Red
+    Blue
+end enum
+fn main() as int
+    dim c = Color.Green
+    return 0
+end fn
+`,
+			wantErr: `enum "Color" has no variant "Green"`,
+		},
+		{
+			name: "non-existent union variant",
+			src: `
+union Val
+    Num as int
+end union
+fn main() as int
+    dim v = Val.Text("hi")
+    return 0
+end fn
+`,
+			wantErr: `union "Val" has no variant "Text"`,
+		},
+		{
+			name: "invalid select case binding on non-union",
+			src: `
+fn main() as int
+    dim x = 1
+    select case x
+        case 1 as y
+            print(y)
+    end select
+    return 0
+end fn
+`,
+			wantErr: `'as' binding in select case is only supported for union types`,
+		},
+		{
+			name: "invalid select case pattern type",
+			src: `
+fn main() as int
+    dim x = 1
+    select case x
+        case "one"
+            print(1)
+    end select
+    return 0
+end fn
+`,
+			wantErr: `case pattern type str does not match select expression type int`,
 		},
 	}
 
