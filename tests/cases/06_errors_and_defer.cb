@@ -1,8 +1,6 @@
-' SKIP_GO
-' EXPECT_OUT: defer cleanup: conn=1
 ' EXPECT_OUT: caught expected error (code=408): IP cannot be empty
+' EXPECT_OUT: defer cleanup: conn=1
 ' EXPECT_OUT: success: 100
-
 type Connection
     id as int
 end type

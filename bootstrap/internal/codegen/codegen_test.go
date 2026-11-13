@@ -1,7 +1,11 @@
 package codegen
 
 import (
+	"bytes"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,6 +93,7 @@ func TestEmitGoPhase3Cases(t *testing.T) {
 		"../../../tests/cases/03_structs_and_ufcs.cb",
 		"../../../tests/cases/04_containers_and_strings.cb",
 		"../../../tests/cases/05_enums_and_unions.cb",
+		"../../../tests/cases/06_errors_and_defer.cb",
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {
@@ -104,5 +109,149 @@ func TestEmitGoPhase3Cases(t *testing.T) {
 				t.Errorf("expected package main in generated Go for %s", path)
 			}
 		})
+	}
+}
+
+func TestEmitGoDeferLIFO(t *testing.T) {
+	src := strings.Join([]string{
+		"fn work()",
+		"    defer",
+		fmt.Sprintf("        print(%q)", "first"),
+		"    end defer",
+		"    defer",
+		fmt.Sprintf("        print(%q)", "second"),
+		"    end defer",
+		"    defer",
+		fmt.Sprintf("        print(%q)", "third"),
+		"    end defer",
+		fmt.Sprintf("    print(%q)", "body"),
+		"end fn",
+		"",
+		"fn main() as int",
+		"    work()",
+		"    return 0",
+		"end fn",
+	}, "\n")
+
+	prog, err := sema.AnalyzeSource(src, "defer_lifo.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGo(prog)
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	outGoPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cmd := exec.Command("go", "run", outGoPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
+	}
+
+	got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+	want := "body\nthird\nsecond\nfirst"
+	if got != want {
+		t.Errorf("defer LIFO output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitGoPhase4EdgeCases(t *testing.T) {
+	src := strings.Join([]string{
+		"fn mightFail(n as int) as int can error",
+		"    if n < 0",
+		fmt.Sprintf("        error(%q, code=n)", "negative"),
+		"    end if",
+		"    return n * 10",
+		"end fn",
+		"",
+		"fn nonVoidEndingInTry(n as int) as int",
+		"    try",
+		"        return mightFail(n)",
+		"    catch e",
+		"        return e.code",
+		"    end try",
+		"end fn",
+		"",
+		"fn checkElseIf(n as int) as int can error",
+		"    if n == 0",
+		"        return 0",
+		"    else if mightFail(n) > 20",
+		"        return 1",
+		"    else",
+		"        return 2",
+		"    end if",
+		"end fn",
+		"",
+		"fn loopAndSelect(limit as int) as int can error",
+		"    dim sum = 0",
+		"    dim i = 1",
+		"    while mightFail(i) <= limit * 10",
+		"        sum = sum + i",
+		"        i = i + 1",
+		"    end while",
+		"    for j = 1 to mightFail(1) / 5",
+		"        sum = sum + j",
+		"    end for",
+		"    select case mightFail(2)",
+		"        case 20",
+		"            sum = sum + 100",
+		"        case else",
+		"            sum = sum + 1",
+		"    end select",
+		"    return sum",
+		"end fn",
+		"",
+		"fn main() as int",
+		"    print(nonVoidEndingInTry(3))",
+		"    print(nonVoidEndingInTry(-7))",
+		"    try",
+		"        print(checkElseIf(0))",
+		"        print(checkElseIf(3))",
+		"        print(checkElseIf(1))",
+		"        print(loopAndSelect(2))",
+		"        print(checkElseIf(-1))",
+		"    catch e",
+		"        print(e.msg)",
+		"        print(e.code)",
+		"    end try",
+		"    return 0",
+		"end fn",
+	}, "\n")
+
+	prog, err := sema.AnalyzeSource(src, "phase4_edges.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGo(prog)
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	outGoPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cmd := exec.Command("go", "run", outGoPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
+	}
+
+	got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+	want := "30\n-7\n0\n1\n2\n106\nnegative\n-1"
+	if got != want {
+		t.Errorf("phase4 edge cases output = %q, want %q\ngo:\n%s", got, want, goCode)
 	}
 }

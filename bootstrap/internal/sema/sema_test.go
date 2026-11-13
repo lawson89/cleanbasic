@@ -15,6 +15,7 @@ func TestAnalyzeCase01AndCase02(t *testing.T) {
 		filepath.Join("..", "..", "..", "tests", "cases", "03_structs_and_ufcs.cb"),
 		filepath.Join("..", "..", "..", "tests", "cases", "04_containers_and_strings.cb"),
 		filepath.Join("..", "..", "..", "tests", "cases", "05_enums_and_unions.cb"),
+		filepath.Join("..", "..", "..", "tests", "cases", "06_errors_and_defer.cb"),
 	}
 
 	for _, tc := range cases {
@@ -317,6 +318,106 @@ fn main() as int
 end fn
 `,
 			wantErr: `case pattern type str does not match select expression type int`,
+		},
+		{
+			name: "call can error function outside try in non-fallible function",
+			src: `
+fn risky() as int can error
+    return 1
+end fn
+fn main() as int
+    dim x = risky()
+    return x
+end fn
+`,
+			wantErr: `call to 'can error' function "risky" must be inside a 'try' block or a 'can error' function`,
+		},
+		{
+			name: "call error() outside try in non-fallible function",
+			src: `
+fn main() as int
+    error("boom")
+    return 0
+end fn
+`,
+			wantErr: `error() can only be called inside a 'can error' function or a 'try' block`,
+		},
+		{
+			name: "return inside defer block",
+			src: `
+fn main() as int
+    defer
+        return 1
+    end defer
+    return 0
+end fn
+`,
+			wantErr: `return statement is not allowed inside a defer block`,
+		},
+		{
+			name: "unhandled fallible call inside defer block",
+			src: `
+fn cleanup() can error
+    error("cleanup failed")
+end fn
+fn helper() can error
+    defer
+        cleanup()
+    end defer
+end fn
+fn main() as int
+    try
+        helper()
+    catch e
+        print(e.msg)
+    end try
+    return 0
+end fn
+`,
+			wantErr: `call to 'can error' function "cleanup" must be inside a 'try' block or a 'can error' function`,
+		},
+		{
+			name: "main cannot be declared can error",
+			src: `
+fn main() as int can error
+    return 0
+end fn
+`,
+			wantErr: `function "main" cannot be declared 'can error'`,
+		},
+		{
+			name: "mutate catch error binding",
+			src: `
+fn risky() can error
+    error("fail")
+end fn
+fn main() as int
+    try
+        risky()
+    catch e
+        e.msg = "mutated"
+    end try
+    return 0
+end fn
+`,
+			wantErr: `cannot mutate constant "e"`,
+		},
+		{
+			name: "access invalid field on err",
+			src: `
+fn risky() can error
+    error("fail")
+end fn
+fn main() as int
+    try
+        risky()
+    catch e
+        print(e.nope)
+    end try
+    return 0
+end fn
+`,
+			wantErr: `err type has no field "nope"`,
 		},
 	}
 

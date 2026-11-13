@@ -23,6 +23,7 @@ const (
 	KindUnion  TypeKind = "union"
 	KindList   TypeKind = "list"
 	KindDict   TypeKind = "dict"
+	KindErr    TypeKind = "err"
 )
 
 // Type represents a resolved semantic type in CleanBasic.
@@ -40,6 +41,7 @@ var (
 	FloatType = Type{Kind: KindFloat}
 	StrType   = Type{Kind: KindStr}
 	BoolType  = Type{Kind: KindBool}
+	ErrType   = Type{Kind: KindErr}
 )
 
 func (t Type) String() string {
@@ -204,6 +206,7 @@ const (
 	CallUnionCtor
 	CallMethod
 	CallUFCS
+	CallError
 )
 
 // CallInfo records the resolved target of a CallExpr for code generation.
@@ -295,9 +298,11 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 }
 
 type analyzer struct {
-	prog      *TypedProgram
-	currentFn *FnSymbol
-	loopDepth int
+	prog       *TypedProgram
+	currentFn  *FnSymbol
+	loopDepth  int
+	tryDepth   int
+	deferDepth int
 }
 
 func (a *analyzer) analyzeProgram(prog *ast.Program) error {
@@ -496,6 +501,9 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 		if !retType.IsVoid() && !retType.Equals(IntType) {
 			return newSemaError(fn.Pos, "function %q must return int (or void), got %s", fn.Name, retType.String())
 		}
+		if fn.CanError {
+			return newSemaError(fn.Pos, "function %q cannot be declared 'can error'", fn.Name)
+		}
 	}
 
 	a.prog.Functions[fn.Name] = &FnSymbol{
@@ -624,6 +632,16 @@ func blockAlwaysReturns(stmts []ast.Statement) bool {
 			if allCasesReturn && blockAlwaysReturns(s.ElseBody) {
 				return true
 			}
+		case *ast.TryCatchStmt:
+			if blockAlwaysReturns(s.TryBody) && blockAlwaysReturns(s.CatchBody) {
+				return true
+			}
+		case *ast.ExprStmt:
+			if call, ok := s.Expr.(*ast.CallExpr); ok {
+				if id, ok := call.Callee.(*ast.IdentExpr); ok && id.Name == "error" {
+					return true
+				}
+			}
 		}
 	}
 	return false
@@ -646,6 +664,10 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 		return a.analyzeForStmt(s, scope)
 	case *ast.SelectStmt:
 		return a.analyzeSelectStmt(s, scope)
+	case *ast.TryCatchStmt:
+		return a.analyzeTryCatchStmt(s, scope)
+	case *ast.DeferStmt:
+		return a.analyzeDeferStmt(s, scope)
 	case *ast.ReturnStmt:
 		return a.analyzeReturnStmt(s, scope)
 	case *ast.BreakStmt:
@@ -1038,7 +1060,59 @@ func (a *analyzer) analyzeSelectStmt(s *ast.SelectStmt, scope *Scope) error {
 	return nil
 }
 
+func (a *analyzer) analyzeTryCatchStmt(s *ast.TryCatchStmt, scope *Scope) error {
+	tryScope := NewScope(scope)
+	a.tryDepth++
+	for _, st := range s.TryBody {
+		if err := a.analyzeStmt(st, tryScope); err != nil {
+			a.tryDepth--
+			return err
+		}
+	}
+	a.tryDepth--
+
+	catchScope := NewScope(scope)
+	if err := catchScope.Define(&VarSymbol{
+		Name:    s.CatchVar,
+		Type:    ErrType,
+		IsConst: true,
+		Pos:     s.Pos,
+	}); err != nil {
+		return err
+	}
+	for _, st := range s.CatchBody {
+		if err := a.analyzeStmt(st, catchScope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *analyzer) analyzeDeferStmt(s *ast.DeferStmt, scope *Scope) error {
+	prevTryDepth := a.tryDepth
+	prevLoopDepth := a.loopDepth
+	a.tryDepth = 0
+	a.loopDepth = 0
+	a.deferDepth++
+	defer func() {
+		a.tryDepth = prevTryDepth
+		a.loopDepth = prevLoopDepth
+		a.deferDepth--
+	}()
+
+	deferScope := NewScope(scope)
+	for _, st := range s.Body {
+		if err := a.analyzeStmt(st, deferScope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *analyzer) analyzeReturnStmt(s *ast.ReturnStmt, scope *Scope) error {
+	if a.deferDepth > 0 {
+		return newSemaError(s.Pos, "return statement is not allowed inside a defer block")
+	}
 	if a.currentFn == nil {
 		return newSemaError(s.Pos, "return statement outside of function")
 	}
@@ -1270,6 +1344,16 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 	if err != nil {
 		return VoidType, err
 	}
+	if objType.Kind == KindErr {
+		switch e.Field {
+		case "msg", "file":
+			return StrType, nil
+		case "code", "line":
+			return IntType, nil
+		default:
+			return VoidType, newSemaError(e.Pos, "err type has no field %q", e.Field)
+		}
+	}
 	if objType.Kind != KindStruct {
 		return VoidType, newSemaError(e.Pos, "cannot access field %q on non-struct type %s", e.Field, objType.String())
 	}
@@ -1313,6 +1397,10 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 	calleeIdent, ok := e.Callee.(*ast.IdentExpr)
 	if !ok {
 		return VoidType, newSemaError(e.Pos, "unsupported call target")
+	}
+
+	if calleeIdent.Name == "error" {
+		return a.inferErrorCall(e, scope)
 	}
 
 	if structSym, isStruct := a.prog.Structs[calleeIdent.Name]; isStruct {
@@ -1366,11 +1454,52 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 		}
 	}
 
+	if fnSym.CanError {
+		if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+			return VoidType, newSemaError(e.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnSym.Name)
+		}
+	}
+
 	a.prog.CallInfos[e] = &CallInfo{
 		Kind: CallFunc,
 		Fn:   fnSym,
 	}
 	return fnSym.ReturnType, nil
+}
+
+func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
+	if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+		return VoidType, newSemaError(e.Pos, "error() can only be called inside a 'can error' function or a 'try' block")
+	}
+	if len(e.Args) < 1 || len(e.Args) > 2 {
+		return VoidType, newSemaError(e.Pos, "error() expects 1 or 2 argument(s), got %d", len(e.Args))
+	}
+	if e.Args[0].Name != "" && e.Args[0].Name != "msg" {
+		return VoidType, newSemaError(e.Args[0].Pos, "unknown named argument %q for error()", e.Args[0].Name)
+	}
+	msgType, err := a.inferExpr(e.Args[0].Value, scope)
+	if err != nil {
+		return VoidType, err
+	}
+	if !msgType.Equals(StrType) {
+		return VoidType, newSemaError(e.Args[0].Pos, "error() message must be str, got %s", msgType.String())
+	}
+	if len(e.Args) == 2 {
+		if e.Args[1].Name != "" && e.Args[1].Name != "code" {
+			return VoidType, newSemaError(e.Args[1].Pos, "unknown named argument %q for error()", e.Args[1].Name)
+		}
+		codeType, err := a.inferExpr(e.Args[1].Value, scope)
+		if err != nil {
+			return VoidType, err
+		}
+		if !codeType.Equals(IntType) {
+			return VoidType, newSemaError(e.Args[1].Pos, "error() code must be int, got %s", codeType.String())
+		}
+	}
+	a.prog.CallInfos[e] = &CallInfo{
+		Kind: CallError,
+	}
+	return VoidType, nil
 }
 
 func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *Scope) (Type, error) {
@@ -1657,6 +1786,12 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		}
 	}
 
+	if fnSym.CanError {
+		if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+			return VoidType, newSemaError(e.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnSym.Name)
+		}
+	}
+
 	a.prog.CallInfos[e] = &CallInfo{
 		Kind:     CallUFCS,
 		Fn:       fnSym,
@@ -1677,6 +1812,8 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 			return StrType, nil
 		case "bool":
 			return BoolType, nil
+		case "err":
+			return ErrType, nil
 		}
 	case ast.TypeList:
 		if t.ElemType == nil {

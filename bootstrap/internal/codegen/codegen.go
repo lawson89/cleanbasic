@@ -25,6 +25,9 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 	}
 
 	var helpers strings.Builder
+	if e.usedCbError {
+		helpers.WriteString("type CbError struct {\n\tmsg  string\n\tcode int64\n\tfile string\n\tline int64\n}\n\nfunc (e CbError) Error() string { return e.msg }\n\n")
+	}
 	if e.usedListGet {
 		helpers.WriteString("func cbListGet[T any](s []T, idx int64) T {\n\tvar zero T\n\tif idx < 0 || int(idx) >= len(s) {\n\t\treturn zero\n\t}\n\treturn s[idx]\n}\n\n")
 	}
@@ -79,7 +82,14 @@ type emitter struct {
 	usedDictGet      bool
 	usedDictContains bool
 	usedStrToInt     bool
+	usedCbError      bool
 	byRefVars        map[string]bool
+	currentFn        *ast.FnDecl
+	currentTryID     int
+	tryCounter       int
+	errCounter       int
+	tryUsedCatch     map[int]bool
+	liftedExprs      map[ast.Expr]string
 }
 
 func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
@@ -155,9 +165,15 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 	}
 
 	prevByRef := e.byRefVars
+	prevFn := e.currentFn
+	prevTryID := e.currentTryID
 	e.byRefVars = make(map[string]bool)
+	e.currentFn = fn
+	e.currentTryID = 0
 	defer func() {
 		e.byRefVars = prevByRef
+		e.currentFn = prevFn
+		e.currentTryID = prevTryID
 	}()
 
 	var params []string
@@ -171,13 +187,37 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 	}
 
 	retType := ""
-	if fn.ReturnType != nil {
+	if fn.CanError {
+		e.usedCbError = true
+		if fn.ReturnType != nil {
+			retType = fmt.Sprintf(" (%s, error)", e.goType(*fn.ReturnType))
+		} else {
+			retType = " error"
+		}
+	} else if fn.ReturnType != nil {
 		retType = " " + e.goType(*fn.ReturnType)
 	}
 
 	sb.WriteString(fmt.Sprintf("func %s(%s)%s {\n", name, strings.Join(params, ", "), retType))
 	for _, st := range fn.Body {
 		e.emitStmt(&sb, st, "\t")
+	}
+	if fn.ReturnType != nil {
+		if len(fn.Body) > 0 {
+			if _, isRet := fn.Body[len(fn.Body)-1].(*ast.ReturnStmt); !isRet {
+				if fn.CanError {
+					sb.WriteString(fmt.Sprintf("\treturn %s, nil\n", e.goZeroValue(fn.ReturnType)))
+				} else {
+					sb.WriteString(fmt.Sprintf("\treturn %s\n", e.goZeroValue(fn.ReturnType)))
+				}
+			}
+		}
+	} else if fn.CanError {
+		if len(fn.Body) == 0 {
+			sb.WriteString("\treturn nil\n")
+		} else if _, isRet := fn.Body[len(fn.Body)-1].(*ast.ReturnStmt); !isRet {
+			sb.WriteString("\treturn nil\n")
+		}
 	}
 	sb.WriteString("}\n")
 	return sb.String(), nil
@@ -193,6 +233,9 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		return "string"
 	case sema.KindBool:
 		return "bool"
+	case sema.KindErr:
+		e.usedCbError = true
+		return "CbError"
 	case sema.KindStruct, sema.KindEnum, sema.KindUnion:
 		return t.Name
 	case sema.KindList:
@@ -222,6 +265,9 @@ func (e *emitter) goType(t ast.TypeExpr) string {
 			return "string"
 		case "bool":
 			return "bool"
+		case "err":
+			e.usedCbError = true
+			return "CbError"
 		}
 	case ast.TypeList:
 		if t.ElemType != nil {
@@ -242,9 +288,153 @@ func (e *emitter) goType(t ast.TypeExpr) string {
 	return "any"
 }
 
+func (e *emitter) goZeroValue(t *ast.TypeExpr) string {
+	if t == nil {
+		return ""
+	}
+	switch t.Kind {
+	case ast.TypeBasic:
+		switch t.Name {
+		case "int":
+			return "int64(0)"
+		case "float":
+			return "float64(0)"
+		case "str":
+			return `""`
+		case "bool":
+			return "false"
+		case "err":
+			e.usedCbError = true
+			return "CbError{}"
+		}
+	case ast.TypeList, ast.TypeDict:
+		return "nil"
+	case ast.TypeQualified:
+		if len(t.Parts) == 1 {
+			name := t.Parts[0]
+			if e.prog != nil {
+				if e.prog.Unions[name] != nil {
+					return "nil"
+				}
+				if e.prog.Enums[name] != nil {
+					return name + "(0)"
+				}
+				if e.prog.Structs[name] != nil {
+					return name + "{}"
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("*new(%s)", e.goType(*t))
+}
+
+func (e *emitter) emitErrorJumpOrReturn(sb *strings.Builder, indent, errExpr string) {
+	if e.currentTryID > 0 {
+		if e.tryUsedCatch == nil {
+			e.tryUsedCatch = make(map[int]bool)
+		}
+		e.tryUsedCatch[e.currentTryID] = true
+		sb.WriteString(fmt.Sprintf("%s_tryErr_%d = %s\n", indent, e.currentTryID, errExpr))
+		sb.WriteString(fmt.Sprintf("%sgoto _catch_%d\n", indent, e.currentTryID))
+		return
+	}
+	if e.currentFn != nil && e.currentFn.ReturnType != nil {
+		sb.WriteString(fmt.Sprintf("%sreturn %s, %s\n", indent, e.goZeroValue(e.currentFn.ReturnType), errExpr))
+		return
+	}
+	sb.WriteString(fmt.Sprintf("%sreturn %s\n", indent, errExpr))
+}
+
+func (e *emitter) liftFallibleCalls(sb *strings.Builder, expr ast.Expr, indent string) bool {
+	if expr == nil {
+		return false
+	}
+	switch ex := expr.(type) {
+	case *ast.UnaryExpr:
+		return e.liftFallibleCalls(sb, ex.Operand, indent)
+	case *ast.BinaryExpr:
+		l := e.liftFallibleCalls(sb, ex.Left, indent)
+		r := e.liftFallibleCalls(sb, ex.Right, indent)
+		return l || r
+	case *ast.ListLitExpr:
+		any := false
+		for _, el := range ex.Elements {
+			if e.liftFallibleCalls(sb, el, indent) {
+				any = true
+			}
+		}
+		return any
+	case *ast.DictLitExpr:
+		any := false
+		for _, ent := range ex.Entries {
+			if e.liftFallibleCalls(sb, ent.Key, indent) {
+				any = true
+			}
+			if e.liftFallibleCalls(sb, ent.Value, indent) {
+				any = true
+			}
+		}
+		return any
+	case *ast.FieldAccessExpr:
+		return e.liftFallibleCalls(sb, ex.Target, indent)
+	case *ast.IndexExpr:
+		t := e.liftFallibleCalls(sb, ex.Target, indent)
+		i := e.liftFallibleCalls(sb, ex.Index, indent)
+		return t || i
+	case *ast.CallExpr:
+		if e.prog == nil {
+			return false
+		}
+		ci, hasCI := e.prog.CallInfos[ex]
+		if hasCI && ci.Receiver != nil {
+			e.liftFallibleCalls(sb, ci.Receiver, indent)
+		}
+		for _, a := range ex.Args {
+			e.liftFallibleCalls(sb, a.Value, indent)
+		}
+		if !hasCI {
+			return false
+		}
+		if ci.Kind == sema.CallError {
+			e.usedCbError = true
+			msgCode := e.emitExpr(ex.Args[0].Value)
+			codeExpr := "int64(0)"
+			if len(ex.Args) == 2 {
+				codeExpr = e.emitExpr(ex.Args[1].Value)
+			}
+			cbErr := fmt.Sprintf("CbError{msg: %s, code: %s, file: %s, line: int64(%d)}",
+				msgCode, codeExpr, strconv.Quote(ex.Pos.File), ex.Pos.Line)
+			e.emitErrorJumpOrReturn(sb, indent, cbErr)
+			return true
+		}
+		if (ci.Kind == sema.CallFunc || ci.Kind == sema.CallUFCS) && ci.Fn != nil && ci.Fn.CanError {
+			callStr := e.emitCallExprRaw(ex)
+			e.errCounter++
+			id := e.errCounter
+			errVar := fmt.Sprintf("_err_%d", id)
+			if !ci.Fn.ReturnType.IsVoid() {
+				valVar := fmt.Sprintf("_val_%d", id)
+				if e.liftedExprs == nil {
+					e.liftedExprs = make(map[ast.Expr]string)
+				}
+				e.liftedExprs[ex] = valVar
+				sb.WriteString(fmt.Sprintf("%s%s, %s := %s\n", indent, valVar, errVar, callStr))
+			} else {
+				sb.WriteString(fmt.Sprintf("%s%s := %s\n", indent, errVar, callStr))
+			}
+			sb.WriteString(fmt.Sprintf("%sif %s != nil {\n", indent, errVar))
+			e.emitErrorJumpOrReturn(sb, indent+"\t", errVar)
+			sb.WriteString(fmt.Sprintf("%s}\n", indent))
+			return true
+		}
+	}
+	return false
+}
+
 func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent string) {
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
+		e.liftFallibleCalls(sb, s.Value, indent)
 		typeStr := ""
 		if vType, ok := e.prog.VarTypes[s]; ok && !vType.IsVoid() {
 			typeStr = " " + e.goSemaType(vType)
@@ -255,36 +445,76 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		sb.WriteString(fmt.Sprintf("%s_ = %s\n", indent, s.Name))
 
 	case *ast.Assignment:
+		e.liftFallibleCalls(sb, s.Value, indent)
 		if idx, ok := s.Target.(*ast.IndexExpr); ok {
+			e.liftFallibleCalls(sb, idx.Target, indent)
+			e.liftFallibleCalls(sb, idx.Index, indent)
 			sb.WriteString(fmt.Sprintf("%s%s[%s] = %s\n", indent, e.emitExpr(idx.Target), e.emitExpr(idx.Index), e.emitExpr(s.Value)))
 		} else {
 			sb.WriteString(fmt.Sprintf("%s%s = %s\n", indent, e.emitExpr(s.Target), e.emitExpr(s.Value)))
 		}
 
 	case *ast.ExprStmt:
+		if call, ok := s.Expr.(*ast.CallExpr); ok && e.prog != nil {
+			if ci, hasCI := e.prog.CallInfos[call]; hasCI {
+				if ci.Kind == sema.CallError {
+					e.liftFallibleCalls(sb, s.Expr, indent)
+					return
+				}
+				if (ci.Kind == sema.CallFunc || ci.Kind == sema.CallUFCS) && ci.Fn != nil && ci.Fn.CanError {
+					e.liftFallibleCalls(sb, s.Expr, indent)
+					if valVar, lifted := e.liftedExprs[call]; lifted {
+						sb.WriteString(fmt.Sprintf("%s_ = %s\n", indent, valVar))
+					}
+					return
+				}
+			}
+		}
+		e.liftFallibleCalls(sb, s.Expr, indent)
 		sb.WriteString(fmt.Sprintf("%s%s\n", indent, e.emitExpr(s.Expr)))
 
 	case *ast.IfStmt:
+		e.liftFallibleCalls(sb, s.Cond, indent)
 		sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, e.emitExpr(s.Cond)))
 		for _, st := range s.ThenBody {
 			e.emitStmt(sb, st, indent+"\t")
 		}
+		elseIndent := indent
+		extraCloses := 0
 		for _, elif := range s.ElseIfs {
-			sb.WriteString(fmt.Sprintf("%s} else if %s {\n", indent, e.emitExpr(elif.Cond)))
+			var liftBuf strings.Builder
+			if e.liftFallibleCalls(&liftBuf, elif.Cond, elseIndent+"\t") {
+				sb.WriteString(fmt.Sprintf("%s} else {\n", elseIndent))
+				sb.WriteString(liftBuf.String())
+				elseIndent += "\t"
+				extraCloses++
+				sb.WriteString(fmt.Sprintf("%sif %s {\n", elseIndent, e.emitExpr(elif.Cond)))
+			} else {
+				sb.WriteString(fmt.Sprintf("%s} else if %s {\n", elseIndent, e.emitExpr(elif.Cond)))
+			}
 			for _, st := range elif.Body {
-				e.emitStmt(sb, st, indent+"\t")
+				e.emitStmt(sb, st, elseIndent+"\t")
 			}
 		}
 		if s.HasElse {
-			sb.WriteString(fmt.Sprintf("%s} else {\n", indent))
+			sb.WriteString(fmt.Sprintf("%s} else {\n", elseIndent))
 			for _, st := range s.ElseBody {
-				e.emitStmt(sb, st, indent+"\t")
+				e.emitStmt(sb, st, elseIndent+"\t")
 			}
 		}
-		sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		sb.WriteString(fmt.Sprintf("%s}\n", elseIndent))
+		for i := 0; i < extraCloses; i++ {
+			elseIndent = strings.TrimSuffix(elseIndent, "\t")
+			sb.WriteString(fmt.Sprintf("%s}\n", elseIndent))
+		}
 
 	case *ast.ForStmt:
 		if s.IsRange {
+			e.liftFallibleCalls(sb, s.Start, indent)
+			e.liftFallibleCalls(sb, s.End, indent)
+			if s.Step != nil {
+				e.liftFallibleCalls(sb, s.Step, indent)
+			}
 			if s.Step == nil {
 				sb.WriteString(fmt.Sprintf("%sfor %s := %s; %s <= %s; %s += int64(1) {\n",
 					indent, s.VarName, e.emitExpr(s.Start), s.VarName, e.emitExpr(s.End), s.VarName))
@@ -307,6 +537,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 				sb.WriteString(fmt.Sprintf("%s}\n", indent))
 			}
 		} else {
+			e.liftFallibleCalls(sb, s.Iterable, indent)
 			iterType := e.prog.ExprTypes[s.Iterable]
 			if iterType.Kind == sema.KindList {
 				sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, s.Vars[0], e.emitExpr(s.Iterable)))
@@ -327,6 +558,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		}
 
 	case *ast.SelectStmt:
+		e.liftFallibleCalls(sb, s.Target, indent)
 		if unionSym, isUnion := e.prog.SelectUnion[s]; isUnion {
 			sb.WriteString(fmt.Sprintf("%sswitch cbSwitch := (%s).(type) {\n", indent, e.emitExpr(s.Target)))
 			hasBinding := false
@@ -385,17 +617,80 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		}
 
 	case *ast.WhileStmt:
-		sb.WriteString(fmt.Sprintf("%sfor %s {\n", indent, e.emitExpr(s.Cond)))
-		for _, st := range s.Body {
+		var liftBuf strings.Builder
+		if e.liftFallibleCalls(&liftBuf, s.Cond, indent+"\t") {
+			sb.WriteString(fmt.Sprintf("%sfor {\n", indent))
+			sb.WriteString(liftBuf.String())
+			sb.WriteString(fmt.Sprintf("%s\tif !(%s) {\n%s\t\tbreak\n%s\t}\n", indent, e.emitExpr(s.Cond), indent, indent))
+			for _, st := range s.Body {
+				e.emitStmt(sb, st, indent+"\t")
+			}
+			sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		} else {
+			sb.WriteString(fmt.Sprintf("%sfor %s {\n", indent, e.emitExpr(s.Cond)))
+			for _, st := range s.Body {
+				e.emitStmt(sb, st, indent+"\t")
+			}
+			sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		}
+
+	case *ast.TryCatchStmt:
+		e.usedCbError = true
+		e.tryCounter++
+		tryID := e.tryCounter
+		prevTryID := e.currentTryID
+		sb.WriteString(fmt.Sprintf("%svar _tryErr_%d error\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s_ = _tryErr_%d\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s{\n", indent))
+		e.currentTryID = tryID
+		for _, st := range s.TryBody {
+			e.emitStmt(sb, st, indent+"\t")
+		}
+		e.currentTryID = prevTryID
+		sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		if e.tryUsedCatch == nil || !e.tryUsedCatch[tryID] {
+			sb.WriteString(fmt.Sprintf("%sif false {\n%s\tgoto _catch_%d\n%s}\n", indent, indent, tryID, indent))
+		}
+		sb.WriteString(fmt.Sprintf("%sgoto _end_try_%d\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s_catch_%d:\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s{\n", indent))
+		sb.WriteString(fmt.Sprintf("%s\tvar %s CbError\n", indent, s.CatchVar))
+		sb.WriteString(fmt.Sprintf("%s\tif _cbErr, _ok := _tryErr_%d.(CbError); _ok {\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s\t\t%s = _cbErr\n", indent, s.CatchVar))
+		sb.WriteString(fmt.Sprintf("%s\t} else {\n", indent))
+		sb.WriteString(fmt.Sprintf("%s\t\t%s = CbError{msg: _tryErr_%d.Error()}\n", indent, s.CatchVar, tryID))
+		sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
+		sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, s.CatchVar))
+		for _, st := range s.CatchBody {
 			e.emitStmt(sb, st, indent+"\t")
 		}
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		sb.WriteString(fmt.Sprintf("%s_end_try_%d:\n", indent, tryID))
+
+	case *ast.DeferStmt:
+		prevTryID := e.currentTryID
+		e.currentTryID = 0
+		sb.WriteString(fmt.Sprintf("%sdefer func() {\n", indent))
+		for _, st := range s.Body {
+			e.emitStmt(sb, st, indent+"\t")
+		}
+		sb.WriteString(fmt.Sprintf("%s}()\n", indent))
+		e.currentTryID = prevTryID
 
 	case *ast.ReturnStmt:
 		if s.Value != nil {
-			sb.WriteString(fmt.Sprintf("%sreturn %s\n", indent, e.emitExpr(s.Value)))
+			e.liftFallibleCalls(sb, s.Value, indent)
+			if e.currentFn != nil && e.currentFn.CanError {
+				sb.WriteString(fmt.Sprintf("%sreturn %s, nil\n", indent, e.emitExpr(s.Value)))
+			} else {
+				sb.WriteString(fmt.Sprintf("%sreturn %s\n", indent, e.emitExpr(s.Value)))
+			}
 		} else {
-			sb.WriteString(fmt.Sprintf("%sreturn\n", indent))
+			if e.currentFn != nil && e.currentFn.CanError {
+				sb.WriteString(fmt.Sprintf("%sreturn nil\n", indent))
+			} else {
+				sb.WriteString(fmt.Sprintf("%sreturn\n", indent))
+			}
 		}
 
 	case *ast.BreakStmt:
@@ -486,127 +781,136 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("%s[%s]", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
 
 	case *ast.CallExpr:
-		if id, ok := ex.Callee.(*ast.IdentExpr); ok && id.Name == "print" {
-			e.usedFmt = true
-			var parts []string
-			for _, a := range ex.Args {
-				parts = append(parts, fmt.Sprintf("fmt.Sprint(%s)", e.emitExpr(a.Value)))
-			}
-			if len(parts) == 0 {
-				return "fmt.Println()"
-			}
-			return fmt.Sprintf("fmt.Println(%s)", strings.Join(parts, " + "))
-		}
-
-		if e.prog != nil {
-			if ci, ok := e.prog.CallInfos[ex]; ok {
-				switch ci.Kind {
-				case sema.CallStructCtor:
-					var fields []string
-					if ci.NamedArgs {
-						for _, a := range ex.Args {
-							fields = append(fields, fmt.Sprintf("%s: %s", a.Name, e.emitExpr(a.Value)))
-						}
-					} else {
-						for _, a := range ex.Args {
-							fields = append(fields, e.emitExpr(a.Value))
-						}
-					}
-					return fmt.Sprintf("%s{%s}", ci.Struct.Name, strings.Join(fields, ", "))
-
-				case sema.CallUnionCtor:
-					return fmt.Sprintf("%s_%s{Value: %s}", ci.Union.Name, ci.VariantName, e.emitExpr(ex.Args[0].Value))
-
-				case sema.CallMethod:
-					switch ci.MethodName {
-					case "str.join":
-						e.usedStrings = true
-						return fmt.Sprintf("strings.Join(%s, %s)", e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
-					case "list.len", "dict.len", "str.len":
-						return fmt.Sprintf("int64(len(%s))", e.emitExpr(ci.Receiver))
-					case "list.push":
-						recv := e.emitExpr(ci.Receiver)
-						return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0].Value))
-					case "dict.get":
-						e.usedDictGet = true
-						return fmt.Sprintf("cbDictGet(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
-					case "dict.contains":
-						e.usedDictContains = true
-						return fmt.Sprintf("cbDictContains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
-					case "str.trim":
-						e.usedStrings = true
-						return fmt.Sprintf("strings.TrimSpace(%s)", e.emitExpr(ci.Receiver))
-					case "str.toUpper":
-						e.usedStrings = true
-						return fmt.Sprintf("strings.ToUpper(%s)", e.emitExpr(ci.Receiver))
-					case "str.toLower":
-						e.usedStrings = true
-						return fmt.Sprintf("strings.ToLower(%s)", e.emitExpr(ci.Receiver))
-					case "str.toStr":
-						return e.emitExpr(ci.Receiver)
-					case "str.toInt":
-						e.usedStrToInt = true
-						return fmt.Sprintf("cbStrToInt(%s)", e.emitExpr(ci.Receiver))
-					case "str.split":
-						e.usedStrings = true
-						return fmt.Sprintf("strings.Split(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
-					case "str.contains":
-						e.usedStrings = true
-						return fmt.Sprintf("strings.Contains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
-					}
-
-				case sema.CallUFCS:
-					var args []string
-					if ci.Fn.Params[0].ByRef {
-						if recvId, ok := ci.Receiver.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[recvId.Name] {
-							args = append(args, recvId.Name)
-						} else {
-							args = append(args, "&"+e.emitExpr(ci.Receiver))
-						}
-					} else {
-						args = append(args, e.emitExpr(ci.Receiver))
-					}
-					for i, a := range ex.Args {
-						if i+1 < len(ci.Fn.Params) && ci.Fn.Params[i+1].ByRef {
-							if argId, ok := a.Value.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
-								args = append(args, argId.Name)
-							} else {
-								args = append(args, "&"+e.emitExpr(a.Value))
-							}
-						} else {
-							args = append(args, e.emitExpr(a.Value))
-						}
-					}
-					return fmt.Sprintf("%s(%s)", ci.Fn.Name, strings.Join(args, ", "))
-				}
+		if e.liftedExprs != nil {
+			if valVar, ok := e.liftedExprs[ex]; ok {
+				return valVar
 			}
 		}
-
-		var fnSym *sema.FnSymbol
-		if id, ok := ex.Callee.(*ast.IdentExpr); ok && e.prog != nil {
-			fnSym = e.prog.Functions[id.Name]
-		}
-
-		var args []string
-		for i, a := range ex.Args {
-			if fnSym != nil && i < len(fnSym.Params) && fnSym.Params[i].ByRef {
-				if argId, ok := a.Value.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
-					args = append(args, argId.Name)
-				} else {
-					args = append(args, "&"+e.emitExpr(a.Value))
-				}
-			} else {
-				args = append(args, e.emitExpr(a.Value))
-			}
-		}
-
-		calleeName := e.emitExpr(ex.Callee)
-		if calleeName == "main" {
-			calleeName = "cb_main"
-		}
-		return fmt.Sprintf("%s(%s)", calleeName, strings.Join(args, ", "))
+		return e.emitCallExprRaw(ex)
 
 	default:
 		return "nil"
 	}
+}
+
+func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
+	if id, ok := ex.Callee.(*ast.IdentExpr); ok && id.Name == "print" {
+		e.usedFmt = true
+		var parts []string
+		for _, a := range ex.Args {
+			parts = append(parts, fmt.Sprintf("fmt.Sprint(%s)", e.emitExpr(a.Value)))
+		}
+		if len(parts) == 0 {
+			return "fmt.Println()"
+		}
+		return fmt.Sprintf("fmt.Println(%s)", strings.Join(parts, " + "))
+	}
+
+	if e.prog != nil {
+		if ci, ok := e.prog.CallInfos[ex]; ok {
+			switch ci.Kind {
+			case sema.CallStructCtor:
+				var fields []string
+				if ci.NamedArgs {
+					for _, a := range ex.Args {
+						fields = append(fields, fmt.Sprintf("%s: %s", a.Name, e.emitExpr(a.Value)))
+					}
+				} else {
+					for _, a := range ex.Args {
+						fields = append(fields, e.emitExpr(a.Value))
+					}
+				}
+				return fmt.Sprintf("%s{%s}", ci.Struct.Name, strings.Join(fields, ", "))
+
+			case sema.CallUnionCtor:
+				return fmt.Sprintf("%s_%s{Value: %s}", ci.Union.Name, ci.VariantName, e.emitExpr(ex.Args[0].Value))
+
+			case sema.CallMethod:
+				switch ci.MethodName {
+				case "str.join":
+					e.usedStrings = true
+					return fmt.Sprintf("strings.Join(%s, %s)", e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				case "list.len", "dict.len", "str.len":
+					return fmt.Sprintf("int64(len(%s))", e.emitExpr(ci.Receiver))
+				case "list.push":
+					recv := e.emitExpr(ci.Receiver)
+					return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0].Value))
+				case "dict.get":
+					e.usedDictGet = true
+					return fmt.Sprintf("cbDictGet(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				case "dict.contains":
+					e.usedDictContains = true
+					return fmt.Sprintf("cbDictContains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "str.trim":
+					e.usedStrings = true
+					return fmt.Sprintf("strings.TrimSpace(%s)", e.emitExpr(ci.Receiver))
+				case "str.toUpper":
+					e.usedStrings = true
+					return fmt.Sprintf("strings.ToUpper(%s)", e.emitExpr(ci.Receiver))
+				case "str.toLower":
+					e.usedStrings = true
+					return fmt.Sprintf("strings.ToLower(%s)", e.emitExpr(ci.Receiver))
+				case "str.toStr":
+					return e.emitExpr(ci.Receiver)
+				case "str.toInt":
+					e.usedStrToInt = true
+					return fmt.Sprintf("cbStrToInt(%s)", e.emitExpr(ci.Receiver))
+				case "str.split":
+					e.usedStrings = true
+					return fmt.Sprintf("strings.Split(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "str.contains":
+					e.usedStrings = true
+					return fmt.Sprintf("strings.Contains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				}
+
+			case sema.CallUFCS:
+				var args []string
+				if ci.Fn.Params[0].ByRef {
+					if recvId, ok := ci.Receiver.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[recvId.Name] {
+						args = append(args, recvId.Name)
+					} else {
+						args = append(args, "&"+e.emitExpr(ci.Receiver))
+					}
+				} else {
+					args = append(args, e.emitExpr(ci.Receiver))
+				}
+				for i, a := range ex.Args {
+					if i+1 < len(ci.Fn.Params) && ci.Fn.Params[i+1].ByRef {
+						if argId, ok := a.Value.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
+							args = append(args, argId.Name)
+						} else {
+							args = append(args, "&"+e.emitExpr(a.Value))
+						}
+					} else {
+						args = append(args, e.emitExpr(a.Value))
+					}
+				}
+				return fmt.Sprintf("%s(%s)", ci.Fn.Name, strings.Join(args, ", "))
+			}
+		}
+	}
+
+	var fnSym *sema.FnSymbol
+	if id, ok := ex.Callee.(*ast.IdentExpr); ok && e.prog != nil {
+		fnSym = e.prog.Functions[id.Name]
+	}
+
+	var args []string
+	for i, a := range ex.Args {
+		if fnSym != nil && i < len(fnSym.Params) && fnSym.Params[i].ByRef {
+			if argId, ok := a.Value.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
+				args = append(args, argId.Name)
+			} else {
+				args = append(args, "&"+e.emitExpr(a.Value))
+			}
+		} else {
+			args = append(args, e.emitExpr(a.Value))
+		}
+	}
+
+	calleeName := e.emitExpr(ex.Callee)
+	if calleeName == "main" {
+		calleeName = "cb_main"
+	}
+	return fmt.Sprintf("%s(%s)", calleeName, strings.Join(args, ", "))
 }
