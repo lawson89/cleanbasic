@@ -569,3 +569,92 @@ end fn
 		})
 	}
 }
+
+func TestStdRegexNewStdlibAndStrMethods(t *testing.T) {
+	src := `import "std/fs"
+import "std/os"
+import "std/regex"
+
+fn main() as int
+    dim isD as bool = fs.isDir(".")
+    dim joined as str = fs.join("a", "b.cb")
+    dim baseName as str = fs.base(joined)
+    dim dirName as str = fs.dir(joined)
+    dim extName as str = fs.ext(joined)
+
+    dim okStart as bool = baseName.startsWith("b")
+    dim okEnd as bool = baseName.endsWith(".cb")
+    dim idx as int = baseName.indexOf(".cb")
+    dim rep as str = baseName.replace(".cb", ".go")
+
+    if not isD or not okStart or not okEnd or idx < 0 or rep == "" or dirName == "" or extName == ""
+        return 1
+    end if
+
+    try
+        dim cwd as str = os.cwd()
+        dim stdinText as str = os.readStdin()
+        dim re as regex.Regex = regex.compile("[0-9]+")
+        dim m1 as bool = re.isMatch("abc123")
+        dim m2 as bool = regex.match("[a-z]+", "abc")
+        dim f1 as str = re.find("a12b34")
+        dim fAll as list[str] = re.findAll("a12b34")
+        dim rAll as str = re.replaceAll("a12b34", "#")
+        if cwd == "" and stdinText == "" and m1 and m2 and f1 == "" and fAll.len() == 0 and rAll == ""
+            return 0
+        end if
+    catch e
+        print(e.msg)
+    end try
+    return 0
+end fn
+`
+	if _, err := AnalyzeSource(src, "valid_new_stdlib.cb"); err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+
+	errCases := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name: "regex.compile outside fallible context",
+			src: `import "std/regex"
+fn main()
+    dim re = regex.compile("[0-9]+")
+end fn
+`,
+			wantErr: "must be inside a 'try' block or a 'can error' function",
+		},
+		{
+			name: "os.readStdin outside fallible context",
+			src: `import "std/os"
+fn main()
+    dim s = os.readStdin()
+end fn
+`,
+			wantErr: "must be inside a 'try' block or a 'can error' function",
+		},
+		{
+			name: "str.replace wrong arg count",
+			src: `fn main()
+    dim s = "abc".replace("a")
+end fn
+`,
+			wantErr: "str.replace() expects 2 argument(s), got 1",
+		},
+	}
+
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := AnalyzeSource(tc.src, tc.name+".cb")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}

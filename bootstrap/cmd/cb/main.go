@@ -144,9 +144,15 @@ func runGoToolInTempDir(pattern, goCode, subcmd string, extraArgs ...string) int
 		return 1
 	}
 
-	cmdArgs := append([]string{subcmd}, extraArgs...)
-	cmdArgs = append(cmdArgs, mainGoPath)
+	var cmdArgs []string
+	if subcmd == "run" {
+		cmdArgs = append([]string{subcmd, mainGoPath}, extraArgs...)
+	} else {
+		cmdArgs = append([]string{subcmd}, extraArgs...)
+		cmdArgs = append(cmdArgs, mainGoPath)
+	}
 	cmd := exec.Command("go", cmdArgs...)
+	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -214,9 +220,21 @@ func runBuild(args []string) int {
 }
 
 func runExec(args []string) int {
-	filePath, _, code := parseFileAndOutArgs(args, false)
-	if code != 0 {
-		return code
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "error: missing input .cb file path")
+		printUsage()
+		return 2
+	}
+	filePath := args[0]
+	if strings.HasPrefix(filePath, "-") {
+		fmt.Fprintf(os.Stderr, "unknown flag: %s\n", filePath)
+		printUsage()
+		return 2
+	}
+
+	progArgs := args[1:]
+	if len(progArgs) > 0 && progArgs[0] == "--" {
+		progArgs = progArgs[1:]
 	}
 
 	goCode, code := transpileToGo(filePath)
@@ -224,7 +242,7 @@ func runExec(args []string) int {
 		return code
 	}
 
-	return runGoToolInTempDir("cb-run-*", goCode, "run")
+	return runGoToolInTempDir("cb-run-*", goCode, "run", progArgs...)
 }
 
 func parseFileAndOutArgs(args []string, allowOutputFlag bool) (string, string, int) {
@@ -272,5 +290,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cb check <file.cb>")
 	fmt.Fprintln(os.Stderr, "  cb emit <file.cb> [-o <out.go>]")
 	fmt.Fprintln(os.Stderr, "  cb build <file.cb> [-o <bin>]")
-	fmt.Fprintln(os.Stderr, "  cb run <file.cb>")
+	fmt.Fprintln(os.Stderr, "  cb run <file.cb> [args...]")
 }

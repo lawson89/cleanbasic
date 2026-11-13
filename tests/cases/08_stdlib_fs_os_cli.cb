@@ -6,11 +6,16 @@
 ' EXPECT_OUT: json=ok:42:true
 ' EXPECT_OUT: cli=true:res.txt:myPat:false
 ' EXPECT_OUT: cliHelp=true
+' EXPECT_OUT: paths=true:false:hello.txt:/tmp/cb_test_08_dir:.txt
+' EXPECT_OUT: cwdNonEmpty=true
+' EXPECT_OUT: strMethods=true:true:6:-1:hello-stdlib
+' EXPECT_OUT: regex=true:12:12,34:aXbX:true
 
 import "std/fs"
 import "std/os"
 import "std/json"
 import "std/cli"
+import "std/regex"
 
 fn main() as int
     dim dir = "/tmp/cb_test_08_dir"
@@ -67,6 +72,29 @@ fn main() as int
         print("cliHelp=" & helpParsed.helpRequested)
     catch e
         print("cli error: " & e.msg)
+        return 1
+    end try
+
+    dim joined = fs.join(dir, "hello.txt")
+    print("paths=" & fs.isDir(dir) & ":" & fs.isDir(joined) & ":" & fs.base(joined) & ":" & fs.dir(joined) & ":" & fs.ext(joined))
+
+    try
+        dim cwd = os.cwd()
+        print("cwdNonEmpty=" & (cwd.len() > 0))
+    catch e
+        print("cwd error: " & e.msg)
+        return 1
+    end try
+
+    dim sample = "hello_stdlib"
+    print("strMethods=" & sample.startsWith("hello") & ":" & sample.endsWith("stdlib") & ":" & sample.indexOf("stdlib") & ":" & sample.indexOf("missing") & ":" & sample.replace("_", "-"))
+
+    try
+        dim re = regex.compile("[0-9]+")
+        dim directMatch = regex.match("^a[0-9]+", "a12b34")
+        print("regex=" & re.isMatch("a12b34") & ":" & re.find("a12b34") & ":" & str.join(re.findAll("a12b34"), ",") & ":" & re.replaceAll("a12b34", "X") & ":" & directMatch)
+    catch e
+        print("regex error: " & e.msg)
         return 1
     end try
 

@@ -81,3 +81,57 @@ func TestCLICheckEmitBuildAndRun(t *testing.T) {
 		t.Fatalf("cb check on invalid file returned %d, want 1", code)
 	}
 }
+
+func TestCLIRunForwardsArgsAndStdin(t *testing.T) {
+	tmpDir := t.TempDir()
+	cbFile := filepath.Join(tmpDir, "echo_args.cb")
+	src := `import "std/os"
+
+fn main() as int
+    print("args=" & str.join(os.args(), ","))
+    try
+        dim input = os.readStdin()
+        print("stdin=" & input.trim())
+    catch e
+        print("err=" & e.msg)
+        return 1
+    end try
+    return 0
+end fn
+`
+	if err := os.WriteFile(cbFile, []byte(src), 0644); err != nil {
+		t.Fatalf("failed to write echo_args.cb: %v", err)
+	}
+
+	cbBin := filepath.Join(tmpDir, "cb")
+	buildCmd := exec.Command("go", "build", "-o", cbBin, ".")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build cb binary: %v\n%s", err, string(out))
+	}
+
+	// Test direct trailing args with stdin
+	cmd1 := exec.Command(cbBin, "run", cbFile, "alpha", "-n", "beta")
+	cmd1.Stdin = strings.NewReader("hello from stdin\n")
+	out1, err := cmd1.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cb run failed: %v\n%s", err, string(out1))
+	}
+	got1 := strings.TrimSpace(strings.ReplaceAll(string(out1), "\r\n", "\n"))
+	want1 := "args=alpha,-n,beta\nstdin=hello from stdin"
+	if got1 != want1 {
+		t.Errorf("cb run output mismatch:\ngot:\n%s\nwant:\n%s", got1, want1)
+	}
+
+	// Test optional -- separator
+	cmd2 := exec.Command(cbBin, "run", cbFile, "--", "--flag", "val")
+	cmd2.Stdin = strings.NewReader("piped")
+	out2, err := cmd2.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cb run with -- failed: %v\n%s", err, string(out2))
+	}
+	got2 := strings.TrimSpace(strings.ReplaceAll(string(out2), "\r\n", "\n"))
+	want2 := "args=--flag,val\nstdin=piped"
+	if got2 != want2 {
+		t.Errorf("cb run with -- output mismatch:\ngot:\n%s\nwant:\n%s", got2, want2)
+	}
+}

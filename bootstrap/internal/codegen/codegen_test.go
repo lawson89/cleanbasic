@@ -354,4 +354,71 @@ end fn
 			t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
 		}
 	})
+
+	t.Run("std/regex, fs path helpers, os.cwd, and str methods", func(t *testing.T) {
+		src := `import "std/fs"
+import "std/os"
+import "std/regex"
+
+fn main()
+	dim p = fs.join("dir", "hello.cb")
+	print(fs.base(p) & ":" & fs.dir(p) & ":" & fs.ext(p))
+	print(fs.isDir("."))
+
+	dim s = "hello_world.cb"
+	print(s.startsWith("hello") & ":" & s.endsWith(".cb") & ":" & s.indexOf("world") & ":" & s.indexOf("nope") & ":" & s.replace("_", "-"))
+
+	try
+		dim cwd = os.cwd()
+		print(cwd.len() > 0)
+
+		dim re = regex.compile("[0-9]+")
+		print(re.isMatch("ab12cd") & ":" & re.find("ab12cd34") & ":" & str.join(re.findAll("ab12cd34"), ",") & ":" & re.replaceAll("ab12cd34", "X"))
+		print(regex.match("^foo", "foobar"))
+	catch e
+		print("err:" & e.msg)
+	end try
+
+	try
+		dim bad = regex.compile("[unclosed")
+		print(bad.find("x"))
+	catch e
+		print("bad-regex-caught")
+	end try
+end fn
+`
+		prog, err := sema.AnalyzeSource(src, "new_stdlib_runtime.cb")
+		if err != nil {
+			t.Fatalf("AnalyzeSource failed: %v", err)
+		}
+		goCode, err := EmitGo(prog)
+		if err != nil {
+			t.Fatalf("EmitGo failed: %v", err)
+		}
+		tmpDir := t.TempDir()
+		outGoPath := filepath.Join(tmpDir, "main.go")
+		if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		cmd := exec.Command("go", "run", outGoPath)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
+		}
+		got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+		want := strings.Join([]string{
+			"hello.cb:dir:.cb",
+			"true",
+			"true:true:6:-1:hello-world.cb",
+			"true",
+			"true:12:12,34:abXcdX",
+			"true",
+			"bad-regex-caught",
+		}, "\n")
+		if got != want {
+			t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
+		}
+	})
 }

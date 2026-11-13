@@ -1887,12 +1887,24 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.split", Receiver: fa.Target}
 			return Type{Kind: KindList, ElemType: &StrType}, nil
-		case "contains":
-			if err := a.expectPositionalArgs(e, "str.contains", scope, StrType); err != nil {
+		case "contains", "startsWith", "endsWith":
+			if err := a.expectPositionalArgs(e, "str."+fa.Field, scope, StrType); err != nil {
 				return VoidType, err
 			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.contains", Receiver: fa.Target}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str." + fa.Field, Receiver: fa.Target}
 			return BoolType, nil
+		case "indexOf":
+			if err := a.expectPositionalArgs(e, "str.indexOf", scope, StrType); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.indexOf", Receiver: fa.Target}
+			return IntType, nil
+		case "replace":
+			if err := a.expectPositionalArgs(e, "str.replace", scope, StrType, StrType); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.replace", Receiver: fa.Target}
+			return StrType, nil
 		}
 
 	case KindStruct:
@@ -1901,6 +1913,9 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		}
 		if recvType.ModuleID == "std/cli" {
 			return a.inferStdCliMethod(e, fa, recvType.Name, scope)
+		}
+		if recvType.ModuleID == "std/regex" && recvType.Name == "Regex" {
+			return a.inferStdRegexMethod(e, fa, scope)
 		}
 	}
 
@@ -2044,6 +2059,36 @@ func (a *analyzer) inferStdJsonMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, 
 		return jvType, nil
 	}
 	return VoidType, newSemaError(e.Pos, "JsonValue has no method %q", fa.Field)
+}
+
+func (a *analyzer) inferStdRegexMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
+	switch fa.Field {
+	case "isMatch":
+		if err := a.expectPositionalArgs(e, "Regex.isMatch", scope, StrType); err != nil {
+			return VoidType, err
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.isMatch", Receiver: fa.Target}
+		return BoolType, nil
+	case "find":
+		if err := a.expectPositionalArgs(e, "Regex.find", scope, StrType); err != nil {
+			return VoidType, err
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.find", Receiver: fa.Target}
+		return StrType, nil
+	case "findAll":
+		if err := a.expectPositionalArgs(e, "Regex.findAll", scope, StrType); err != nil {
+			return VoidType, err
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.findAll", Receiver: fa.Target}
+		return Type{Kind: KindList, ElemType: &StrType}, nil
+	case "replaceAll":
+		if err := a.expectPositionalArgs(e, "Regex.replaceAll", scope, StrType, StrType); err != nil {
+			return VoidType, err
+		}
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.replaceAll", Receiver: fa.Target}
+		return StrType, nil
+	}
+	return VoidType, newSemaError(e.Pos, "Regex has no method %q", fa.Field)
 }
 
 func (a *analyzer) inferStdCliMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, typeName string, scope *Scope) (Type, error) {

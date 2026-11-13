@@ -54,10 +54,17 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 
 	if e.usedStdFs {
 		e.useImport("os")
+		e.useImport("path/filepath")
 		e.usedCbError = true
 	}
 	if e.usedStdOs {
 		e.useImport("os")
+		e.useImport("io")
+		e.usedCbError = true
+	}
+	if e.usedStdRegex {
+		e.useImport("regexp")
+		e.usedCbError = true
 	}
 	if e.usedStdOsExec {
 		e.useImport("bytes")
@@ -129,6 +136,7 @@ type emitter struct {
 	usedStdOsExec    bool
 	usedStdJson      bool
 	usedStdCli       bool
+	usedStdRegex     bool
 	byRefVars        map[string]bool
 	currentFn        *ast.FnDecl
 	currentTryID     int
@@ -158,6 +166,8 @@ func (e *emitter) markStdlibUsage(goName string) {
 		e.usedStdJson = true
 	case strings.HasPrefix(goName, "cbStdCli"):
 		e.usedStdCli = true
+	case strings.HasPrefix(goName, "cbStdRegex"):
+		e.usedStdRegex = true
 	}
 }
 
@@ -345,6 +355,8 @@ func (e *emitter) goSemaType(t sema.Type) string {
 			e.usedStdJson = true
 		case "std/cli":
 			e.usedStdCli = true
+		case "std/regex":
+			e.usedStdRegex = true
 		}
 		if t.GoName != "" {
 			return t.GoName
@@ -962,6 +974,25 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				case "str.contains":
 					e.useImport("strings")
 					return fmt.Sprintf("strings.Contains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "str.startsWith":
+					e.useImport("strings")
+					return fmt.Sprintf("strings.HasPrefix(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "str.endsWith":
+					e.useImport("strings")
+					return fmt.Sprintf("strings.HasSuffix(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "str.indexOf":
+					e.useImport("strings")
+					return fmt.Sprintf("int64(strings.Index(%s, %s))", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "str.replace":
+					e.useImport("strings")
+					return fmt.Sprintf("strings.ReplaceAll(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				case "std/regex.isMatch", "std/regex.find", "std/regex.findAll":
+					e.usedStdRegex = true
+					method := strings.TrimPrefix(ci.MethodName, "std/regex.")
+					return fmt.Sprintf("%s.%s(%s)", e.emitExpr(ci.Receiver), method, e.emitExpr(ex.Args[0].Value))
+				case "std/regex.replaceAll":
+					e.usedStdRegex = true
+					return fmt.Sprintf("%s.replaceAll(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
 				case "std/json.stringify":
 					e.usedStdJson = true
 					return fmt.Sprintf("cbStdJsonStringify(%s)", e.emitExpr(ex.Args[0].Value))

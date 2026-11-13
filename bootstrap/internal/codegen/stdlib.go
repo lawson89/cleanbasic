@@ -18,6 +18,9 @@ func (e *emitter) emitStdlibHelpers(sb *strings.Builder) {
 	if e.usedStdCli {
 		sb.WriteString(stdCliHelpers)
 	}
+	if e.usedStdRegex {
+		sb.WriteString(stdRegexHelpers)
+	}
 }
 
 const stdFsHelpers = `func cbStdFsReadFile(path string) (string, error) {
@@ -59,6 +62,27 @@ func cbStdFsListDir(path string) ([]string, error) {
 	return out, nil
 }
 
+func cbStdFsIsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func cbStdFsJoin(a string, b string) string {
+	return filepath.Join(a, b)
+}
+
+func cbStdFsBase(path string) string {
+	return filepath.Base(path)
+}
+
+func cbStdFsDir(path string) string {
+	return filepath.Dir(path)
+}
+
+func cbStdFsExt(path string) string {
+	return filepath.Ext(path)
+}
+
 `
 
 const stdOsHelpers = `type CbStdOsExecResult struct {
@@ -80,6 +104,64 @@ func cbStdOsExit(code int64) {
 
 func cbStdOsGetEnv(key string) string {
 	return os.Getenv(key)
+}
+
+func cbStdOsReadStdin() (string, error) {
+	b, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", CbError{msg: err.Error()}
+	}
+	return string(b), nil
+}
+
+func cbStdOsCwd() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", CbError{msg: err.Error()}
+	}
+	return dir, nil
+}
+
+`
+
+const stdRegexHelpers = `type CbStdRegex struct {
+	re *regexp.Regexp
+}
+
+func cbStdRegexCompile(pattern string) (*CbStdRegex, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, CbError{msg: err.Error()}
+	}
+	return &CbStdRegex{re: re}, nil
+}
+
+func cbStdRegexMatch(pattern string, text string) (bool, error) {
+	matched, err := regexp.MatchString(pattern, text)
+	if err != nil {
+		return false, CbError{msg: err.Error()}
+	}
+	return matched, nil
+}
+
+func (r *CbStdRegex) isMatch(text string) bool {
+	return r.re.MatchString(text)
+}
+
+func (r *CbStdRegex) find(text string) string {
+	return r.re.FindString(text)
+}
+
+func (r *CbStdRegex) findAll(text string) []string {
+	res := r.re.FindAllString(text, -1)
+	if res == nil {
+		return []string{}
+	}
+	return res
+}
+
+func (r *CbStdRegex) replaceAll(text string, repl string) string {
+	return r.re.ReplaceAllString(text, repl)
 }
 
 `

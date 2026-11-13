@@ -225,6 +225,8 @@ func (l *moduleLoader) getOrCreateStdlib(modPath string, pos token.Position) (*M
 		mod = buildStdJsonModule()
 	case "std/cli":
 		mod = buildStdCliModule()
+	case "std/regex":
+		mod = buildStdRegexModule()
 	default:
 		return nil, newSemaError(pos, "unknown standard library module %q", modPath)
 	}
@@ -278,6 +280,41 @@ func buildStdFsModule() *ModuleInfo {
 		CanError:   true,
 		Public:     true,
 	}
+	m.Functions["isDir"] = &FnSymbol{
+		Name:       "isDir",
+		GoName:     "cbStdFsIsDir",
+		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
+		ReturnType: BoolType,
+		Public:     true,
+	}
+	m.Functions["join"] = &FnSymbol{
+		Name:       "join",
+		GoName:     "cbStdFsJoin",
+		Params:     []ParamSymbol{{Name: "a", Type: StrType}, {Name: "b", Type: StrType}},
+		ReturnType: StrType,
+		Public:     true,
+	}
+	m.Functions["base"] = &FnSymbol{
+		Name:       "base",
+		GoName:     "cbStdFsBase",
+		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
+		ReturnType: StrType,
+		Public:     true,
+	}
+	m.Functions["dir"] = &FnSymbol{
+		Name:       "dir",
+		GoName:     "cbStdFsDir",
+		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
+		ReturnType: StrType,
+		Public:     true,
+	}
+	m.Functions["ext"] = &FnSymbol{
+		Name:       "ext",
+		GoName:     "cbStdFsExt",
+		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
+		ReturnType: StrType,
+		Public:     true,
+	}
 	return m
 }
 
@@ -329,6 +366,20 @@ func buildStdOsModule() *ModuleInfo {
 		GoName:     "cbStdOsExec",
 		Params:     []ParamSymbol{{Name: "cmd", Type: StrType}, {Name: "args", Type: listStr}},
 		ReturnType: execResultType,
+		CanError:   true,
+		Public:     true,
+	}
+	m.Functions["readStdin"] = &FnSymbol{
+		Name:       "readStdin",
+		GoName:     "cbStdOsReadStdin",
+		ReturnType: StrType,
+		CanError:   true,
+		Public:     true,
+	}
+	m.Functions["cwd"] = &FnSymbol{
+		Name:       "cwd",
+		GoName:     "cbStdOsCwd",
+		ReturnType: StrType,
 		CanError:   true,
 		Public:     true,
 	}
@@ -403,6 +454,38 @@ func buildStdCliModule() *ModuleInfo {
 			{Name: "description", Type: StrType},
 		},
 		ReturnType: parserType,
+		Public:     true,
+	}
+	return m
+}
+
+func buildStdRegexModule() *ModuleInfo {
+	m := newModuleInfo("std/regex", "std/regex", false, true, nil)
+
+	regexStruct := &StructSymbol{
+		Name:     "Regex",
+		GoName:   "*CbStdRegex",
+		ModuleID: "std/regex",
+		Public:   true,
+		FieldMap: make(map[string]FieldSymbol),
+	}
+	m.Structs["Regex"] = regexStruct
+	regexType := Type{Kind: KindStruct, Name: "Regex", ModuleID: "std/regex", GoName: "*CbStdRegex"}
+
+	m.Functions["compile"] = &FnSymbol{
+		Name:       "compile",
+		GoName:     "cbStdRegexCompile",
+		Params:     []ParamSymbol{{Name: "pattern", Type: StrType}},
+		ReturnType: regexType,
+		CanError:   true,
+		Public:     true,
+	}
+	m.Functions["match"] = &FnSymbol{
+		Name:       "match",
+		GoName:     "cbStdRegexMatch",
+		Params:     []ParamSymbol{{Name: "pattern", Type: StrType}, {Name: "text", Type: StrType}},
+		ReturnType: BoolType,
+		CanError:   true,
 		Public:     true,
 	}
 	return m
