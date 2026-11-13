@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"cleanbasic/bootstrap/internal/ast"
@@ -188,7 +189,7 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 		targetPath := filepath.Clean(filepath.Join(curDir, filepath.FromSlash(imp.Path)))
 		if l.state[targetPath] == 1 {
 			targetID := l.canonicalID(targetPath)
-			cycle := append([]string{}, l.stack...)
+			cycle := slices.Clone(l.stack)
 			cycle = append(cycle, targetID)
 			return nil, newSemaError(imp.Pos, "circular import detected: %s", strings.Join(cycle, " -> "))
 		}

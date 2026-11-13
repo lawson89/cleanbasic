@@ -249,6 +249,8 @@ type CallInfo struct {
 	VariantName string
 	MethodName  string
 	Receiver    ast.Expr
+	CanError    bool
+	HasValue    bool
 }
 
 // TypedProgram holds the AST and semantic type information for an analyzed CleanBasic program.
@@ -270,9 +272,6 @@ type TypedProgram struct {
 	SelectUnion  map[*ast.SelectStmt]*UnionSymbol
 	GlobalVars   *Scope
 }
-
-// AnalyzedProgram is an alias for TypedProgram for backwards compatibility.
-type AnalyzedProgram = TypedProgram
 
 // LoadAndAnalyze reads, parses, and semantically analyzes the CleanBasic file at entryPath.
 func LoadAndAnalyze(entryPath string) (*TypedProgram, error) {
@@ -1000,16 +999,7 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list or dict, got %s", iterType.String())
 		}
 
-		a.loopDepth++
-		defer func() {
-			a.loopDepth--
-		}()
-		for _, st := range s.Body {
-			if err := a.analyzeStmt(st, loopScope); err != nil {
-				return err
-			}
-		}
-		return nil
+		return a.analyzeLoopBody(s.Body, loopScope)
 	}
 
 	startType, err := a.inferExpr(s.Start, scope)
@@ -1048,11 +1038,15 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 		return err
 	}
 
+	return a.analyzeLoopBody(s.Body, loopScope)
+}
+
+func (a *analyzer) analyzeLoopBody(stmts []ast.Statement, loopScope *Scope) error {
 	a.loopDepth++
 	defer func() {
 		a.loopDepth--
 	}()
-	for _, st := range s.Body {
+	for _, st := range stmts {
 		if err := a.analyzeStmt(st, loopScope); err != nil {
 			return err
 		}
@@ -1557,50 +1551,25 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 		return fnSym.ReturnType, nil
 	}
 
-	if len(e.Args) != len(fnSym.Params) {
-		return VoidType, newSemaError(e.Pos, "function %q expects %d argument(s), got %d", fnSym.Name, len(fnSym.Params), len(e.Args))
-	}
-
-	for i, arg := range e.Args {
-		param := fnSym.Params[i]
-		if arg.Name != "" && arg.Name != param.Name {
-			return VoidType, newSemaError(arg.Pos, "named argument %q does not match parameter %q of function %q", arg.Name, param.Name, fnSym.Name)
-		}
-		argType, err := a.inferExpr(arg.Value, scope)
-		if err != nil {
-			return VoidType, err
-		}
-		if !param.Type.Equals(argType) {
-			return VoidType, newSemaError(arg.Pos, "argument %d (%q) to function %q has type %s, expected %s",
-				i+1, param.Name, fnSym.Name, argType.String(), param.Type.String())
-		}
-		if param.ByRef {
-			argIdent, isIdent := arg.Value.(*ast.IdentExpr)
-			if !isIdent {
-				return VoidType, newSemaError(arg.Pos, "argument %d (%q) to byref parameter of %q must be a mutable variable", i+1, param.Name, fnSym.Name)
-			}
-			sym, found := scope.Lookup(argIdent.Name)
-			if !found || sym.IsConst {
-				return VoidType, newSemaError(arg.Pos, "cannot pass constant %q to byref parameter %q of %q", argIdent.Name, param.Name, fnSym.Name)
-			}
-		}
-	}
-
-	if fnSym.CanError {
-		if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
-			return VoidType, newSemaError(e.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnSym.Name)
-		}
+	if err := a.validateCallArgs(e.Pos, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
+		return VoidType, err
 	}
 
 	a.prog.CallInfos[e] = &CallInfo{
-		Kind: CallFunc,
-		Fn:   fnSym,
+		Kind:     CallFunc,
+		Fn:       fnSym,
+		CanError: fnSym.CanError,
+		HasValue: !fnSym.ReturnType.IsVoid(),
 	}
 	return fnSym.ReturnType, nil
 }
 
+func (a *analyzer) inFallibleContext() bool {
+	return a.tryDepth > 0 || (a.deferDepth == 0 && a.currentFn != nil && a.currentFn.CanError)
+}
+
 func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
-	if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+	if !a.inFallibleContext() {
 		return VoidType, newSemaError(e.Pos, "error() can only be called inside a 'can error' function or a 'try' block")
 	}
 	if len(e.Args) < 1 || len(e.Args) > 2 {
@@ -1697,14 +1666,14 @@ func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *
 	return retType, nil
 }
 
-func (a *analyzer) validateFnCallArgs(e *ast.CallExpr, fnSym *FnSymbol, scope *Scope) error {
-	if len(e.Args) != len(fnSym.Params) {
-		return newSemaError(e.Pos, "function %q expects %d argument(s), got %d", fnSym.Name, len(fnSym.Params), len(e.Args))
+func (a *analyzer) validateCallArgs(callPos token.Position, args []ast.CallArg, params []ParamSymbol, fnName string, canError bool, callKindDesc string, scope *Scope) error {
+	if len(args) != len(params) {
+		return newSemaError(callPos, "%s %q expects %d argument(s), got %d", callKindDesc, fnName, len(params), len(args))
 	}
-	for i, arg := range e.Args {
-		param := fnSym.Params[i]
+	for i, arg := range args {
+		param := params[i]
 		if arg.Name != "" && arg.Name != param.Name {
-			return newSemaError(arg.Pos, "named argument %q does not match parameter %q of function %q", arg.Name, param.Name, fnSym.Name)
+			return newSemaError(arg.Pos, "named argument %q does not match parameter %q of function %q", arg.Name, param.Name, fnName)
 		}
 		argType, err := a.inferExpr(arg.Value, scope)
 		if err != nil {
@@ -1712,22 +1681,36 @@ func (a *analyzer) validateFnCallArgs(e *ast.CallExpr, fnSym *FnSymbol, scope *S
 		}
 		if !param.Type.Equals(argType) {
 			return newSemaError(arg.Pos, "argument %d (%q) to function %q has type %s, expected %s",
-				i+1, param.Name, fnSym.Name, argType.String(), param.Type.String())
+				i+1, param.Name, fnName, argType.String(), param.Type.String())
 		}
 		if param.ByRef {
 			argIdent, isIdent := arg.Value.(*ast.IdentExpr)
 			if !isIdent {
-				return newSemaError(arg.Pos, "argument %d (%q) to byref parameter of %q must be a mutable variable", i+1, param.Name, fnSym.Name)
+				return newSemaError(arg.Pos, "argument %d (%q) to byref parameter of %q must be a mutable variable", i+1, param.Name, fnName)
 			}
 			sym, found := scope.Lookup(argIdent.Name)
 			if !found || sym.IsConst {
-				return newSemaError(arg.Pos, "cannot pass constant %q to byref parameter %q of %q", argIdent.Name, param.Name, fnSym.Name)
+				return newSemaError(arg.Pos, "cannot pass constant %q to byref parameter %q of %q", argIdent.Name, param.Name, fnName)
 			}
 		}
 	}
-	if fnSym.CanError {
-		if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
-			return newSemaError(e.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnSym.Name)
+	if canError && !a.inFallibleContext() {
+		return newSemaError(callPos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
+	}
+	return nil
+}
+
+func (a *analyzer) expectPositionalArgs(e *ast.CallExpr, methodName string, scope *Scope, expected ...Type) error {
+	if len(e.Args) != len(expected) {
+		return newSemaError(e.Pos, "%s() expects %d argument(s), got %d", methodName, len(expected), len(e.Args))
+	}
+	for i, expType := range expected {
+		at, err := a.inferExpr(e.Args[i].Value, scope)
+		if err != nil {
+			return err
+		}
+		if !at.Equals(expType) {
+			return newSemaError(e.Args[i].Pos, "%s() argument %d must be %s, got %s", methodName, i+1, expType.String(), at.String())
 		}
 	}
 	return nil
@@ -1800,10 +1783,15 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 				if !fnSym.Public {
 					return VoidType, newSemaError(e.Pos, "function %q in module %q is private", fa.Field, objIdent.Name)
 				}
-				if err := a.validateFnCallArgs(e, fnSym, scope); err != nil {
+				if err := a.validateCallArgs(e.Pos, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 					return VoidType, err
 				}
-				a.prog.CallInfos[e] = &CallInfo{Kind: CallFunc, Fn: fnSym}
+				a.prog.CallInfos[e] = &CallInfo{
+					Kind:     CallFunc,
+					Fn:       fnSym,
+					CanError: fnSym.CanError,
+					HasValue: !fnSym.ReturnType.IsVoid(),
+				}
 				return fnSym.ReturnType, nil
 			}
 			return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
@@ -1814,23 +1802,9 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		}
 
 		if objIdent.Name == "str" && fa.Field == "join" {
-			if len(e.Args) != 2 {
-				return VoidType, newSemaError(e.Pos, "str.join expects 2 arguments (list[str], str), got %d", len(e.Args))
-			}
-			t0, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
-				return VoidType, err
-			}
 			listStr := Type{Kind: KindList, ElemType: &StrType}
-			if !t0.Equals(listStr) {
-				return VoidType, newSemaError(e.Args[0].Pos, "str.join first argument must be list[str], got %s", t0.String())
-			}
-			t1, err := a.inferExpr(e.Args[1].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "str.join", scope, listStr, StrType); err != nil {
 				return VoidType, err
-			}
-			if !t1.Equals(StrType) {
-				return VoidType, newSemaError(e.Args[1].Pos, "str.join second argument must be str, got %s", t1.String())
 			}
 			a.prog.CallInfos[e] = &CallInfo{
 				Kind:       CallMethod,
@@ -1849,24 +1823,17 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	case KindList:
 		switch fa.Field {
 		case "len":
-			if len(e.Args) != 0 {
-				return VoidType, newSemaError(e.Pos, "list.len() expects 0 arguments, got %d", len(e.Args))
+			if err := a.expectPositionalArgs(e, "list.len", scope); err != nil {
+				return VoidType, err
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "list.len", Receiver: fa.Target}
 			return IntType, nil
 		case "push":
-			if len(e.Args) != 1 {
-				return VoidType, newSemaError(e.Pos, "list.push() expects 1 argument, got %d", len(e.Args))
-			}
 			if err := a.checkMutableTarget(fa.Target, scope); err != nil {
 				return VoidType, err
 			}
-			argType, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "list.push", scope, *recvType.ElemType); err != nil {
 				return VoidType, err
-			}
-			if !recvType.ElemType.Equals(argType) {
-				return VoidType, newSemaError(e.Args[0].Pos, "list.push() expects %s, got %s", recvType.ElemType.String(), argType.String())
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "list.push", Receiver: fa.Target}
 			return VoidType, nil
@@ -1875,41 +1842,20 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	case KindDict:
 		switch fa.Field {
 		case "len":
-			if len(e.Args) != 0 {
-				return VoidType, newSemaError(e.Pos, "dict.len() expects 0 arguments, got %d", len(e.Args))
+			if err := a.expectPositionalArgs(e, "dict.len", scope); err != nil {
+				return VoidType, err
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "dict.len", Receiver: fa.Target}
 			return IntType, nil
 		case "get":
-			if len(e.Args) != 2 {
-				return VoidType, newSemaError(e.Pos, "dict.get() expects 2 arguments (key, default), got %d", len(e.Args))
-			}
-			kt, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "dict.get", scope, *recvType.KeyType, *recvType.ValType); err != nil {
 				return VoidType, err
-			}
-			if !recvType.KeyType.Equals(kt) {
-				return VoidType, newSemaError(e.Args[0].Pos, "dict.get() key must be %s, got %s", recvType.KeyType.String(), kt.String())
-			}
-			dt, err := a.inferExpr(e.Args[1].Value, scope)
-			if err != nil {
-				return VoidType, err
-			}
-			if !recvType.ValType.Equals(dt) {
-				return VoidType, newSemaError(e.Args[1].Pos, "dict.get() default value must be %s, got %s", recvType.ValType.String(), dt.String())
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "dict.get", Receiver: fa.Target}
 			return *recvType.ValType, nil
 		case "contains":
-			if len(e.Args) != 1 {
-				return VoidType, newSemaError(e.Pos, "dict.contains() expects 1 argument, got %d", len(e.Args))
-			}
-			kt, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "dict.contains", scope, *recvType.KeyType); err != nil {
 				return VoidType, err
-			}
-			if !recvType.KeyType.Equals(kt) {
-				return VoidType, newSemaError(e.Args[0].Pos, "dict.contains() key must be %s, got %s", recvType.KeyType.String(), kt.String())
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "dict.contains", Receiver: fa.Target}
 			return BoolType, nil
@@ -1918,46 +1864,32 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	case KindStr:
 		switch fa.Field {
 		case "len":
-			if len(e.Args) != 0 {
-				return VoidType, newSemaError(e.Pos, "str.len() expects 0 arguments, got %d", len(e.Args))
+			if err := a.expectPositionalArgs(e, "str.len", scope); err != nil {
+				return VoidType, err
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.len", Receiver: fa.Target}
 			return IntType, nil
 		case "trim", "toUpper", "toLower", "toStr":
-			if len(e.Args) != 0 {
-				return VoidType, newSemaError(e.Pos, "str.%s() expects 0 arguments, got %d", fa.Field, len(e.Args))
+			if err := a.expectPositionalArgs(e, "str."+fa.Field, scope); err != nil {
+				return VoidType, err
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str." + fa.Field, Receiver: fa.Target}
 			return StrType, nil
 		case "toInt":
-			if len(e.Args) != 0 {
-				return VoidType, newSemaError(e.Pos, "str.toInt() expects 0 arguments, got %d", len(e.Args))
+			if err := a.expectPositionalArgs(e, "str.toInt", scope); err != nil {
+				return VoidType, err
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.toInt", Receiver: fa.Target}
 			return IntType, nil
 		case "split":
-			if len(e.Args) != 1 {
-				return VoidType, newSemaError(e.Pos, "str.split() expects 1 argument, got %d", len(e.Args))
-			}
-			st, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "str.split", scope, StrType); err != nil {
 				return VoidType, err
-			}
-			if !st.Equals(StrType) {
-				return VoidType, newSemaError(e.Args[0].Pos, "str.split() separator must be str, got %s", st.String())
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.split", Receiver: fa.Target}
 			return Type{Kind: KindList, ElemType: &StrType}, nil
 		case "contains":
-			if len(e.Args) != 1 {
-				return VoidType, newSemaError(e.Pos, "str.contains() expects 1 argument, got %d", len(e.Args))
-			}
-			st, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "str.contains", scope, StrType); err != nil {
 				return VoidType, err
-			}
-			if !st.Equals(StrType) {
-				return VoidType, newSemaError(e.Args[0].Pos, "str.contains() substring must be str, got %s", st.String())
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.contains", Receiver: fa.Target}
 			return BoolType, nil
@@ -1987,46 +1919,16 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		}
 	}
 
-	expectedArgs := len(fnSym.Params) - 1
-	if len(e.Args) != expectedArgs {
-		return VoidType, newSemaError(e.Pos, "UFCS call %q expects %d argument(s), got %d", fnSym.Name, expectedArgs, len(e.Args))
-	}
-
-	for i, arg := range e.Args {
-		param := fnSym.Params[i+1]
-		if arg.Name != "" && arg.Name != param.Name {
-			return VoidType, newSemaError(arg.Pos, "named argument %q does not match parameter %q of function %q", arg.Name, param.Name, fnSym.Name)
-		}
-		argType, err := a.inferExpr(arg.Value, scope)
-		if err != nil {
-			return VoidType, err
-		}
-		if !param.Type.Equals(argType) {
-			return VoidType, newSemaError(arg.Pos, "argument %d (%q) to function %q has type %s, expected %s",
-				i+1, param.Name, fnSym.Name, argType.String(), param.Type.String())
-		}
-		if param.ByRef {
-			argIdent, isIdent := arg.Value.(*ast.IdentExpr)
-			if !isIdent {
-				return VoidType, newSemaError(arg.Pos, "argument %d (%q) to byref parameter of %q must be a mutable variable", i+1, param.Name, fnSym.Name)
-			}
-			sym, found := scope.Lookup(argIdent.Name)
-			if !found || sym.IsConst {
-				return VoidType, newSemaError(arg.Pos, "cannot pass constant %q to byref parameter %q of %q", argIdent.Name, param.Name, fnSym.Name)
-			}
-		}
-	}
-
-	if fnSym.CanError {
-		if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
-			return VoidType, newSemaError(e.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnSym.Name)
-		}
+	if err := a.validateCallArgs(e.Pos, e.Args, fnSym.Params[1:], fnSym.Name, fnSym.CanError, "UFCS call", scope); err != nil {
+		return VoidType, err
 	}
 
 	a.prog.CallInfos[e] = &CallInfo{
 		Kind:     CallUFCS,
 		Fn:       fnSym,
 		Receiver: fa.Target,
+		CanError: fnSym.CanError,
+		HasValue: !fnSym.ReturnType.IsVoid(),
 	}
 	return fnSym.ReturnType, nil
 }
@@ -2112,64 +2014,34 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 func (a *analyzer) inferStdJsonMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
 	jvType := Type{Kind: KindStruct, Name: "JsonValue", ModuleID: "std/json", GoName: "CbStdJsonValue"}
 	switch fa.Field {
-	case "isNull":
-		if len(e.Args) != 0 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.isNull() expects 0 arguments, got %d", len(e.Args))
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.isNull", Receiver: fa.Target}
-		return BoolType, nil
-	case "asStr":
-		if len(e.Args) != 0 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.asStr() expects 0 arguments, got %d", len(e.Args))
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asStr", Receiver: fa.Target}
-		return StrType, nil
-	case "asInt":
-		if len(e.Args) != 0 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.asInt() expects 0 arguments, got %d", len(e.Args))
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asInt", Receiver: fa.Target}
-		return IntType, nil
-	case "asFloat":
-		if len(e.Args) != 0 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.asFloat() expects 0 arguments, got %d", len(e.Args))
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asFloat", Receiver: fa.Target}
-		return FloatType, nil
-	case "asBool":
-		if len(e.Args) != 0 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.asBool() expects 0 arguments, got %d", len(e.Args))
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asBool", Receiver: fa.Target}
-		return BoolType, nil
-	case "get", "has":
-		if len(e.Args) != 1 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.%s() expects 1 argument, got %d", fa.Field, len(e.Args))
-		}
-		kt, err := a.inferExpr(e.Args[0].Value, scope)
-		if err != nil {
+	case "isNull", "asStr", "asInt", "asFloat", "asBool", "asList", "asDict":
+		if err := a.expectPositionalArgs(e, "JsonValue."+fa.Field, scope); err != nil {
 			return VoidType, err
 		}
-		if !kt.Equals(StrType) {
-			return VoidType, newSemaError(e.Args[0].Pos, "JsonValue.%s() key must be str, got %s", fa.Field, kt.String())
+		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json." + fa.Field, Receiver: fa.Target}
+		switch fa.Field {
+		case "isNull", "asBool":
+			return BoolType, nil
+		case "asStr":
+			return StrType, nil
+		case "asInt":
+			return IntType, nil
+		case "asFloat":
+			return FloatType, nil
+		case "asList":
+			return Type{Kind: KindList, ElemType: &jvType}, nil
+		case "asDict":
+			return Type{Kind: KindDict, KeyType: &StrType, ValType: &jvType}, nil
+		}
+	case "get", "has":
+		if err := a.expectPositionalArgs(e, "JsonValue."+fa.Field, scope, StrType); err != nil {
+			return VoidType, err
 		}
 		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json." + fa.Field, Receiver: fa.Target}
 		if fa.Field == "has" {
 			return BoolType, nil
 		}
 		return jvType, nil
-	case "asList":
-		if len(e.Args) != 0 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.asList() expects 0 arguments, got %d", len(e.Args))
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asList", Receiver: fa.Target}
-		return Type{Kind: KindList, ElemType: &jvType}, nil
-	case "asDict":
-		if len(e.Args) != 0 {
-			return VoidType, newSemaError(e.Pos, "JsonValue.asDict() expects 0 arguments, got %d", len(e.Args))
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.asDict", Receiver: fa.Target}
-		return Type{Kind: KindDict, KeyType: &StrType, ValType: &jvType}, nil
 	}
 	return VoidType, newSemaError(e.Pos, "JsonValue has no method %q", fa.Field)
 }
@@ -2200,34 +2072,27 @@ func (a *analyzer) inferStdCliMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, t
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli." + fa.Field, Receiver: fa.Target}
 			return VoidType, nil
 		case "parse":
-			if len(e.Args) != 0 {
-				return VoidType, newSemaError(e.Pos, "Parser.parse() expects 0 arguments, got %d", len(e.Args))
-			}
-			if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
-				return VoidType, newSemaError(e.Pos, "call to 'can error' method Parser.parse() must be inside a 'try' block or a 'can error' function")
-			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parse", Receiver: fa.Target}
-			return argsType, nil
-		case "parseArgs":
-			if len(e.Args) != 1 {
-				return VoidType, newSemaError(e.Pos, "Parser.parseArgs() expects 1 argument, got %d", len(e.Args))
-			}
-			at, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "Parser.parse", scope); err != nil {
 				return VoidType, err
 			}
-			listStr := Type{Kind: KindList, ElemType: &StrType}
-			if !at.Equals(listStr) {
-				return VoidType, newSemaError(e.Args[0].Pos, "Parser.parseArgs() expects list[str], got %s", at.String())
+			if !a.inFallibleContext() {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method Parser.parse() must be inside a 'try' block or a 'can error' function")
 			}
-			if a.tryDepth == 0 && (a.deferDepth > 0 || a.currentFn == nil || !a.currentFn.CanError) {
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parse", Receiver: fa.Target, CanError: true, HasValue: true}
+			return argsType, nil
+		case "parseArgs":
+			listStr := Type{Kind: KindList, ElemType: &StrType}
+			if err := a.expectPositionalArgs(e, "Parser.parseArgs", scope, listStr); err != nil {
+				return VoidType, err
+			}
+			if !a.inFallibleContext() {
 				return VoidType, newSemaError(e.Pos, "call to 'can error' method Parser.parseArgs() must be inside a 'try' block or a 'can error' function")
 			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parseArgs", Receiver: fa.Target}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parseArgs", Receiver: fa.Target, CanError: true, HasValue: true}
 			return argsType, nil
 		case "printUsage":
-			if len(e.Args) != 0 {
-				return VoidType, newSemaError(e.Pos, "Parser.printUsage() expects 0 arguments, got %d", len(e.Args))
+			if err := a.expectPositionalArgs(e, "Parser.printUsage", scope); err != nil {
+				return VoidType, err
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.printUsage", Receiver: fa.Target}
 			return VoidType, nil
@@ -2237,15 +2102,8 @@ func (a *analyzer) inferStdCliMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, t
 	if typeName == "ParsedArgs" {
 		switch fa.Field {
 		case "hasFlag", "getOption", "getArg":
-			if len(e.Args) != 1 {
-				return VoidType, newSemaError(e.Pos, "ParsedArgs.%s() expects 1 argument, got %d", fa.Field, len(e.Args))
-			}
-			at, err := a.inferExpr(e.Args[0].Value, scope)
-			if err != nil {
+			if err := a.expectPositionalArgs(e, "ParsedArgs."+fa.Field, scope, StrType); err != nil {
 				return VoidType, err
-			}
-			if !at.Equals(StrType) {
-				return VoidType, newSemaError(e.Args[0].Pos, "ParsedArgs.%s() expects str, got %s", fa.Field, at.String())
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli." + fa.Field, Receiver: fa.Target}
 			if fa.Field == "hasFlag" {

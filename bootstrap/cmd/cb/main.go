@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -113,22 +114,62 @@ func runCheck(args []string) int {
 	return 0
 }
 
+func transpileToGo(filePath string) (string, int) {
+	prog, err := sema.LoadAndAnalyze(filePath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return "", 1
+	}
+
+	goCode, err := codegen.EmitGo(prog)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return "", 1
+	}
+
+	return goCode, 0
+}
+
+func runGoToolInTempDir(pattern, goCode, subcmd string, extraArgs ...string) int {
+	tmpDir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error creating temp dir: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mainGoPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(mainGoPath, []byte(goCode), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing temp main.go: %v\n", err)
+		return 1
+	}
+
+	cmdArgs := append([]string{subcmd}, extraArgs...)
+	cmdArgs = append(cmdArgs, mainGoPath)
+	cmd := exec.Command("go", cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "go %s failed: %v\n", subcmd, err)
+		return 1
+	}
+
+	return 0
+}
+
 func runEmit(args []string) int {
 	filePath, outPath, code := parseFileAndOutArgs(args, true)
 	if code != 0 {
 		return code
 	}
 
-	prog, err := sema.LoadAndAnalyze(filePath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
-	}
-
-	goCode, err := codegen.EmitGo(prog)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+	goCode, code := transpileToGo(filePath)
+	if code != 0 {
+		return code
 	}
 
 	if outPath != "" {
@@ -149,16 +190,9 @@ func runBuild(args []string) int {
 		return code
 	}
 
-	prog, err := sema.LoadAndAnalyze(filePath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
-	}
-
-	goCode, err := codegen.EmitGo(prog)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+	goCode, code := transpileToGo(filePath)
+	if code != 0 {
+		return code
 	}
 
 	if outPath == "" {
@@ -176,31 +210,7 @@ func runBuild(args []string) int {
 		return 1
 	}
 
-	tmpDir, err := os.MkdirTemp("", "cb-build-*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error creating temp dir: %v\n", err)
-		return 1
-	}
-	defer os.RemoveAll(tmpDir)
-
-	mainGoPath := filepath.Join(tmpDir, "main.go")
-	if err := os.WriteFile(mainGoPath, []byte(goCode), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "error writing temp main.go: %v\n", err)
-		return 1
-	}
-
-	cmd := exec.Command("go", "build", "-o", absOut, mainGoPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintf(os.Stderr, "go build failed: %v\n", err)
-		return 1
-	}
-
-	return 0
+	return runGoToolInTempDir("cb-build-*", goCode, "build", "-o", absOut)
 }
 
 func runExec(args []string) int {
@@ -209,43 +219,12 @@ func runExec(args []string) int {
 		return code
 	}
 
-	prog, err := sema.LoadAndAnalyze(filePath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+	goCode, code := transpileToGo(filePath)
+	if code != 0 {
+		return code
 	}
 
-	goCode, err := codegen.EmitGo(prog)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
-	}
-
-	tmpDir, err := os.MkdirTemp("", "cb-run-*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error creating temp dir: %v\n", err)
-		return 1
-	}
-	defer os.RemoveAll(tmpDir)
-
-	mainGoPath := filepath.Join(tmpDir, "main.go")
-	if err := os.WriteFile(mainGoPath, []byte(goCode), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "error writing temp main.go: %v\n", err)
-		return 1
-	}
-
-	cmd := exec.Command("go", "run", mainGoPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintf(os.Stderr, "go run failed: %v\n", err)
-		return 1
-	}
-
-	return 0
+	return runGoToolInTempDir("cb-run-*", goCode, "run")
 }
 
 func parseFileAndOutArgs(args []string, allowOutputFlag bool) (string, string, int) {

@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 
 	"cleanbasic/bootstrap/internal/ast"
@@ -118,7 +119,7 @@ func (p *Parser) expectIdent(context string) (token.Token, error) {
 // that may appear after '.' (e.g., str.join, d.get, etc.).
 func (p *Parser) expectFieldOrMethodIdent(context string) (token.Token, error) {
 	tok := p.cur()
-	if tok.Kind == token.IDENT || tok.Kind == token.STR || tok.Kind == token.LIST || tok.Kind == token.DICT || tok.Kind == token.ERR {
+	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.LIST, token.DICT, token.ERR}, tok.Kind) {
 		p.advance()
 		return tok, nil
 	}
@@ -147,6 +148,19 @@ func (p *Parser) expectNewline(context string) error {
 		Pos:     tok.Pos,
 		Message: fmt.Sprintf("expected newline after %s, got %s (%q)", context, tok.Kind, tok.Lexeme),
 	}
+}
+
+func (p *Parser) parseStmtBlock(stopKinds ...token.Kind) ([]ast.Statement, error) {
+	var body []ast.Statement
+	for p.cur().Kind != token.EOF && !slices.Contains(stopKinds, p.cur().Kind) {
+		stmt, err := p.parseStatement()
+		if err != nil {
+			return nil, err
+		}
+		body = append(body, stmt)
+		p.skipNewlines()
+	}
+	return body, nil
 }
 
 // ParseProgram parses: Program ::= TopLevelDecl*
@@ -496,14 +510,9 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 		}, nil
 	}
 
-	var body []ast.Statement
-	for p.cur().Kind != token.END_FN && p.cur().Kind != token.EOF {
-		stmt, err := p.parseStatement()
-		if err != nil {
-			return nil, err
-		}
-		body = append(body, stmt)
-		p.skipNewlines()
+	body, err := p.parseStmtBlock(token.END_FN)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := p.expect(token.END_FN, "to close function declaration"); err != nil {
@@ -791,14 +800,9 @@ func (p *Parser) parseIfStmt() (*ast.IfStmt, error) {
 		return nil, err
 	}
 
-	var thenBody []ast.Statement
-	for p.cur().Kind != token.ELSE_IF && p.cur().Kind != token.ELSE && p.cur().Kind != token.END_IF && p.cur().Kind != token.EOF {
-		st, err := p.parseStatement()
-		if err != nil {
-			return nil, err
-		}
-		thenBody = append(thenBody, st)
-		p.skipNewlines()
+	thenBody, err := p.parseStmtBlock(token.ELSE_IF, token.ELSE, token.END_IF)
+	if err != nil {
+		return nil, err
 	}
 
 	var elseIfs []ast.ElseIfBranch
@@ -812,14 +816,9 @@ func (p *Parser) parseIfStmt() (*ast.IfStmt, error) {
 			return nil, err
 		}
 
-		var elifBody []ast.Statement
-		for p.cur().Kind != token.ELSE_IF && p.cur().Kind != token.ELSE && p.cur().Kind != token.END_IF && p.cur().Kind != token.EOF {
-			st, err := p.parseStatement()
-			if err != nil {
-				return nil, err
-			}
-			elifBody = append(elifBody, st)
-			p.skipNewlines()
+		elifBody, err := p.parseStmtBlock(token.ELSE_IF, token.ELSE, token.END_IF)
+		if err != nil {
+			return nil, err
 		}
 		elseIfs = append(elseIfs, ast.ElseIfBranch{
 			Pos:  elifTok.Pos,
@@ -835,13 +834,9 @@ func (p *Parser) parseIfStmt() (*ast.IfStmt, error) {
 		if err := p.expectNewline("else"); err != nil {
 			return nil, err
 		}
-		for p.cur().Kind != token.END_IF && p.cur().Kind != token.EOF {
-			st, err := p.parseStatement()
-			if err != nil {
-				return nil, err
-			}
-			elseBody = append(elseBody, st)
-			p.skipNewlines()
+		elseBody, err = p.parseStmtBlock(token.END_IF)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -896,36 +891,14 @@ func (p *Parser) parseForStmt() (*ast.ForStmt, error) {
 				return nil, err
 			}
 		}
-		if err := p.expectNewline("for loop header"); err != nil {
-			return nil, err
-		}
-
-		var body []ast.Statement
-		for p.cur().Kind != token.END_FOR && p.cur().Kind != token.EOF {
-			st, err := p.parseStatement()
-			if err != nil {
-				return nil, err
-			}
-			body = append(body, st)
-			p.skipNewlines()
-		}
-
-		if _, err := p.expect(token.END_FOR, "to close for loop"); err != nil {
-			return nil, err
-		}
-		if err := p.expectNewline("end for"); err != nil {
-			return nil, err
-		}
-
-		return &ast.ForStmt{
+		return p.finishForStmt(&ast.ForStmt{
 			Pos:     forTok.Pos,
 			IsRange: true,
 			VarName: firstIdent.Lexeme,
 			Start:   startExpr,
 			End:     endExpr,
 			Step:    stepExpr,
-			Body:    body,
-		}, nil
+		}, "for loop header")
 	}
 
 	// Collection loop: for x [, y] in iterable
@@ -947,34 +920,30 @@ func (p *Parser) parseForStmt() (*ast.ForStmt, error) {
 		return nil, err
 	}
 
-	if err := p.expectNewline("for-in loop header"); err != nil {
+	return p.finishForStmt(&ast.ForStmt{
+		Pos:      forTok.Pos,
+		IsRange:  false,
+		Vars:     vars,
+		Iterable: iterable,
+	}, "for-in loop header")
+}
+
+func (p *Parser) finishForStmt(stmt *ast.ForStmt, headerCtx string) (*ast.ForStmt, error) {
+	if err := p.expectNewline(headerCtx); err != nil {
 		return nil, err
 	}
-
-	var body []ast.Statement
-	for p.cur().Kind != token.END_FOR && p.cur().Kind != token.EOF {
-		st, err := p.parseStatement()
-		if err != nil {
-			return nil, err
-		}
-		body = append(body, st)
-		p.skipNewlines()
+	body, err := p.parseStmtBlock(token.END_FOR)
+	if err != nil {
+		return nil, err
 	}
-
 	if _, err := p.expect(token.END_FOR, "to close for loop"); err != nil {
 		return nil, err
 	}
 	if err := p.expectNewline("end for"); err != nil {
 		return nil, err
 	}
-
-	return &ast.ForStmt{
-		Pos:      forTok.Pos,
-		IsRange:  false,
-		Vars:     vars,
-		Iterable: iterable,
-		Body:     body,
-	}, nil
+	stmt.Body = body
+	return stmt, nil
 }
 
 // WhileStmt ::= "while" Expr NEWLINE Statement* "end while" NEWLINE
@@ -992,14 +961,9 @@ func (p *Parser) parseWhileStmt() (*ast.WhileStmt, error) {
 		return nil, err
 	}
 
-	var body []ast.Statement
-	for p.cur().Kind != token.END_WHILE && p.cur().Kind != token.EOF {
-		st, err := p.parseStatement()
-		if err != nil {
-			return nil, err
-		}
-		body = append(body, st)
-		p.skipNewlines()
+	body, err := p.parseStmtBlock(token.END_WHILE)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := p.expect(token.END_WHILE, "to close while loop"); err != nil {
@@ -1061,14 +1025,9 @@ func (p *Parser) parseSelectStmt() (*ast.SelectStmt, error) {
 			return nil, err
 		}
 
-		var body []ast.Statement
-		for p.cur().Kind != token.CASE && p.cur().Kind != token.CASE_ELSE && p.cur().Kind != token.END_SELECT && p.cur().Kind != token.EOF {
-			st, err := p.parseStatement()
-			if err != nil {
-				return nil, err
-			}
-			body = append(body, st)
-			p.skipNewlines()
+		body, err := p.parseStmtBlock(token.CASE, token.CASE_ELSE, token.END_SELECT)
+		if err != nil {
+			return nil, err
 		}
 
 		cases = append(cases, ast.CaseClause{
@@ -1086,13 +1045,9 @@ func (p *Parser) parseSelectStmt() (*ast.SelectStmt, error) {
 		if err := p.expectNewline("case else"); err != nil {
 			return nil, err
 		}
-		for p.cur().Kind != token.END_SELECT && p.cur().Kind != token.EOF {
-			st, err := p.parseStatement()
-			if err != nil {
-				return nil, err
-			}
-			elseBody = append(elseBody, st)
-			p.skipNewlines()
+		elseBody, err = p.parseStmtBlock(token.END_SELECT)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -1122,14 +1077,9 @@ func (p *Parser) parseTryCatchStmt() (*ast.TryCatchStmt, error) {
 		return nil, err
 	}
 
-	var tryBody []ast.Statement
-	for p.cur().Kind != token.CATCH && p.cur().Kind != token.EOF {
-		st, err := p.parseStatement()
-		if err != nil {
-			return nil, err
-		}
-		tryBody = append(tryBody, st)
-		p.skipNewlines()
+	tryBody, err := p.parseStmtBlock(token.CATCH)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := p.expect(token.CATCH, "in try/catch statement"); err != nil {
@@ -1143,14 +1093,9 @@ func (p *Parser) parseTryCatchStmt() (*ast.TryCatchStmt, error) {
 		return nil, err
 	}
 
-	var catchBody []ast.Statement
-	for p.cur().Kind != token.END_TRY && p.cur().Kind != token.EOF {
-		st, err := p.parseStatement()
-		if err != nil {
-			return nil, err
-		}
-		catchBody = append(catchBody, st)
-		p.skipNewlines()
+	catchBody, err := p.parseStmtBlock(token.END_TRY)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := p.expect(token.END_TRY, "to close try/catch statement"); err != nil {
@@ -1178,14 +1123,9 @@ func (p *Parser) parseDeferStmt() (*ast.DeferStmt, error) {
 		return nil, err
 	}
 
-	var body []ast.Statement
-	for p.cur().Kind != token.END_DEFER && p.cur().Kind != token.EOF {
-		st, err := p.parseStatement()
-		if err != nil {
-			return nil, err
-		}
-		body = append(body, st)
-		p.skipNewlines()
+	body, err := p.parseStmtBlock(token.END_DEFER)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := p.expect(token.END_DEFER, "to close defer statement"); err != nil {
@@ -1234,15 +1174,14 @@ func (p *Parser) parseExpr() (ast.Expr, error) {
 	return p.parseOrExpr()
 }
 
-// OrExpr ::= AndExpr ("or" AndExpr)*
-func (p *Parser) parseOrExpr() (ast.Expr, error) {
-	left, err := p.parseAndExpr()
+func (p *Parser) parseBinaryLeft(next func() (ast.Expr, error), ops ...token.Kind) (ast.Expr, error) {
+	left, err := next()
 	if err != nil {
 		return nil, err
 	}
-	for p.cur().Kind == token.OR {
+	for slices.Contains(ops, p.cur().Kind) {
 		opTok := p.advance()
-		right, err := p.parseAndExpr()
+		right, err := next()
 		if err != nil {
 			return nil, err
 		}
@@ -1256,26 +1195,14 @@ func (p *Parser) parseOrExpr() (ast.Expr, error) {
 	return left, nil
 }
 
+// OrExpr ::= AndExpr ("or" AndExpr)*
+func (p *Parser) parseOrExpr() (ast.Expr, error) {
+	return p.parseBinaryLeft(p.parseAndExpr, token.OR)
+}
+
 // AndExpr ::= NotExpr ("and" NotExpr)*
 func (p *Parser) parseAndExpr() (ast.Expr, error) {
-	left, err := p.parseNotExpr()
-	if err != nil {
-		return nil, err
-	}
-	for p.cur().Kind == token.AND {
-		opTok := p.advance()
-		right, err := p.parseNotExpr()
-		if err != nil {
-			return nil, err
-		}
-		left = &ast.BinaryExpr{
-			Pos:   opTok.Pos,
-			Left:  left,
-			Op:    opTok.Kind,
-			Right: right,
-		}
-	}
-	return left, nil
+	return p.parseBinaryLeft(p.parseNotExpr, token.AND)
 }
 
 // NotExpr ::= "not" NotExpr | CmpExpr
@@ -1297,83 +1224,17 @@ func (p *Parser) parseNotExpr() (ast.Expr, error) {
 
 // CmpExpr ::= AddExpr (("==" | "!=" | "<" | ">" | "<=" | ">=") AddExpr)*
 func (p *Parser) parseCmpExpr() (ast.Expr, error) {
-	left, err := p.parseAddExpr()
-	if err != nil {
-		return nil, err
-	}
-	for {
-		k := p.cur().Kind
-		if k == token.EQ || k == token.NEQ || k == token.LT || k == token.GT || k == token.LTE || k == token.GTE {
-			opTok := p.advance()
-			right, err := p.parseAddExpr()
-			if err != nil {
-				return nil, err
-			}
-			left = &ast.BinaryExpr{
-				Pos:   opTok.Pos,
-				Left:  left,
-				Op:    opTok.Kind,
-				Right: right,
-			}
-			continue
-		}
-		break
-	}
-	return left, nil
+	return p.parseBinaryLeft(p.parseAddExpr, token.EQ, token.NEQ, token.LT, token.GT, token.LTE, token.GTE)
 }
 
 // AddExpr ::= MulExpr (("+" | "-" | "&") MulExpr)*
 func (p *Parser) parseAddExpr() (ast.Expr, error) {
-	left, err := p.parseMulExpr()
-	if err != nil {
-		return nil, err
-	}
-	for {
-		k := p.cur().Kind
-		if k == token.PLUS || k == token.MINUS || k == token.AMP {
-			opTok := p.advance()
-			right, err := p.parseMulExpr()
-			if err != nil {
-				return nil, err
-			}
-			left = &ast.BinaryExpr{
-				Pos:   opTok.Pos,
-				Left:  left,
-				Op:    opTok.Kind,
-				Right: right,
-			}
-			continue
-		}
-		break
-	}
-	return left, nil
+	return p.parseBinaryLeft(p.parseMulExpr, token.PLUS, token.MINUS, token.AMP)
 }
 
 // MulExpr ::= UnaryExpr (("*" | "/" | "%") UnaryExpr)*
 func (p *Parser) parseMulExpr() (ast.Expr, error) {
-	left, err := p.parseUnaryExpr()
-	if err != nil {
-		return nil, err
-	}
-	for {
-		k := p.cur().Kind
-		if k == token.STAR || k == token.SLASH || k == token.PERCENT {
-			opTok := p.advance()
-			right, err := p.parseUnaryExpr()
-			if err != nil {
-				return nil, err
-			}
-			left = &ast.BinaryExpr{
-				Pos:   opTok.Pos,
-				Left:  left,
-				Op:    opTok.Kind,
-				Right: right,
-			}
-			continue
-		}
-		break
-	}
-	return left, nil
+	return p.parseBinaryLeft(p.parseUnaryExpr, token.STAR, token.SLASH, token.PERCENT)
 }
 
 // UnaryExpr ::= ("+" | "-") UnaryExpr | PostfixExpr

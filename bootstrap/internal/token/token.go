@@ -77,8 +77,6 @@ const (
 	END    Kind = "end"
 	SELECT Kind = "select"
 	CAN    Kind = "can"
-	ERROR  Kind = "error"
-	HEADER Kind = "header"
 
 	// Two-word coalesced keywords
 	ELSE_IF       Kind = "else if"
@@ -219,11 +217,4 @@ func CoalesceTwoWordKeyword(first, second string) (Kind, string, bool) {
 		return k, first + " " + second, true
 	}
 	return "", "", false
-}
-
-// IsIdentifierLike returns true if a token can be used as an identifier in contexts
-// where built-in prelude module names ("str", "list", "dict", "err") or contextual words
-// might appear in expressions.
-func IsIdentifierLike(k Kind) bool {
-	return k == IDENT
 }
