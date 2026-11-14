@@ -109,12 +109,12 @@ CallArgList     ::= Expr ("," Expr)* [","]
 Literal         ::= NumberLiteral | StringLiteral | InterpString
                   | "true" | "false"
                   | NonEmptyListLiteral | NonEmptyDictLiteral
-InterpString    ::= '$"' (StringChar | "{{" | "}}" | "{" QualifiedIdent "}")* '"'
+InterpString    ::= '$"' (StringChar | "{{" | "}}" | "{" QualifiedIdent ["[" (IntegerLiteral | Identifier) "]"] "}")* '"'
 NonEmptyListLiteral ::= "[" Expr ("," Expr)* [","] "]"
 NonEmptyDictLiteral ::= "{" DictEntry ("," DictEntry)* [","] "}"
 DictEntry       ::= Expr ":" Expr
 
-Type            ::= "int" | "float" | "str" | "bool" | "err" | "cptr"
+Type            ::= "int" | "float" | "str" | "bool" | "err"
                   | "list" "[" Type "]"
                   | "dict" "[" Type "," Type "]"
                   | QualifiedIdent

@@ -579,7 +579,14 @@ func (l *Lexer) scanInterpPlaceholder(openBracePos token.Position) ([]token.Toke
 
 	var toks []token.Token
 	firstTok := l.scanIdentifier()
-	// Inside a placeholder path, ensure it is treated as IDENT (or allowed identifier).
+	switch firstTok.Kind {
+	case token.TRUE, token.FALSE, token.AND, token.OR, token.NOT:
+		return nil, &LexError{
+			Pos:     firstTok.Pos,
+			Message: fmt.Sprintf("keyword %q cannot be used as an identifier in interpolated string placeholder", firstTok.Lexeme),
+		}
+	}
+	// Inside a placeholder path, allow contextual keywords (e.g. type names like str/err) as IDENT.
 	if firstTok.Kind != token.IDENT {
 		firstTok.Kind = token.IDENT
 	}
@@ -624,6 +631,13 @@ func (l *Lexer) scanInterpPlaceholder(openBracePos token.Position) ([]token.Toke
 				idxTok = numTok
 			} else if isIdentStart(l.peek()) {
 				idTok := l.scanIdentifier()
+				switch idTok.Kind {
+				case token.TRUE, token.FALSE, token.AND, token.OR, token.NOT:
+					return nil, &LexError{
+						Pos:     idTok.Pos,
+						Message: fmt.Sprintf("keyword %q cannot be used as an index identifier in interpolated string placeholder", idTok.Lexeme),
+					}
+				}
 				idTok.Kind = token.IDENT
 				idxTok = idTok
 			} else {

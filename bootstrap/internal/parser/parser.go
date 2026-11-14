@@ -186,7 +186,7 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 	p.skipNewlines()
 	startTok := p.cur()
 
-	if startTok.Kind == token.IMPORT || startTok.Kind == token.IMPORT_HEADER {
+	if startTok.Kind == token.IMPORT {
 		return p.parseImportDecl()
 	}
 
@@ -216,10 +216,9 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 	}
 }
 
-// ImportDecl ::= ("import" | "import header") StringLiteral ["as" Identifier] NEWLINE
+// ImportDecl ::= "import" StringLiteral ["as" Identifier] NEWLINE
 func (p *Parser) parseImportDecl() (*ast.ImportDecl, error) {
-	startTok := p.advance() // consume IMPORT or IMPORT_HEADER
-	isHeader := startTok.Kind == token.IMPORT_HEADER
+	startTok := p.advance() // consume IMPORT
 
 	pathTok, err := p.expect(token.STRING_LIT, "in import declaration")
 	if err != nil {
@@ -240,10 +239,9 @@ func (p *Parser) parseImportDecl() (*ast.ImportDecl, error) {
 	}
 
 	return &ast.ImportDecl{
-		Pos:      startTok.Pos,
-		IsHeader: isHeader,
-		Path:     pathTok.Lexeme,
-		Alias:    alias,
+		Pos:   startTok.Pos,
+		Path:  pathTok.Lexeme,
+		Alias: alias,
 	}, nil
 }
 
@@ -535,48 +533,29 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 }
 
 // ParamList ::= Param ("," Param)* [","]
-// Param ::= ["byref"] Identifier "as" Type
-func (p *Parser) parseParamList() ([]ast.Param, error) {
-	var params []ast.Param
+func parseDelimited[T any](p *Parser, endKind token.Kind, parseElem func(*Parser) (T, error)) ([]T, error) {
+	var items []T
 	p.skipNewlines()
-	if p.cur().Kind == token.RPAREN {
-		return params, nil
+	if p.cur().Kind == endKind {
+		return items, nil
 	}
 
 	for {
 		p.skipNewlines()
-		if p.cur().Kind == token.RPAREN {
+		if p.cur().Kind == endKind {
 			break
 		}
-		paramPos := p.cur().Pos
-		byRef := p.match(token.BYREF)
 
-		nameTok, err := p.expectIdent("for parameter name")
+		elem, err := parseElem(p)
 		if err != nil {
 			return nil, err
 		}
-
-		if _, err := p.expect(token.AS, "after parameter name"); err != nil {
-			return nil, err
-		}
-
-		paramType, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-
-		params = append(params, ast.Param{
-			Pos:   paramPos,
-			ByRef: byRef,
-			Name:  nameTok.Lexeme,
-			Type:  paramType,
-		})
+		items = append(items, elem)
 
 		p.skipNewlines()
 		if p.match(token.COMMA) {
 			p.skipNewlines()
-			// Optional trailing comma before ')'
-			if p.cur().Kind == token.RPAREN {
+			if p.cur().Kind == endKind {
 				break
 			}
 			continue
@@ -584,10 +563,39 @@ func (p *Parser) parseParamList() ([]ast.Param, error) {
 		break
 	}
 
-	return params, nil
+	return items, nil
 }
 
-// Type ::= "int" | "float" | "str" | "bool" | "err" | "cptr"
+// Param ::= ["byref"] Identifier "as" Type
+func (p *Parser) parseParamList() ([]ast.Param, error) {
+	return parseDelimited(p, token.RPAREN, func(p *Parser) (ast.Param, error) {
+		paramPos := p.cur().Pos
+		byRef := p.match(token.BYREF)
+
+		nameTok, err := p.expectIdent("for parameter name")
+		if err != nil {
+			return ast.Param{}, err
+		}
+
+		if _, err := p.expect(token.AS, "after parameter name"); err != nil {
+			return ast.Param{}, err
+		}
+
+		paramType, err := p.parseType()
+		if err != nil {
+			return ast.Param{}, err
+		}
+
+		return ast.Param{
+			Pos:   paramPos,
+			ByRef: byRef,
+			Name:  nameTok.Lexeme,
+			Type:  paramType,
+		}, nil
+	})
+}
+
+// Type ::= "int" | "float" | "str" | "bool" | "err"
 //
 //	| "list" "[" Type "]"
 //	| "dict" "[" Type "," Type "]"
@@ -595,7 +603,7 @@ func (p *Parser) parseParamList() ([]ast.Param, error) {
 func (p *Parser) parseType() (ast.TypeExpr, error) {
 	tok := p.cur()
 	switch tok.Kind {
-	case token.INT, token.FLOAT, token.STR, token.BOOL, token.ERR, token.CPTR:
+	case token.INT, token.FLOAT, token.STR, token.BOOL, token.ERR:
 		p.advance()
 		return ast.TypeExpr{
 			Pos:  tok.Pos,
@@ -1314,18 +1322,7 @@ func (p *Parser) parsePostfixExpr() (ast.Expr, error) {
 // CallArgList ::= CallArg ("," CallArg)* [","]
 // Supports positional arguments as well as named arguments (e.g. error("msg", code=408)).
 func (p *Parser) parseCallArgList() ([]ast.CallArg, error) {
-	var args []ast.CallArg
-	p.skipNewlines()
-	if p.cur().Kind == token.RPAREN {
-		return args, nil
-	}
-
-	for {
-		p.skipNewlines()
-		if p.cur().Kind == token.RPAREN {
-			break
-		}
-
+	return parseDelimited(p, token.RPAREN, func(p *Parser) (ast.CallArg, error) {
 		argPos := p.cur().Pos
 		argName := ""
 		if p.cur().Kind == token.IDENT && p.peek(1).Kind == token.ASSIGN {
@@ -1336,26 +1333,14 @@ func (p *Parser) parseCallArgList() ([]ast.CallArg, error) {
 
 		val, err := p.parseExpr()
 		if err != nil {
-			return nil, err
+			return ast.CallArg{}, err
 		}
-		args = append(args, ast.CallArg{
+		return ast.CallArg{
 			Pos:   argPos,
 			Name:  argName,
 			Value: val,
-		})
-
-		p.skipNewlines()
-		if p.match(token.COMMA) {
-			p.skipNewlines()
-			if p.cur().Kind == token.RPAREN {
-				break
-			}
-			continue
-		}
-		break
-	}
-
-	return args, nil
+		}, nil
+	})
 }
 
 // PrimaryExpr ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
@@ -1491,30 +1476,11 @@ func (p *Parser) parseListLiteral() (ast.Expr, error) {
 		return nil, err
 	}
 
-	var elems []ast.Expr
-	p.skipNewlines()
-	if p.cur().Kind != token.RBRACKET {
-		for {
-			p.skipNewlines()
-			if p.cur().Kind == token.RBRACKET {
-				break
-			}
-			el, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			elems = append(elems, el)
-
-			p.skipNewlines()
-			if p.match(token.COMMA) {
-				p.skipNewlines()
-				if p.cur().Kind == token.RBRACKET {
-					break
-				}
-				continue
-			}
-			break
-		}
+	elems, err := parseDelimited(p, token.RBRACKET, func(p *Parser) (ast.Expr, error) {
+		return p.parseExpr()
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := p.expect(token.RBRACKET, "to close list literal"); err != nil {
@@ -1535,42 +1501,27 @@ func (p *Parser) parseDictLiteral() (ast.Expr, error) {
 		return nil, err
 	}
 
-	var entries []ast.DictEntryExpr
-	p.skipNewlines()
-	if p.cur().Kind != token.RBRACE {
-		for {
-			p.skipNewlines()
-			if p.cur().Kind == token.RBRACE {
-				break
-			}
-			entryPos := p.cur().Pos
-			keyExpr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			if _, err := p.expect(token.COLON, "after dictionary key"); err != nil {
-				return nil, err
-			}
-			valExpr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			entries = append(entries, ast.DictEntryExpr{
-				Pos:   entryPos,
-				Key:   keyExpr,
-				Value: valExpr,
-			})
-
-			p.skipNewlines()
-			if p.match(token.COMMA) {
-				p.skipNewlines()
-				if p.cur().Kind == token.RBRACE {
-					break
-				}
-				continue
-			}
-			break
+	entries, err := parseDelimited(p, token.RBRACE, func(p *Parser) (ast.DictEntryExpr, error) {
+		entryPos := p.cur().Pos
+		keyExpr, err := p.parseExpr()
+		if err != nil {
+			return ast.DictEntryExpr{}, err
 		}
+		if _, err := p.expect(token.COLON, "after dictionary key"); err != nil {
+			return ast.DictEntryExpr{}, err
+		}
+		valExpr, err := p.parseExpr()
+		if err != nil {
+			return ast.DictEntryExpr{}, err
+		}
+		return ast.DictEntryExpr{
+			Pos:   entryPos,
+			Key:   keyExpr,
+			Value: valExpr,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := p.expect(token.RBRACE, "to close dict literal"); err != nil {

@@ -4,7 +4,7 @@
 Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compiles CleanBasic (`.cb`) source files into a single procedural Go file (`main.go`), which is then compiled/executed by the standard Go toolchain (`go build` / `go run`).
 
 ## Authoritative Specification
-- Always consult `docs/cleanbasic_specification.md` as the single source of truth for syntax, EBNF grammar, semantics, and type rules.
+- Always consult `docs/cleanbasic_language_specification_go_backend_edition.md` as the single source of truth for syntax, EBNF grammar, semantics, and type rules.
 - Do NOT implement legacy C++ features (no C++ headers, no `EXPECT_CPP` assertions, no LSP server in the bootstrap compiler).
 
 ## Architectural & Coding Rules
@@ -13,7 +13,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
 3. **Permanent Language Simplifications:**
    - **One-Way Bottom-Up Inference:** Expressions compute their own types bottom-up. Untyped empty collection literals (`dim x = []` or `foo([])`) are compile errors; require `dim x as list[int] = []`.
    - **Local & Prelude UFCS Only:** `obj.method(args)` resolves ONLY to methods in the built-in prelude (`str`, `list`, `dict`) or functions declared in the *same* `.cb` module. Cross-module calls must be module-qualified (`modAlias.fnName(obj, args)`).
-   - **Lexer-Desugared String Interpolation:** `$"Hello {user.name}!"` restricts `{...}` to dotted identifier paths (`QualifiedIdent`) and is desugared directly in the lexer into `"Hello " & user.name & "!"` tokens.
+   - **Lexer-Desugared String Interpolation:** `$"Hello {user.name}!"` restricts `{...}` to dotted identifier paths (`QualifiedIdent`) and simple `[index]` access (`{parts[0]}` / `{parts[idx]}`), and is desugared directly in the lexer into `"Hello " & user.name & "!"` tokens.
 4. **Go Target Emitter Hygiene:**
    - CleanBasic `int` maps to `int64`; `float` maps to `float64`; `str` maps to `string`; `bool` maps to `bool`.
    - Emit `_ = varName` after local variable declarations so Go's unused-variable rule never breaks valid CleanBasic programs.

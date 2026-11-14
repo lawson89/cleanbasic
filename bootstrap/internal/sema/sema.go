@@ -265,12 +265,8 @@ type TypedProgram struct {
 	ConstTypes   map[*ast.ConstDecl]Type
 	IdentGoNames map[ast.Expr]string
 	Functions    map[string]*FnSymbol
-	Structs      map[string]*StructSymbol
-	Enums        map[string]*EnumSymbol
-	Unions       map[string]*UnionSymbol
 	CallInfos    map[*ast.CallExpr]*CallInfo
 	SelectUnion  map[*ast.SelectStmt]*UnionSymbol
-	GlobalVars   *Scope
 }
 
 // LoadAndAnalyze reads, parses, and semantically analyzes the CleanBasic file at entryPath.
@@ -320,12 +316,8 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 		ConstTypes:   make(map[*ast.ConstDecl]Type),
 		IdentGoNames: make(map[ast.Expr]string),
 		Functions:    entryMod.Functions,
-		Structs:      entryMod.Structs,
-		Enums:        entryMod.Enums,
-		Unions:       entryMod.Unions,
 		CallInfos:    make(map[*ast.CallExpr]*CallInfo),
 		SelectUnion:  make(map[*ast.SelectStmt]*UnionSymbol),
-		GlobalVars:   entryMod.GlobalVars,
 	}
 
 	a := &analyzer{
@@ -574,7 +566,7 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 		retType = resolvedRet
 	}
 
-	if fn.Name == "main" {
+	if a.mod.IsEntry && fn.Name == "main" {
 		if len(params) != 0 {
 			return newSemaError(fn.Pos, "function %q cannot have parameters", fn.Name)
 		}
@@ -764,7 +756,7 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 		}
 		return nil
 	default:
-		return newSemaError(stmt.StmtPos(), "unsupported statement in Phase 2")
+		return newSemaError(stmt.StmtPos(), "unsupported statement")
 	}
 }
 
@@ -1025,6 +1017,9 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 		}
 		if !stepType.Equals(IntType) {
 			return newSemaError(s.Step.ExprPos(), "for loop step expression must be int, got %s", stepType.String())
+		}
+		if isZeroIntLiteral(s.Step) {
+			return newSemaError(s.Step.ExprPos(), "for loop step cannot be 0")
 		}
 	}
 
@@ -1341,6 +1336,9 @@ func (a *analyzer) inferBinaryExpr(e *ast.BinaryExpr, scope *Scope) (Type, error
 		if !leftType.Equals(rightType) || leftType.IsVoid() {
 			return VoidType, newSemaError(e.Pos, "cannot compare %s and %s with %q", leftType.String(), rightType.String(), e.Op)
 		}
+		if !a.isComparableType(leftType) {
+			return VoidType, newSemaError(e.Pos, "type %s cannot be compared with %q", leftType.String(), e.Op)
+		}
 		return BoolType, nil
 
 	case token.LT, token.GT, token.LTE, token.GTE:
@@ -1390,6 +1388,9 @@ func (a *analyzer) inferDictLitExpr(e *ast.DictLitExpr, scope *Scope) (Type, err
 	firstKey, err := a.inferExpr(e.Entries[0].Key, scope)
 	if err != nil {
 		return VoidType, err
+	}
+	if !a.isComparableType(firstKey) {
+		return VoidType, newSemaError(e.Entries[0].Key.ExprPos(), "dict key type %s is not comparable", firstKey.String())
 	}
 	firstVal, err := a.inferExpr(e.Entries[0].Value, scope)
 	if err != nil {
@@ -1459,7 +1460,9 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 					a.prog.IdentGoNames[e] = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
 					return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
 				}
-				return VoidType, newSemaError(e.Pos, "module %q has no enum %q", modIdent.Name, innerFA.Field)
+				if _, isGlobal := impMod.GlobalVars.Lookup(innerFA.Field); !isGlobal {
+					return VoidType, newSemaError(e.Pos, "module %q has no enum %q", modIdent.Name, innerFA.Field)
+				}
 			}
 		}
 	}
@@ -1540,6 +1543,9 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 
 	if fnSym.IsVariadic {
 		for _, arg := range e.Args {
+			if arg.Name != "" {
+				return VoidType, newSemaError(arg.Pos, "function %q does not support named arguments (%q)", fnSym.Name, arg.Name)
+			}
 			argType, err := a.inferExpr(arg.Value, scope)
 			if err != nil {
 				return VoidType, err
@@ -1705,6 +1711,9 @@ func (a *analyzer) expectPositionalArgs(e *ast.CallExpr, methodName string, scop
 		return newSemaError(e.Pos, "%s() expects %d argument(s), got %d", methodName, len(expected), len(e.Args))
 	}
 	for i, expType := range expected {
+		if e.Args[i].Name != "" {
+			return newSemaError(e.Args[i].Pos, "%s() does not support named arguments (%q)", methodName, e.Args[i].Name)
+		}
 		at, err := a.inferExpr(e.Args[i].Value, scope)
 		if err != nil {
 			return err
@@ -1744,14 +1753,15 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	if innerFA, ok := fa.Target.(*ast.FieldAccessExpr); ok {
 		if modIdent, ok2 := innerFA.Target.(*ast.IdentExpr); ok2 {
 			if impMod, isMod := a.mod.Imports[modIdent.Name]; isMod {
-				unionSym, isUnion := impMod.Unions[innerFA.Field]
-				if !isUnion {
+				if unionSym, isUnion := impMod.Unions[innerFA.Field]; isUnion {
+					if !unionSym.Public {
+						return VoidType, newSemaError(e.Pos, "union %q in module %q is private", innerFA.Field, modIdent.Name)
+					}
+					return a.inferUnionCtorCall(e, unionSym, fa.Field, scope)
+				}
+				if _, isGlobal := impMod.GlobalVars.Lookup(innerFA.Field); !isGlobal {
 					return VoidType, newSemaError(e.Pos, "module %q has no union %q", modIdent.Name, innerFA.Field)
 				}
-				if !unionSym.Public {
-					return VoidType, newSemaError(e.Pos, "union %q in module %q is private", innerFA.Field, modIdent.Name)
-				}
-				return a.inferUnionCtorCall(e, unionSym, fa.Field, scope)
 			}
 		}
 	}
@@ -1762,6 +1772,9 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 			if impMod.IsStdlib && impMod.ID == "std/json" && fa.Field == "stringify" {
 				if len(e.Args) != 1 {
 					return VoidType, newSemaError(e.Pos, "json.stringify expects 1 argument, got %d", len(e.Args))
+				}
+				if e.Args[0].Name != "" {
+					return VoidType, newSemaError(e.Args[0].Pos, "json.stringify() does not support named arguments (%q)", e.Args[0].Name)
 				}
 				argType, err := a.inferExpr(e.Args[0].Value, scope)
 				if err != nil {
@@ -1980,6 +1993,9 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 		if err != nil {
 			return VoidType, err
 		}
+		if !a.isComparableType(kt) {
+			return VoidType, newSemaError(t.KeyType.Pos, "dict key type %s is not comparable", kt.String())
+		}
 		vt, err := a.resolveTypeExpr(*t.ValType)
 		if err != nil {
 			return VoidType, err
@@ -2106,6 +2122,9 @@ func (a *analyzer) inferStdCliMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, t
 				return VoidType, newSemaError(e.Pos, "Parser.%s() expects %d arguments, got %d", fa.Field, expected, len(e.Args))
 			}
 			for _, arg := range e.Args {
+				if arg.Name != "" {
+					return VoidType, newSemaError(arg.Pos, "Parser.%s() does not support named arguments (%q)", fa.Field, arg.Name)
+				}
 				at, err := a.inferExpr(arg.Value, scope)
 				if err != nil {
 					return VoidType, err
@@ -2159,4 +2178,66 @@ func (a *analyzer) inferStdCliMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, t
 		return VoidType, newSemaError(e.Pos, "ParsedArgs has no method %q", fa.Field)
 	}
 	return VoidType, newSemaError(e.Pos, "unknown std/cli type %q", typeName)
+}
+
+func isZeroIntLiteral(expr ast.Expr) bool {
+	switch ex := expr.(type) {
+	case *ast.IntLitExpr:
+		return ex.Value == 0
+	case *ast.UnaryExpr:
+		if ex.Op == token.MINUS || ex.Op == token.PLUS {
+			return isZeroIntLiteral(ex.Operand)
+		}
+	}
+	return false
+}
+
+func (a *analyzer) isComparableType(t Type) bool {
+	return a.isComparableTypeVisited(t, make(map[string]bool))
+}
+
+func (a *analyzer) isComparableTypeVisited(t Type, visited map[string]bool) bool {
+	switch t.Kind {
+	case KindInt, KindFloat, KindStr, KindBool, KindEnum:
+		return true
+	case KindVoid, KindList, KindDict, KindErr:
+		return false
+	case KindStruct:
+		if t.ModuleID == "std/json" || t.ModuleID == "std/cli" || t.ModuleID == "std/regex" {
+			return false
+		}
+		key := "struct:" + t.ModuleID + "." + t.Name
+		if visited[key] {
+			return true
+		}
+		visited[key] = true
+		sym := a.lookupStruct(t)
+		if sym == nil {
+			return false
+		}
+		for _, f := range sym.Fields {
+			if !a.isComparableTypeVisited(f.Type, visited) {
+				return false
+			}
+		}
+		return true
+	case KindUnion:
+		key := "union:" + t.ModuleID + "." + t.Name
+		if visited[key] {
+			return true
+		}
+		visited[key] = true
+		sym := a.lookupUnion(t)
+		if sym == nil {
+			return false
+		}
+		for _, v := range sym.Variants {
+			if !a.isComparableTypeVisited(v.Type, visited) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }

@@ -91,7 +91,7 @@ fn collectFiles(target as str, recursive as bool, byref outFiles as list[str]) c
                 continue
             end if
             dim fullPath = fs.join(target, entry)
-            if fs.isDir(fullPath)
+            if fs.isDir(fullPath) and not fs.isSymlink(fullPath)
                 collectFiles(fullPath, recursive, outFiles)
             else
                 outFiles.push(fullPath)

@@ -67,6 +67,11 @@ func cbStdFsIsDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+func cbStdFsIsSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && (info.Mode()&os.ModeSymlink) != 0
+}
+
 func cbStdFsJoin(a string, b string) string {
 	return filepath.Join(a, b)
 }
@@ -128,12 +133,12 @@ const stdRegexHelpers = `type CbStdRegex struct {
 	re *regexp.Regexp
 }
 
-func cbStdRegexCompile(pattern string) (*CbStdRegex, error) {
+func cbStdRegexCompile(pattern string) (CbStdRegex, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return nil, CbError{msg: err.Error()}
+		return CbStdRegex{}, CbError{msg: err.Error()}
 	}
-	return &CbStdRegex{re: re}, nil
+	return CbStdRegex{re: re}, nil
 }
 
 func cbStdRegexMatch(pattern string, text string) (bool, error) {
@@ -144,15 +149,24 @@ func cbStdRegexMatch(pattern string, text string) (bool, error) {
 	return matched, nil
 }
 
-func (r *CbStdRegex) isMatch(text string) bool {
+func (r CbStdRegex) isMatch(text string) bool {
+	if r.re == nil {
+		return false
+	}
 	return r.re.MatchString(text)
 }
 
-func (r *CbStdRegex) find(text string) string {
+func (r CbStdRegex) find(text string) string {
+	if r.re == nil {
+		return ""
+	}
 	return r.re.FindString(text)
 }
 
-func (r *CbStdRegex) findAll(text string) []string {
+func (r CbStdRegex) findAll(text string) []string {
+	if r.re == nil {
+		return []string{}
+	}
 	res := r.re.FindAllString(text, -1)
 	if res == nil {
 		return []string{}
@@ -160,7 +174,10 @@ func (r *CbStdRegex) findAll(text string) []string {
 	return res
 }
 
-func (r *CbStdRegex) replaceAll(text string, repl string) string {
+func (r CbStdRegex) replaceAll(text string, repl string) string {
+	if r.re == nil {
+		return text
+	}
 	return r.re.ReplaceAllString(text, repl)
 }
 
@@ -193,6 +210,10 @@ const stdOsExecHelpers = `func cbStdOsExec(cmd string, args []string) (CbStdOsEx
 
 const stdJsonHelpers = `type CbStdJsonValue struct {
 	raw any
+}
+
+func (j CbStdJsonValue) MarshalJSON() ([]byte, error) {
+	return json.Marshal(j.raw)
 }
 
 func cbStdJsonParse(raw string) (CbStdJsonValue, error) {
@@ -314,13 +335,17 @@ type cbCliArgDef struct {
 	desc string
 }
 
-type CbStdCliParser struct {
+type cbStdCliParserState struct {
 	name        string
 	version     string
 	description string
 	flags       []cbCliFlagDef
 	options     []cbCliOptDef
 	args        []cbCliArgDef
+}
+
+type CbStdCliParser struct {
+	state *cbStdCliParserState
 }
 
 type CbStdCliArgs struct {
@@ -331,45 +356,61 @@ type CbStdCliArgs struct {
 	namedArgs     map[string]string
 }
 
-func cbStdCliNewParser(name, version, description string) *CbStdCliParser {
-	return &CbStdCliParser{
-		name:        name,
-		version:     version,
-		description: description,
+func cbStdCliNewParser(name, version, description string) CbStdCliParser {
+	return CbStdCliParser{
+		state: &cbStdCliParserState{
+			name:        name,
+			version:     version,
+			description: description,
+		},
 	}
+}
+
+func (p *CbStdCliParser) ensureState() *cbStdCliParserState {
+	if p.state == nil {
+		p.state = &cbStdCliParserState{}
+	}
+	return p.state
 }
 
 func (p *CbStdCliParser) addFlag(longName, short, desc string) {
-	p.flags = append(p.flags, cbCliFlagDef{longName: longName, short: short, desc: desc})
+	s := p.ensureState()
+	s.flags = append(s.flags, cbCliFlagDef{longName: longName, short: short, desc: desc})
 }
 
 func (p *CbStdCliParser) addOption(longName, short, desc, defaultVal string) {
-	p.options = append(p.options, cbCliOptDef{longName: longName, short: short, desc: desc, defaultVal: defaultVal})
+	s := p.ensureState()
+	s.options = append(s.options, cbCliOptDef{longName: longName, short: short, desc: desc, defaultVal: defaultVal})
 }
 
 func (p *CbStdCliParser) addArg(name, desc string) {
-	p.args = append(p.args, cbCliArgDef{name: name, desc: desc})
+	s := p.ensureState()
+	s.args = append(s.args, cbCliArgDef{name: name, desc: desc})
 }
 
-func (p *CbStdCliParser) printUsage() {
-	fmt.Printf("%s %s - %s\n", p.name, p.version, p.description)
-	fmt.Printf("Usage: %s [options]", p.name)
-	for _, a := range p.args {
+func (p CbStdCliParser) printUsage() {
+	s := p.state
+	if s == nil {
+		s = &cbStdCliParserState{}
+	}
+	fmt.Printf("%s %s - %s\n", s.name, s.version, s.description)
+	fmt.Printf("Usage: %s [options]", s.name)
+	for _, a := range s.args {
 		fmt.Printf(" <%s>", a.name)
 	}
 	fmt.Println()
-	for _, f := range p.flags {
+	for _, f := range s.flags {
 		fmt.Printf("  -%s, --%s\t%s\n", f.short, f.longName, f.desc)
 	}
-	for _, o := range p.options {
+	for _, o := range s.options {
 		fmt.Printf("  -%s, --%s\t%s (default: %s)\n", o.short, o.longName, o.desc, o.defaultVal)
 	}
-	for _, a := range p.args {
+	for _, a := range s.args {
 		fmt.Printf("  %s\t%s\n", a.name, a.desc)
 	}
 }
 
-func (p *CbStdCliParser) parse() (CbStdCliArgs, error) {
+func (p CbStdCliParser) parse() (CbStdCliArgs, error) {
 	var raw []string
 	if len(os.Args) > 1 {
 		raw = os.Args[1:]
@@ -377,19 +418,23 @@ func (p *CbStdCliParser) parse() (CbStdCliArgs, error) {
 	return p.parseArgs(raw)
 }
 
-func (p *CbStdCliParser) parseArgs(raw []string) (CbStdCliArgs, error) {
+func (p CbStdCliParser) parseArgs(raw []string) (CbStdCliArgs, error) {
+	s := p.state
+	if s == nil {
+		s = &cbStdCliParserState{}
+	}
 	res := CbStdCliArgs{
 		flags:     make(map[string]bool),
 		options:   make(map[string]string),
 		namedArgs: make(map[string]string),
 	}
-	for _, o := range p.options {
+	for _, o := range s.options {
 		res.options[o.longName] = o.defaultVal
 	}
 
 	flagByLong := make(map[string]string)
 	flagByShort := make(map[string]string)
-	for _, f := range p.flags {
+	for _, f := range s.flags {
 		flagByLong[f.longName] = f.longName
 		if f.short != "" {
 			flagByShort[f.short] = f.longName
@@ -398,15 +443,24 @@ func (p *CbStdCliParser) parseArgs(raw []string) (CbStdCliArgs, error) {
 
 	optByLong := make(map[string]string)
 	optByShort := make(map[string]string)
-	for _, o := range p.options {
+	for _, o := range s.options {
 		optByLong[o.longName] = o.longName
 		if o.short != "" {
 			optByShort[o.short] = o.longName
 		}
 	}
 
+	stopFlags := false
 	for i := 0; i < len(raw); i++ {
 		tok := raw[i]
+		if stopFlags {
+			res.positionals = append(res.positionals, tok)
+			continue
+		}
+		if tok == "--" {
+			stopFlags = true
+			continue
+		}
 		if tok == "--help" || tok == "-h" {
 			res.helpRequested = true
 			return res, nil
@@ -450,12 +504,36 @@ func (p *CbStdCliParser) parseArgs(raw []string) (CbStdCliArgs, error) {
 				res.options[longName] = raw[i]
 				continue
 			}
+			if len(short) > 1 {
+				allFlags := true
+				for _, ch := range short {
+					sCh := string(ch)
+					if sCh == "h" {
+						continue
+					}
+					if _, ok := flagByShort[sCh]; !ok {
+						allFlags = false
+						break
+					}
+				}
+				if allFlags {
+					for _, ch := range short {
+						sCh := string(ch)
+						if sCh == "h" {
+							res.helpRequested = true
+							return res, nil
+						}
+						res.flags[flagByShort[sCh]] = true
+					}
+					continue
+				}
+			}
 			return res, CbError{msg: fmt.Sprintf("unknown flag -%s", short)}
 		}
 		res.positionals = append(res.positionals, tok)
 	}
 
-	for idx, a := range p.args {
+	for idx, a := range s.args {
 		if idx >= len(res.positionals) {
 			return res, CbError{msg: fmt.Sprintf("missing required argument %q", a.name)}
 		}

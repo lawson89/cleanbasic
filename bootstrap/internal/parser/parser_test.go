@@ -11,39 +11,49 @@ import (
 
 func TestParseAllTestCases(t *testing.T) {
 	casesDir := filepath.Join("..", "..", "..", "tests", "cases")
-	entries, err := os.ReadDir(casesDir)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", casesDir, err)
-	}
-
 	count := 0
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".cb") {
-			continue
+	err := filepath.WalkDir(casesDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".cb") {
+			return nil
 		}
 		count++
-		path := filepath.Join(casesDir, entry.Name())
-		t.Run(entry.Name(), func(t *testing.T) {
+		rel, _ := filepath.Rel(casesDir, path)
+		relSlash := filepath.ToSlash(rel)
+		t.Run(relSlash, func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("read failed: %v", err)
 			}
-			// Ignore ' SKIP_GO directive during parse tests so all 6 test files are verified.
 			prog, err := Parse(string(data), path)
 			if err != nil {
-				t.Fatalf("Parse(%s) failed: %v", entry.Name(), err)
+				t.Fatalf("Parse(%s) failed: %v", relSlash, err)
 			}
 			if prog == nil || len(prog.Decls) == 0 {
-				t.Fatalf("expected non-empty AST declarations for %s", entry.Name())
+				t.Fatalf("expected non-empty AST declarations for %s", relSlash)
 			}
-			dump := ast.Dump(prog)
-			if !strings.Contains(dump, "FnDecl(main()") {
-				t.Errorf("expected AST dump for %s to contain FnDecl(main()), got:\n%s", entry.Name(), dump)
+			if !strings.Contains(relSlash, "/") || d.Name() == "main.cb" {
+				dump := ast.Dump(prog)
+				if !strings.Contains(dump, "FnDecl(main()") {
+					t.Errorf("expected AST dump for %s to contain FnDecl(main()), got:\n%s", relSlash, dump)
+				}
 			}
 		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to walk %s: %v", casesDir, err)
 	}
 	if count < 6 {
 		t.Fatalf("expected at least 6 .cb test cases, found %d", count)
+	}
+}
+
+func TestParseRejectsImportHeader(t *testing.T) {
+	if _, err := Parse("import header \"foo.h\"\n", "header.cb"); err == nil {
+		t.Fatalf("expected parse error for removed import header, got nil")
 	}
 }
 

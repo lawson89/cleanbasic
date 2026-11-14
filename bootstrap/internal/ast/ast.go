@@ -35,7 +35,7 @@ type Expr interface {
 type TypeKind string
 
 const (
-	TypeBasic     TypeKind = "basic"     // int, float, str, bool, err, cptr
+	TypeBasic     TypeKind = "basic"     // int, float, str, bool, err
 	TypeList      TypeKind = "list"      // list[ElemType]
 	TypeDict      TypeKind = "dict"      // dict[KeyType, ValType]
 	TypeQualified TypeKind = "qualified" // Player or mod.Player
@@ -75,12 +75,11 @@ func (t TypeExpr) String() string {
 
 // --- Top-Level Declarations ---
 
-// ImportDecl represents: import "path.cb" [as alias] or import header "header.h"
+// ImportDecl represents: import "path.cb" [as alias]
 type ImportDecl struct {
-	Pos      token.Position
-	IsHeader bool
-	Path     string
-	Alias    string
+	Pos   token.Position
+	Path  string
+	Alias string
 }
 
 func (d *ImportDecl) DeclPos() token.Position { return d.Pos }
@@ -476,9 +475,7 @@ func Dump(prog *Program) string {
 func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 	switch d := decl.(type) {
 	case *ImportDecl:
-		if d.IsHeader {
-			fmt.Fprintf(sb, "%sImportHeader(%q)\n", indent, d.Path)
-		} else if d.Alias != "" {
+		if d.Alias != "" {
 			fmt.Fprintf(sb, "%sImport(%q as %s)\n", indent, d.Path, d.Alias)
 		} else {
 			fmt.Fprintf(sb, "%sImport(%q)\n", indent, d.Path)

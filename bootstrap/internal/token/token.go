@@ -69,7 +69,6 @@ const (
 	STR   Kind = "str"
 	BOOL  Kind = "bool"
 	ERR   Kind = "err"
-	CPTR  Kind = "cptr"
 	LIST  Kind = "list"
 	DICT  Kind = "dict"
 
@@ -79,21 +78,20 @@ const (
 	CAN    Kind = "can"
 
 	// Two-word coalesced keywords
-	ELSE_IF       Kind = "else if"
-	END_FN        Kind = "end fn"
-	END_IF        Kind = "end if"
-	END_FOR       Kind = "end for"
-	END_WHILE     Kind = "end while"
-	END_SELECT    Kind = "end select"
-	END_TRY       Kind = "end try"
-	END_DEFER     Kind = "end defer"
-	END_TYPE      Kind = "end type"
-	END_ENUM      Kind = "end enum"
-	END_UNION     Kind = "end union"
-	SELECT_CASE   Kind = "select case"
-	CASE_ELSE     Kind = "case else"
-	CAN_ERROR     Kind = "can error"
-	IMPORT_HEADER Kind = "import header"
+	ELSE_IF     Kind = "else if"
+	END_FN      Kind = "end fn"
+	END_IF      Kind = "end if"
+	END_FOR     Kind = "end for"
+	END_WHILE   Kind = "end while"
+	END_SELECT  Kind = "end select"
+	END_TRY     Kind = "end try"
+	END_DEFER   Kind = "end defer"
+	END_TYPE    Kind = "end type"
+	END_ENUM    Kind = "end enum"
+	END_UNION   Kind = "end union"
+	SELECT_CASE Kind = "select case"
+	CASE_ELSE   Kind = "case else"
+	CAN_ERROR   Kind = "can error"
 
 	// Operators and punctuation
 	ASSIGN   Kind = "="
@@ -171,7 +169,6 @@ var singleWordKeywords = map[string]Kind{
 	"str":      STR,
 	"bool":     BOOL,
 	"err":      ERR,
-	"cptr":     CPTR,
 	"list":     LIST,
 	"dict":     DICT,
 	"end":      END,
@@ -185,21 +182,20 @@ type twoWordKey struct {
 }
 
 var twoWordKeywords = map[twoWordKey]Kind{
-	{first: "else", second: "if"}:       ELSE_IF,
-	{first: "end", second: "fn"}:        END_FN,
-	{first: "end", second: "if"}:        END_IF,
-	{first: "end", second: "for"}:       END_FOR,
-	{first: "end", second: "while"}:     END_WHILE,
-	{first: "end", second: "select"}:    END_SELECT,
-	{first: "end", second: "try"}:       END_TRY,
-	{first: "end", second: "defer"}:     END_DEFER,
-	{first: "end", second: "type"}:      END_TYPE,
-	{first: "end", second: "enum"}:      END_ENUM,
-	{first: "end", second: "union"}:     END_UNION,
-	{first: "select", second: "case"}:   SELECT_CASE,
-	{first: "case", second: "else"}:     CASE_ELSE,
-	{first: "can", second: "error"}:     CAN_ERROR,
-	{first: "import", second: "header"}: IMPORT_HEADER,
+	{first: "else", second: "if"}:     ELSE_IF,
+	{first: "end", second: "fn"}:      END_FN,
+	{first: "end", second: "if"}:      END_IF,
+	{first: "end", second: "for"}:     END_FOR,
+	{first: "end", second: "while"}:   END_WHILE,
+	{first: "end", second: "select"}:  END_SELECT,
+	{first: "end", second: "try"}:     END_TRY,
+	{first: "end", second: "defer"}:   END_DEFER,
+	{first: "end", second: "type"}:    END_TYPE,
+	{first: "end", second: "enum"}:    END_ENUM,
+	{first: "end", second: "union"}:   END_UNION,
+	{first: "select", second: "case"}: SELECT_CASE,
+	{first: "case", second: "else"}:   CASE_ELSE,
+	{first: "can", second: "error"}:   CAN_ERROR,
 }
 
 // LookupIdent returns the keyword Kind for word, or IDENT if it is an ordinary identifier.

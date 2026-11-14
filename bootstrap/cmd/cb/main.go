@@ -59,29 +59,16 @@ func run(args []string) int {
 }
 
 func runParse(args []string) int {
-	var filePath string
+	var filtered []string
 	for _, arg := range args {
 		if arg == "--dump-ast" || arg == "parse" {
 			continue
 		}
-		if strings.HasPrefix(arg, "-") {
-			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", arg)
-			printUsage()
-			return 2
-		}
-		if filePath == "" {
-			filePath = arg
-		} else {
-			fmt.Fprintf(os.Stderr, "unexpected argument: %s\n", arg)
-			printUsage()
-			return 2
-		}
+		filtered = append(filtered, arg)
 	}
-
-	if filePath == "" {
-		fmt.Fprintln(os.Stderr, "error: missing input .cb file path")
-		printUsage()
-		return 2
+	filePath, _, code := parseFileAndOutArgs(filtered, false)
+	if code != 0 {
+		return code
 	}
 
 	rawBytes, err := os.ReadFile(filePath)
@@ -101,11 +88,10 @@ func runParse(args []string) int {
 }
 
 func runCheck(args []string) int {
-	filePath, outPath, code := parseFileAndOutArgs(args, false)
+	filePath, _, code := parseFileAndOutArgs(args, false)
 	if code != 0 {
 		return code
 	}
-	_ = outPath
 
 	if _, err := sema.LoadAndAnalyze(filePath); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

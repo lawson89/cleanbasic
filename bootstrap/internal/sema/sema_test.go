@@ -658,3 +658,78 @@ end fn
 		})
 	}
 }
+
+func TestReviewRegressionSema(t *testing.T) {
+	writeFiles := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		for rel, content := range files {
+			full := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+				t.Fatalf("mkdir failed: %v", err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+				t.Fatalf("write failed: %v", err)
+			}
+		}
+		return filepath.Join(dir, "main.cb")
+	}
+
+	t.Run("mod.CONST.field, mod.CONST.method(), and non-entry fn main allowed", func(t *testing.T) {
+		entry := writeFiles(t, map[string]string{
+			"helper.cb": "public type Point\n    x as int\n    y as int\nend type\npublic const ORIGIN = Point(3, 4)\npublic const GREETING = \"  hello  \"\npublic fn main(x as int) as int\n    return x + 1\nend fn\n",
+			"main.cb":   "import \"helper.cb\"\nfn main() as int\n    dim ox = helper.ORIGIN.x\n    dim trimmed = helper.GREETING.trim()\n    dim m = helper.main(ox)\n    if trimmed == \"hello\" and m == 4\n        return 0\n    end if\n    return 1\nend fn\n",
+		})
+		if _, err := LoadAndAnalyze(entry); err != nil {
+			t.Fatalf("LoadAndAnalyze failed: %v", err)
+		}
+	})
+
+	errCases := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "equality on list rejected",
+			src:     "fn main() as int\n    dim ok = [1, 2] == [1, 2]\n    return 0\nend fn\n",
+			wantErr: "cannot be compared",
+		},
+		{
+			name:    "equality on dict rejected",
+			src:     "fn main() as int\n    dim ok = {\"a\": 1} != {\"a\": 2}\n    return 0\nend fn\n",
+			wantErr: "cannot be compared",
+		},
+		{
+			name:    "uncomparable dict key rejected",
+			src:     "fn main() as int\n    dim d = dict[list[int], str]()\n    return 0\nend fn\n",
+			wantErr: "is not comparable",
+		},
+		{
+			name:    "for step 0 rejected",
+			src:     "fn main() as int\n    for i = 1 to 10 step 0\n        print(i)\n    end for\n    return 0\nend fn\n",
+			wantErr: "for loop step cannot be 0",
+		},
+		{
+			name:    "named arg on print rejected",
+			src:     "fn main() as int\n    print(msg=\"hi\")\n    return 0\nend fn\n",
+			wantErr: "does not support named arguments",
+		},
+		{
+			name:    "named arg on positional method rejected",
+			src:     "fn main() as int\n    dim ok = \"hello\".contains(sub=\"ell\")\n    return 0\nend fn\n",
+			wantErr: "does not support named arguments",
+		},
+	}
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := AnalyzeSource(tc.src, "test.cb")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}

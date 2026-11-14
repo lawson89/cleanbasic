@@ -142,21 +142,7 @@ func TestEmitGoDeferLIFO(t *testing.T) {
 		t.Fatalf("EmitGo failed: %v", err)
 	}
 
-	tmpDir := t.TempDir()
-	outGoPath := filepath.Join(tmpDir, "main.go")
-	if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-
-	cmd := exec.Command("go", "run", outGoPath)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
-	}
-
-	got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+	got := runGeneratedGo(t, goCode)
 	want := "body\nthird\nsecond\nfirst"
 	if got != want {
 		t.Errorf("defer LIFO output = %q, want %q", got, want)
@@ -235,21 +221,7 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		t.Fatalf("EmitGo failed: %v", err)
 	}
 
-	tmpDir := t.TempDir()
-	outGoPath := filepath.Join(tmpDir, "main.go")
-	if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-
-	cmd := exec.Command("go", "run", outGoPath)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
-	}
-
-	got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+	got := runGeneratedGo(t, goCode)
 	want := "30\n-7\n0\n1\n2\n106\nnegative\n-1"
 	if got != want {
 		t.Errorf("phase4 edge cases output = %q, want %q\ngo:\n%s", got, want, goCode)
@@ -336,19 +308,7 @@ end fn
 		if err != nil {
 			t.Fatalf("EmitGo failed: %v", err)
 		}
-		tmpDir := t.TempDir()
-		outGoPath := filepath.Join(tmpDir, "main.go")
-		if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-		cmd := exec.Command("go", "run", outGoPath)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
-		}
-		got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+		got := runGeneratedGo(t, goCode)
 		want := "forced failure\nparsed-ok"
 		if got != want {
 			t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
@@ -395,19 +355,7 @@ end fn
 		if err != nil {
 			t.Fatalf("EmitGo failed: %v", err)
 		}
-		tmpDir := t.TempDir()
-		outGoPath := filepath.Join(tmpDir, "main.go")
-		if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-		cmd := exec.Command("go", "run", outGoPath)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
-		}
-		got := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+		got := runGeneratedGo(t, goCode)
 		want := strings.Join([]string{
 			"hello.cb:dir:.cb",
 			"true",
@@ -421,4 +369,125 @@ end fn
 			t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
 		}
 	})
+}
+
+func runGeneratedGo(t *testing.T, goCode string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	outGoPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(outGoPath, []byte(goCode), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	cmd := exec.Command("go", "run", outGoPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, stderr.String(), goCode)
+	}
+	return strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+}
+
+func TestEmitGoReviewRegressions(t *testing.T) {
+	src := strings.Join([]string{
+		`import "std/json"`,
+		`import "std/regex"`,
+		`import "std/cli"`,
+		"",
+		"type User",
+		"    name as str",
+		"    func as int",
+		"end type",
+		"",
+		"fn boom() as bool can error",
+		`    error("boom")`,
+		"    return true",
+		"end fn",
+		"",
+		"fn countCall(byref calls as int, v as int) as int",
+		"    calls = calls + 1",
+		"    return v",
+		"end fn",
+		"",
+		"fn shadowByRef(byref x as int)",
+		"    if true",
+		"        dim x = 99",
+		`        print("inner=" & x)`,
+		"    end if",
+		"    x = x + 1",
+		"end fn",
+		"",
+		"fn main() as int",
+		"    try",
+		"        if false and boom()",
+		`            print("bad1")`,
+		"        else",
+		`            print("sc-and-ok")`,
+		"        end if",
+		"        if true or boom()",
+		`            print("sc-or-ok")`,
+		"        end if",
+		"    catch e",
+		`        print("unexpected-err:" & e.msg)`,
+		"    end try",
+		"",
+		"    dim endCalls = 0",
+		"    dim stepCalls = 0",
+		"    dim sum = 0",
+		"    for i = 1 to countCall(endCalls, 5) step countCall(stepCalls, 2)",
+		"        sum = sum + i",
+		"    end for",
+		`    print(sum & ":" & endCalls & ":" & stepCalls)`,
+		"",
+		`    dim u = User(name="Ada", func=7)`,
+		"    print(json.stringify(u))",
+		"    try",
+		`        dim jv = json.parse("{\"k\":1}")`,
+		"        print(json.stringify(jv))",
+		"    catch e",
+		`        print("json-err:" & e.msg)`,
+		"    end try",
+		"",
+		"    dim fmt = 10",
+		"    dim map = 20",
+		"    shadowByRef(fmt)",
+		`    print("vars=" & fmt & ":" & map)`,
+		"",
+		"    dim r = regex.Regex()",
+		`    print("re=" & r.isMatch("abc"))`,
+		"    dim p = cli.Parser()",
+		`    p.addFlag("ignore-case", "i", "ignore case")`,
+		`    p.addFlag("line-number", "n", "line numbers")`,
+		"    try",
+		`        dim args = p.parseArgs(["-in", "--", "-v", "file.txt"])`,
+		`        print("cli=" & args.hasFlag("ignore-case") & ":" & args.hasFlag("line-number") & ":" & str.join(args.positionals, ","))`,
+		"    catch e",
+		`        print("cli-err:" & e.msg)`,
+		"    end try",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	prog, err := sema.AnalyzeSource(src, "review_regressions.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGo(prog)
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	got := runGeneratedGo(t, goCode)
+	want := strings.Join([]string{
+		"sc-and-ok",
+		"sc-or-ok",
+		"9:1:1",
+		"{\"name\":\"Ada\",\"func\":7}",
+		"{\"k\":1}",
+		"inner=99",
+		"vars=11:20",
+		"re=false",
+		"cli=true:true:-v,file.txt",
+	}, "\n")
+	if got != want {
+		t.Errorf("output mismatch:\ngot:\n%s\nwant:\n%s\ngo:\n%s", got, want, goCode)
+	}
 }

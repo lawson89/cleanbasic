@@ -9,6 +9,12 @@ import (
 	"cleanbasic/bootstrap/internal/token"
 )
 
+func TestRemovedCptrIsIdent(t *testing.T) {
+	if got := token.LookupIdent("cptr"); got != token.IDENT {
+		t.Fatalf("LookupIdent(\"cptr\") = %s, want IDENT", got)
+	}
+}
+
 func TestTwoWordKeywords(t *testing.T) {
 	src := strings.Join([]string{
 		"else if",
@@ -25,7 +31,6 @@ func TestTwoWordKeywords(t *testing.T) {
 		"select case",
 		"case else",
 		"can error",
-		"import header",
 	}, "\n")
 
 	toks, err := Tokenize(src, "keywords.cb")
@@ -48,7 +53,6 @@ func TestTwoWordKeywords(t *testing.T) {
 		token.SELECT_CASE, token.NEWLINE,
 		token.CASE_ELSE, token.NEWLINE,
 		token.CAN_ERROR, token.NEWLINE,
-		token.IMPORT_HEADER, token.NEWLINE,
 		token.EOF,
 	}
 
@@ -162,6 +166,9 @@ func TestInterpolatedStringRejectsComplexExpressions(t *testing.T) {
 		"print($\"sum={a + b}\")\n",
 		"print($\"call={foo(x)}\")\n",
 		"print($\"empty={}\")\n",
+		"print($\"bool={true}\")\n",
+		"print($\"kw={and}\")\n",
+		"print($\"idx={parts[true]}\")\n",
 	}
 	for _, src := range badInputs {
 		_, err := Tokenize(src, "bad_interp.cb")
@@ -173,31 +180,33 @@ func TestInterpolatedStringRejectsComplexExpressions(t *testing.T) {
 
 func TestLexAllTestCases(t *testing.T) {
 	casesDir := filepath.Join("..", "..", "..", "tests", "cases")
-	entries, err := os.ReadDir(casesDir)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", casesDir, err)
-	}
-
 	count := 0
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".cb") {
-			continue
+	err := filepath.WalkDir(casesDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".cb") {
+			return nil
 		}
 		count++
-		path := filepath.Join(casesDir, entry.Name())
-		t.Run(entry.Name(), func(t *testing.T) {
+		rel, _ := filepath.Rel(casesDir, path)
+		t.Run(filepath.ToSlash(rel), func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("read failed: %v", err)
 			}
 			toks, err := Tokenize(string(data), path)
 			if err != nil {
-				t.Fatalf("Tokenize(%s) failed: %v", entry.Name(), err)
+				t.Fatalf("Tokenize(%s) failed: %v", rel, err)
 			}
 			if len(toks) == 0 || toks[len(toks)-1].Kind != token.EOF {
-				t.Fatalf("expected non-empty token slice ending in EOF for %s", entry.Name())
+				t.Fatalf("expected non-empty token slice ending in EOF for %s", rel)
 			}
 		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to walk %s: %v", casesDir, err)
 	}
 	if count < 6 {
 		t.Fatalf("expected at least 6 .cb test cases, found %d", count)

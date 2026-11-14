@@ -155,7 +155,7 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 
 	for _, decl := range prog.Decls {
 		imp, ok := decl.(*ast.ImportDecl)
-		if !ok || imp.IsHeader {
+		if !ok {
 			continue
 		}
 
@@ -287,6 +287,13 @@ func buildStdFsModule() *ModuleInfo {
 		ReturnType: BoolType,
 		Public:     true,
 	}
+	m.Functions["isSymlink"] = &FnSymbol{
+		Name:       "isSymlink",
+		GoName:     "cbStdFsIsSymlink",
+		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
+		ReturnType: BoolType,
+		Public:     true,
+	}
 	m.Functions["join"] = &FnSymbol{
 		Name:       "join",
 		GoName:     "cbStdFsJoin",
@@ -318,28 +325,33 @@ func buildStdFsModule() *ModuleInfo {
 	return m
 }
 
+func newStdStruct(name, goName, moduleID string, fields ...FieldSymbol) (*StructSymbol, Type) {
+	fmap := make(map[string]FieldSymbol, len(fields))
+	for _, f := range fields {
+		fmap[f.Name] = f
+	}
+	sym := &StructSymbol{
+		Name:     name,
+		GoName:   goName,
+		ModuleID: moduleID,
+		Public:   true,
+		Fields:   fields,
+		FieldMap: fmap,
+	}
+	typ := Type{Kind: KindStruct, Name: name, ModuleID: moduleID, GoName: goName}
+	return sym, typ
+}
+
 func buildStdOsModule() *ModuleInfo {
 	m := newModuleInfo("std/os", "std/os", false, true, nil)
 	listStr := Type{Kind: KindList, ElemType: &StrType}
 
-	execResult := &StructSymbol{
-		Name:     "ExecResult",
-		GoName:   "CbStdOsExecResult",
-		ModuleID: "std/os",
-		Public:   true,
-		Fields: []FieldSymbol{
-			{Name: "exitCode", Type: IntType},
-			{Name: "stdout", Type: StrType},
-			{Name: "stderr", Type: StrType},
-		},
-		FieldMap: map[string]FieldSymbol{
-			"exitCode": {Name: "exitCode", Type: IntType},
-			"stdout":   {Name: "stdout", Type: StrType},
-			"stderr":   {Name: "stderr", Type: StrType},
-		},
-	}
+	execResult, execResultType := newStdStruct("ExecResult", "CbStdOsExecResult", "std/os",
+		FieldSymbol{Name: "exitCode", Type: IntType},
+		FieldSymbol{Name: "stdout", Type: StrType},
+		FieldSymbol{Name: "stderr", Type: StrType},
+	)
 	m.Structs["ExecResult"] = execResult
-	execResultType := Type{Kind: KindStruct, Name: "ExecResult", ModuleID: "std/os", GoName: "CbStdOsExecResult"}
 
 	m.Functions["args"] = &FnSymbol{
 		Name:       "args",
@@ -388,15 +400,8 @@ func buildStdOsModule() *ModuleInfo {
 
 func buildStdJsonModule() *ModuleInfo {
 	m := newModuleInfo("std/json", "std/json", false, true, nil)
-	jvStruct := &StructSymbol{
-		Name:     "JsonValue",
-		GoName:   "CbStdJsonValue",
-		ModuleID: "std/json",
-		Public:   true,
-		FieldMap: make(map[string]FieldSymbol),
-	}
+	jvStruct, jvType := newStdStruct("JsonValue", "CbStdJsonValue", "std/json")
 	m.Structs["JsonValue"] = jvStruct
-	jvType := Type{Kind: KindStruct, Name: "JsonValue", ModuleID: "std/json", GoName: "CbStdJsonValue"}
 
 	m.Functions["parse"] = &FnSymbol{
 		Name:       "parse",
@@ -406,12 +411,6 @@ func buildStdJsonModule() *ModuleInfo {
 		CanError:   true,
 		Public:     true,
 	}
-	m.Functions["stringify"] = &FnSymbol{
-		Name:       "stringify",
-		GoName:     "cbStdJsonStringify",
-		ReturnType: StrType,
-		Public:     true,
-	}
 	return m
 }
 
@@ -419,30 +418,13 @@ func buildStdCliModule() *ModuleInfo {
 	m := newModuleInfo("std/cli", "std/cli", false, true, nil)
 	listStr := Type{Kind: KindList, ElemType: &StrType}
 
-	parserStruct := &StructSymbol{
-		Name:     "Parser",
-		GoName:   "*CbStdCliParser",
-		ModuleID: "std/cli",
-		Public:   true,
-		FieldMap: make(map[string]FieldSymbol),
-	}
+	parserStruct, parserType := newStdStruct("Parser", "CbStdCliParser", "std/cli")
 	m.Structs["Parser"] = parserStruct
-	parserType := Type{Kind: KindStruct, Name: "Parser", ModuleID: "std/cli", GoName: "*CbStdCliParser"}
 
-	argsStruct := &StructSymbol{
-		Name:     "ParsedArgs",
-		GoName:   "CbStdCliArgs",
-		ModuleID: "std/cli",
-		Public:   true,
-		Fields: []FieldSymbol{
-			{Name: "helpRequested", Type: BoolType},
-			{Name: "positionals", Type: listStr},
-		},
-		FieldMap: map[string]FieldSymbol{
-			"helpRequested": {Name: "helpRequested", Type: BoolType},
-			"positionals":   {Name: "positionals", Type: listStr},
-		},
-	}
+	argsStruct, _ := newStdStruct("ParsedArgs", "CbStdCliArgs", "std/cli",
+		FieldSymbol{Name: "helpRequested", Type: BoolType},
+		FieldSymbol{Name: "positionals", Type: listStr},
+	)
 	m.Structs["ParsedArgs"] = argsStruct
 
 	m.Functions["newParser"] = &FnSymbol{
@@ -462,15 +444,8 @@ func buildStdCliModule() *ModuleInfo {
 func buildStdRegexModule() *ModuleInfo {
 	m := newModuleInfo("std/regex", "std/regex", false, true, nil)
 
-	regexStruct := &StructSymbol{
-		Name:     "Regex",
-		GoName:   "*CbStdRegex",
-		ModuleID: "std/regex",
-		Public:   true,
-		FieldMap: make(map[string]FieldSymbol),
-	}
+	regexStruct, regexType := newStdStruct("Regex", "CbStdRegex", "std/regex")
 	m.Structs["Regex"] = regexStruct
-	regexType := Type{Kind: KindStruct, Name: "Regex", ModuleID: "std/regex", GoName: "*CbStdRegex"}
 
 	m.Functions["compile"] = &FnSymbol{
 		Name:       "compile",

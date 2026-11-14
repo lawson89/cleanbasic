@@ -22,32 +22,26 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 		prog: prog,
 	}
 	var bodyBuf strings.Builder
-	if len(prog.Modules) > 0 {
-		for _, mod := range prog.Modules {
-			if mod.IsStdlib || mod.Program == nil {
-				continue
-			}
-			e.currentMod = mod
-			modCode, err := e.emitProgram(mod.Program)
-			if err != nil {
-				return "", err
-			}
-			bodyBuf.WriteString(modCode)
+	for _, mod := range prog.Modules {
+		if mod.IsStdlib || mod.Program == nil {
+			continue
 		}
-	} else {
-		modCode, err := e.emitProgram(prog.Main)
+		e.currentMod = mod
+		modCode, err := e.emitProgram(mod.Program)
 		if err != nil {
 			return "", err
 		}
 		bodyBuf.WriteString(modCode)
 	}
 
-	if mainSym, ok := prog.Functions["main"]; ok {
-		if mainSym.ReturnType.Equals(sema.IntType) {
-			e.useImport("os")
-			bodyBuf.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\tos.Exit(int(code))\n\t}\n}\n")
-		} else {
-			bodyBuf.WriteString("func main() {\n\tcb_main()\n}\n")
+	if prog.EntryModule != nil {
+		if mainSym, ok := prog.EntryModule.Functions["main"]; ok {
+			if mainSym.ReturnType.Equals(sema.IntType) {
+				e.useImport("os")
+				bodyBuf.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\tos.Exit(int(code))\n\t}\n}\n")
+			} else {
+				bodyBuf.WriteString("func main() {\n\tcb_main()\n}\n")
+			}
 		}
 	}
 	bodyCode := bodyBuf.String()
@@ -138,12 +132,64 @@ type emitter struct {
 	usedStdCli       bool
 	usedStdRegex     bool
 	byRefVars        map[string]bool
+	shadowedByRef    map[string]bool
 	currentFn        *ast.FnDecl
 	currentTryID     int
 	tryCounter       int
 	errCounter       int
+	condCounter      int
+	loopCounter      int
+	switchCounter    int
 	tryUsedCatch     map[int]bool
 	liftedExprs      map[ast.Expr]string
+}
+
+var goReservedIdents = map[string]bool{
+	"func": true, "var": true, "map": true, "chan": true, "package": true,
+	"interface": true, "go": true, "fallthrough": true, "range": true, "default": true,
+	"switch": true, "struct": true, "defer": true, "goto": true, "select": true,
+	"case": true, "type": true, "const": true, "return": true, "break": true,
+	"continue": true, "for": true, "if": true, "else": true, "import": true,
+	"fmt": true, "strings": true, "os": true, "io": true, "bytes": true,
+	"strconv": true, "regexp": true, "filepath": true, "json": true, "exec": true,
+	"any": true, "error": true, "string": true, "int64": true, "float64": true,
+	"bool": true, "true": true, "false": true, "nil": true, "len": true,
+	"append": true, "make": true, "new": true, "panic": true, "recover": true,
+	"close": true, "delete": true, "copy": true, "print": true, "println": true,
+}
+
+func goIdent(name string) string {
+	if goReservedIdents[name] {
+		return "cb_id_" + name
+	}
+	return name
+}
+
+func goStructFieldName(name string) string {
+	return "Cb_" + name
+}
+
+func (e *emitter) pushShadowScope() map[string]bool {
+	prev := e.shadowedByRef
+	next := make(map[string]bool, len(prev))
+	for k, v := range prev {
+		next[k] = v
+	}
+	e.shadowedByRef = next
+	return prev
+}
+
+func (e *emitter) emitScopedBlock(stmts []ast.Statement, indent string, sb *strings.Builder, extraShadow ...string) {
+	prev := e.pushShadowScope()
+	for _, name := range extraShadow {
+		if name != "" && e.byRefVars != nil && e.byRefVars[name] {
+			e.shadowedByRef[name] = true
+		}
+	}
+	for _, st := range stmts {
+		e.emitStmt(sb, st, indent)
+	}
+	e.shadowedByRef = prev
 }
 
 func (e *emitter) useImport(pkg string) {
@@ -185,10 +231,11 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			if structSym != nil && structSym.GoName != "" {
 				goName = structSym.GoName
 			}
+			goName = goIdent(goName)
 			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
 			for i, f := range d.Fields {
 				fType := e.goSemaType(structSym.Fields[i].Type)
-				sb.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, fType))
+				sb.WriteString(fmt.Sprintf("\t%s %s `json:\"%s\"`\n", goStructFieldName(f.Name), fType, f.Name))
 			}
 			sb.WriteString("}\n\n")
 
@@ -201,6 +248,7 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			if enumSym != nil && enumSym.GoName != "" {
 				goName = enumSym.GoName
 			}
+			goName = goIdent(goName)
 			sb.WriteString(fmt.Sprintf("type %s int64\n\nconst (\n", goName))
 			for i, v := range d.Variants {
 				if i == 0 {
@@ -220,6 +268,7 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			if unionSym != nil && unionSym.GoName != "" {
 				goName = unionSym.GoName
 			}
+			goName = goIdent(goName)
 			sb.WriteString(fmt.Sprintf("type %s interface {\n\tis%s()\n}\n\n", goName, goName))
 			for i, v := range d.Variants {
 				vStruct := fmt.Sprintf("%s_%s", goName, v.Name)
@@ -235,6 +284,7 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 					goName = sym.GoName
 				}
 			}
+			goName = goIdent(goName)
 			typeStr := ""
 			if cType, ok := e.prog.ConstTypes[d]; ok && !cType.IsVoid() {
 				typeStr = " " + e.goSemaType(cType)
@@ -269,18 +319,23 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 	}
 	if name == "main" && (e.currentMod == nil || e.currentMod.IsEntry) {
 		name = "cb_main"
+	} else {
+		name = goIdent(name)
 	}
 
 	prevByRef := e.byRefVars
+	prevShadow := e.shadowedByRef
 	prevFn := e.currentFn
 	prevFnSym := e.currentFnSym
 	prevTryID := e.currentTryID
 	e.byRefVars = make(map[string]bool)
+	e.shadowedByRef = make(map[string]bool)
 	e.currentFn = fn
 	e.currentFnSym = fnSym
 	e.currentTryID = 0
 	defer func() {
 		e.byRefVars = prevByRef
+		e.shadowedByRef = prevShadow
 		e.currentFn = prevFn
 		e.currentFnSym = prevFnSym
 		e.currentTryID = prevTryID
@@ -293,7 +348,7 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 			e.byRefVars[p.Name] = true
 			paramGoType = "*" + paramGoType
 		}
-		params = append(params, fmt.Sprintf("%s %s", p.Name, paramGoType))
+		params = append(params, fmt.Sprintf("%s %s", goIdent(p.Name), paramGoType))
 	}
 
 	retType := ""
@@ -358,10 +413,14 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		case "std/regex":
 			e.usedStdRegex = true
 		}
+		name := t.Name
 		if t.GoName != "" {
-			return t.GoName
+			name = t.GoName
 		}
-		return t.Name
+		if !strings.HasPrefix(t.ModuleID, "std/") {
+			return goIdent(name)
+		}
+		return name
 	case sema.KindList:
 		if t.ElemType != nil {
 			return "[]" + e.goSemaType(*t.ElemType)
@@ -429,6 +488,25 @@ func (e *emitter) liftFallibleCalls(sb *strings.Builder, expr ast.Expr, indent s
 	case *ast.UnaryExpr:
 		return e.liftFallibleCalls(sb, ex.Operand, indent)
 	case *ast.BinaryExpr:
+		if (ex.Op == token.AND || ex.Op == token.OR) && e.exprHasFallibleCall(ex.Right) {
+			e.liftFallibleCalls(sb, ex.Left, indent)
+			e.condCounter++
+			condVar := fmt.Sprintf("_cbCond_%d", e.condCounter)
+			sb.WriteString(fmt.Sprintf("%svar %s bool = %s\n", indent, condVar, e.emitExpr(ex.Left)))
+			if ex.Op == token.AND {
+				sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, condVar))
+			} else {
+				sb.WriteString(fmt.Sprintf("%sif !%s {\n", indent, condVar))
+			}
+			e.liftFallibleCalls(sb, ex.Right, indent+"\t")
+			sb.WriteString(fmt.Sprintf("%s\t%s = %s\n", indent, condVar, e.emitExpr(ex.Right)))
+			sb.WriteString(fmt.Sprintf("%s}\n", indent))
+			if e.liftedExprs == nil {
+				e.liftedExprs = make(map[ast.Expr]string)
+			}
+			e.liftedExprs[ex] = condVar
+			return true
+		}
 		l := e.liftFallibleCalls(sb, ex.Left, indent)
 		r := e.liftFallibleCalls(sb, ex.Right, indent)
 		return l || r
@@ -515,8 +593,16 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		if vType, ok := e.prog.VarTypes[s]; ok && !vType.IsVoid() {
 			typeStr = " " + e.goSemaType(vType)
 		}
-		sb.WriteString(fmt.Sprintf("%svar %s%s = %s\n", indent, s.Name, typeStr, e.emitExpr(s.Value)))
-		sb.WriteString(fmt.Sprintf("%s_ = %s\n", indent, s.Name))
+		valStr := e.emitExpr(s.Value)
+		if e.byRefVars != nil && e.byRefVars[s.Name] {
+			if e.shadowedByRef == nil {
+				e.shadowedByRef = make(map[string]bool)
+			}
+			e.shadowedByRef[s.Name] = true
+		}
+		varGo := goIdent(s.Name)
+		sb.WriteString(fmt.Sprintf("%svar %s%s = %s\n", indent, varGo, typeStr, valStr))
+		sb.WriteString(fmt.Sprintf("%s_ = %s\n", indent, varGo))
 
 	case *ast.Assignment:
 		e.liftFallibleCalls(sb, s.Value, indent)
@@ -550,9 +636,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 	case *ast.IfStmt:
 		e.liftFallibleCalls(sb, s.Cond, indent)
 		sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, e.emitExpr(s.Cond)))
-		for _, st := range s.ThenBody {
-			e.emitStmt(sb, st, indent+"\t")
-		}
+		e.emitScopedBlock(s.ThenBody, indent+"\t", sb)
 		elseIndent := indent
 		extraCloses := 0
 		for _, elif := range s.ElseIfs {
@@ -566,15 +650,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			} else {
 				sb.WriteString(fmt.Sprintf("%s} else if %s {\n", elseIndent, e.emitExpr(elif.Cond)))
 			}
-			for _, st := range elif.Body {
-				e.emitStmt(sb, st, elseIndent+"\t")
-			}
+			e.emitScopedBlock(elif.Body, elseIndent+"\t", sb)
 		}
 		if s.HasElse {
 			sb.WriteString(fmt.Sprintf("%s} else {\n", elseIndent))
-			for _, st := range s.ElseBody {
-				e.emitStmt(sb, st, elseIndent+"\t")
-			}
+			e.emitScopedBlock(s.ElseBody, elseIndent+"\t", sb)
 		}
 		sb.WriteString(fmt.Sprintf("%s}\n", elseIndent))
 		for i := 0; i < extraCloses; i++ {
@@ -589,45 +669,49 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			if s.Step != nil {
 				e.liftFallibleCalls(sb, s.Step, indent)
 			}
+			e.loopCounter++
+			lid := e.loopCounter
+			endVar := fmt.Sprintf("_cbEnd_%d", lid)
+			varGo := goIdent(s.VarName)
+			sb.WriteString(fmt.Sprintf("%svar %s int64 = %s\n", indent, endVar, e.emitExpr(s.End)))
 			if s.Step == nil {
 				sb.WriteString(fmt.Sprintf("%sfor %s := %s; %s <= %s; %s += int64(1) {\n",
-					indent, s.VarName, e.emitExpr(s.Start), s.VarName, e.emitExpr(s.End), s.VarName))
-				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, s.VarName))
-				for _, st := range s.Body {
-					e.emitStmt(sb, st, indent+"\t")
-				}
+					indent, varGo, e.emitExpr(s.Start), varGo, endVar, varGo))
+				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, varGo))
+				e.emitScopedBlock(s.Body, indent+"\t", sb, s.VarName)
 				sb.WriteString(fmt.Sprintf("%s}\n", indent))
 			} else {
-				stepExpr := e.emitExpr(s.Step)
-				sb.WriteString(fmt.Sprintf("%sfor %s := %s; (%s >= 0 && %s <= %s) || (%s < 0 && %s >= %s); %s += %s {\n",
-					indent, s.VarName, e.emitExpr(s.Start),
-					stepExpr, s.VarName, e.emitExpr(s.End),
-					stepExpr, s.VarName, e.emitExpr(s.End),
-					s.VarName, stepExpr))
-				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, s.VarName))
-				for _, st := range s.Body {
-					e.emitStmt(sb, st, indent+"\t")
-				}
+				stepVar := fmt.Sprintf("_cbStep_%d", lid)
+				sb.WriteString(fmt.Sprintf("%svar %s int64 = %s\n", indent, stepVar, e.emitExpr(s.Step)))
+				sb.WriteString(fmt.Sprintf("%sfor %s := %s; (%s > 0 && %s <= %s) || (%s < 0 && %s >= %s); %s += %s {\n",
+					indent, varGo, e.emitExpr(s.Start),
+					stepVar, varGo, endVar,
+					stepVar, varGo, endVar,
+					varGo, stepVar))
+				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, varGo))
+				e.emitScopedBlock(s.Body, indent+"\t", sb, s.VarName)
 				sb.WriteString(fmt.Sprintf("%s}\n", indent))
 			}
 		} else {
 			e.liftFallibleCalls(sb, s.Iterable, indent)
 			iterType := e.prog.ExprTypes[s.Iterable]
 			if iterType.Kind == sema.KindList {
-				sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, s.Vars[0], e.emitExpr(s.Iterable)))
-				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, s.Vars[0]))
+				v0 := goIdent(s.Vars[0])
+				sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, v0, e.emitExpr(s.Iterable)))
+				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
 			} else if iterType.Kind == sema.KindDict {
 				if len(s.Vars) == 1 {
-					sb.WriteString(fmt.Sprintf("%sfor %s := range %s {\n", indent, s.Vars[0], e.emitExpr(s.Iterable)))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, s.Vars[0]))
+					v0 := goIdent(s.Vars[0])
+					sb.WriteString(fmt.Sprintf("%sfor %s := range %s {\n", indent, v0, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
 				} else {
-					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, s.Vars[0], s.Vars[1], e.emitExpr(s.Iterable)))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, s.Vars[0], indent, s.Vars[1]))
+					v0 := goIdent(s.Vars[0])
+					v1 := goIdent(s.Vars[1])
+					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, v0, v1, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
 				}
 			}
-			for _, st := range s.Body {
-				e.emitStmt(sb, st, indent+"\t")
-			}
+			e.emitScopedBlock(s.Body, indent+"\t", sb, s.Vars...)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		}
 
@@ -638,6 +722,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			if unionSym.GoName != "" {
 				unionGoName = unionSym.GoName
 			}
+			unionGoName = goIdent(unionGoName)
 			hasBinding := false
 			for _, cc := range s.Cases {
 				if cc.Binding != "" {
@@ -645,8 +730,10 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					break
 				}
 			}
+			e.switchCounter++
+			swVar := fmt.Sprintf("_cbSwitch_%d", e.switchCounter)
 			if hasBinding {
-				sb.WriteString(fmt.Sprintf("%sswitch cbSwitch := (%s).(type) {\n", indent, e.emitExpr(s.Target)))
+				sb.WriteString(fmt.Sprintf("%sswitch %s := (%s).(type) {\n", indent, swVar, e.emitExpr(s.Target)))
 			} else {
 				sb.WriteString(fmt.Sprintf("%sswitch (%s).(type) {\n", indent, e.emitExpr(s.Target)))
 			}
@@ -664,19 +751,15 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 				}
 				sb.WriteString(fmt.Sprintf("%scase %s:\n", indent, strings.Join(caseTypes, ", ")))
 				if cc.Binding != "" {
-					hasBinding = true
-					sb.WriteString(fmt.Sprintf("%s\tvar %s = cbSwitch.Value\n", indent, cc.Binding))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, cc.Binding))
+					bindGo := goIdent(cc.Binding)
+					sb.WriteString(fmt.Sprintf("%s\tvar %s = %s.Value\n", indent, bindGo, swVar))
+					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, bindGo))
 				}
-				for _, st := range cc.Body {
-					e.emitStmt(sb, st, indent+"\t")
-				}
+				e.emitScopedBlock(cc.Body, indent+"\t", sb, cc.Binding)
 			}
 			if s.HasElse {
 				sb.WriteString(fmt.Sprintf("%sdefault:\n", indent))
-				for _, st := range s.ElseBody {
-					e.emitStmt(sb, st, indent+"\t")
-				}
+				e.emitScopedBlock(s.ElseBody, indent+"\t", sb)
 			}
 
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
@@ -688,15 +771,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					vals = append(vals, e.emitExpr(v))
 				}
 				sb.WriteString(fmt.Sprintf("%scase %s:\n", indent, strings.Join(vals, ", ")))
-				for _, st := range cc.Body {
-					e.emitStmt(sb, st, indent+"\t")
-				}
+				e.emitScopedBlock(cc.Body, indent+"\t", sb)
 			}
 			if s.HasElse {
 				sb.WriteString(fmt.Sprintf("%sdefault:\n", indent))
-				for _, st := range s.ElseBody {
-					e.emitStmt(sb, st, indent+"\t")
-				}
+				e.emitScopedBlock(s.ElseBody, indent+"\t", sb)
 			}
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		}
@@ -707,15 +786,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			sb.WriteString(fmt.Sprintf("%sfor {\n", indent))
 			sb.WriteString(liftBuf.String())
 			sb.WriteString(fmt.Sprintf("%s\tif !(%s) {\n%s\t\tbreak\n%s\t}\n", indent, e.emitExpr(s.Cond), indent, indent))
-			for _, st := range s.Body {
-				e.emitStmt(sb, st, indent+"\t")
-			}
+			e.emitScopedBlock(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		} else {
 			sb.WriteString(fmt.Sprintf("%sfor %s {\n", indent, e.emitExpr(s.Cond)))
-			for _, st := range s.Body {
-				e.emitStmt(sb, st, indent+"\t")
-			}
+			e.emitScopedBlock(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		}
 
@@ -728,9 +803,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		sb.WriteString(fmt.Sprintf("%s_ = _tryErr_%d\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s{\n", indent))
 		e.currentTryID = tryID
-		for _, st := range s.TryBody {
-			e.emitStmt(sb, st, indent+"\t")
-		}
+		e.emitScopedBlock(s.TryBody, indent+"\t", sb)
 		e.currentTryID = prevTryID
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		if e.tryUsedCatch == nil || !e.tryUsedCatch[tryID] {
@@ -739,16 +812,15 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		sb.WriteString(fmt.Sprintf("%sgoto _end_try_%d\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s_catch_%d:\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s{\n", indent))
-		sb.WriteString(fmt.Sprintf("%s\tvar %s CbError\n", indent, s.CatchVar))
+		catchGo := goIdent(s.CatchVar)
+		sb.WriteString(fmt.Sprintf("%s\tvar %s CbError\n", indent, catchGo))
 		sb.WriteString(fmt.Sprintf("%s\tif _cbErr, _ok := _tryErr_%d.(CbError); _ok {\n", indent, tryID))
-		sb.WriteString(fmt.Sprintf("%s\t\t%s = _cbErr\n", indent, s.CatchVar))
+		sb.WriteString(fmt.Sprintf("%s\t\t%s = _cbErr\n", indent, catchGo))
 		sb.WriteString(fmt.Sprintf("%s\t} else {\n", indent))
-		sb.WriteString(fmt.Sprintf("%s\t\t%s = CbError{msg: _tryErr_%d.Error()}\n", indent, s.CatchVar, tryID))
+		sb.WriteString(fmt.Sprintf("%s\t\t%s = CbError{msg: _tryErr_%d.Error()}\n", indent, catchGo, tryID))
 		sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
-		sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, s.CatchVar))
-		for _, st := range s.CatchBody {
-			e.emitStmt(sb, st, indent+"\t")
-		}
+		sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, catchGo))
+		e.emitScopedBlock(s.CatchBody, indent+"\t", sb, s.CatchVar)
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		sb.WriteString(fmt.Sprintf("%s_end_try_%d:\n", indent, tryID))
 
@@ -756,9 +828,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		prevTryID := e.currentTryID
 		e.currentTryID = 0
 		sb.WriteString(fmt.Sprintf("%sdefer func() {\n", indent))
-		for _, st := range s.Body {
-			e.emitStmt(sb, st, indent+"\t")
-		}
+		e.emitScopedBlock(s.Body, indent+"\t", sb)
 		sb.WriteString(fmt.Sprintf("%s}()\n", indent))
 		e.currentTryID = prevTryID
 
@@ -791,13 +861,13 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 	case *ast.IdentExpr:
 		if e.prog != nil {
 			if goName, ok := e.prog.IdentGoNames[ex]; ok {
-				return goName
+				return goIdent(goName)
 			}
 		}
-		if e.byRefVars != nil && e.byRefVars[ex.Name] {
-			return fmt.Sprintf("(*%s)", ex.Name)
+		if e.byRefVars != nil && e.byRefVars[ex.Name] && (e.shadowedByRef == nil || !e.shadowedByRef[ex.Name]) {
+			return fmt.Sprintf("(*%s)", goIdent(ex.Name))
 		}
-		return ex.Name
+		return goIdent(ex.Name)
 
 	case *ast.IntLitExpr:
 		return fmt.Sprintf("int64(%s)", ex.Raw)
@@ -822,6 +892,11 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("(%s%s)", op, e.emitExpr(ex.Operand))
 
 	case *ast.BinaryExpr:
+		if e.liftedExprs != nil {
+			if valVar, ok := e.liftedExprs[ex]; ok {
+				return valVar
+			}
+		}
 		if ex.Op == token.AMP {
 			e.useImport("fmt")
 			return fmt.Sprintf("(fmt.Sprint(%s) + fmt.Sprint(%s))", e.emitExpr(ex.Left), e.emitExpr(ex.Right))
@@ -859,11 +934,11 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 	case *ast.FieldAccessExpr:
 		if e.prog != nil {
 			if goName, ok := e.prog.IdentGoNames[ex]; ok {
-				return goName
+				return goIdent(goName)
 			}
-		}
-		if id, ok := ex.Target.(*ast.IdentExpr); ok && e.prog != nil && e.prog.Enums[id.Name] != nil {
-			return fmt.Sprintf("%s_%s", id.Name, ex.Field)
+			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok && targetType.Kind == sema.KindStruct && !strings.HasPrefix(targetType.ModuleID, "std/") {
+				return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
+			}
 		}
 		return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), ex.Field)
 
@@ -890,8 +965,8 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 func (e *emitter) emitArgExpr(expr ast.Expr, byRef bool) string {
 	if byRef {
-		if argId, ok := expr.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
-			return argId.Name
+		if argId, ok := expr.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] && (e.shadowedByRef == nil || !e.shadowedByRef[argId.Name]) {
+			return goIdent(argId.Name)
 		}
 		return "&" + e.emitExpr(expr)
 	}
@@ -916,9 +991,14 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 			switch ci.Kind {
 			case sema.CallStructCtor:
 				var fields []string
+				isUserStruct := !strings.HasPrefix(ci.Struct.ModuleID, "std/")
 				if ci.NamedArgs {
 					for _, a := range ex.Args {
-						fields = append(fields, fmt.Sprintf("%s: %s", a.Name, e.emitExpr(a.Value)))
+						fName := a.Name
+						if isUserStruct {
+							fName = goStructFieldName(a.Name)
+						}
+						fields = append(fields, fmt.Sprintf("%s: %s", fName, e.emitExpr(a.Value)))
 					}
 				} else {
 					for _, a := range ex.Args {
@@ -929,6 +1009,9 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				if ci.Struct.GoName != "" {
 					structGoName = ci.Struct.GoName
 				}
+				if isUserStruct {
+					structGoName = goIdent(structGoName)
+				}
 				return fmt.Sprintf("%s{%s}", structGoName, strings.Join(fields, ", "))
 
 			case sema.CallUnionCtor:
@@ -936,6 +1019,7 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				if ci.Union.GoName != "" {
 					unionGoName = ci.Union.GoName
 				}
+				unionGoName = goIdent(unionGoName)
 				return fmt.Sprintf("%s_%s{Value: %s}", unionGoName, ci.VariantName, e.emitExpr(ex.Args[0].Value))
 
 			case sema.CallMethod:
@@ -1028,6 +1112,8 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 					}
 					if fnGoName == "main" {
 						fnGoName = "cb_main"
+					} else {
+						fnGoName = goIdent(fnGoName)
 					}
 					return fmt.Sprintf("%s(%s)", fnGoName, strings.Join(args, ", "))
 				}
@@ -1043,10 +1129,54 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				if fnGoName == "" {
 					fnGoName = ci.Fn.Name
 				}
+				fnGoName = goIdent(fnGoName)
 				return fmt.Sprintf("%s(%s)", fnGoName, strings.Join(args, ", "))
 			}
 		}
 	}
 
 	return ""
+}
+
+func (e *emitter) exprHasFallibleCall(expr ast.Expr) bool {
+	if expr == nil || e.prog == nil {
+		return false
+	}
+	switch ex := expr.(type) {
+	case *ast.UnaryExpr:
+		return e.exprHasFallibleCall(ex.Operand)
+	case *ast.BinaryExpr:
+		return e.exprHasFallibleCall(ex.Left) || e.exprHasFallibleCall(ex.Right)
+	case *ast.ListLitExpr:
+		for _, el := range ex.Elements {
+			if e.exprHasFallibleCall(el) {
+				return true
+			}
+		}
+	case *ast.DictLitExpr:
+		for _, ent := range ex.Entries {
+			if e.exprHasFallibleCall(ent.Key) || e.exprHasFallibleCall(ent.Value) {
+				return true
+			}
+		}
+	case *ast.FieldAccessExpr:
+		return e.exprHasFallibleCall(ex.Target)
+	case *ast.IndexExpr:
+		return e.exprHasFallibleCall(ex.Target) || e.exprHasFallibleCall(ex.Index)
+	case *ast.CallExpr:
+		if ci, ok := e.prog.CallInfos[ex]; ok {
+			if ci.Kind == sema.CallError || ci.CanError {
+				return true
+			}
+			if ci.Receiver != nil && e.exprHasFallibleCall(ci.Receiver) {
+				return true
+			}
+		}
+		for _, a := range ex.Args {
+			if e.exprHasFallibleCall(a.Value) {
+				return true
+			}
+		}
+	}
+	return false
 }
