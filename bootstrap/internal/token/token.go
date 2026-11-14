@@ -41,7 +41,6 @@ const (
 	DIM      Kind = "dim"
 	TYPE     Kind = "type"
 	ENUM     Kind = "enum"
-	UNION    Kind = "union"
 	FN       Kind = "fn"
 	EXTERN   Kind = "extern"
 	BYREF    Kind = "byref"
@@ -88,7 +87,6 @@ const (
 	END_DEFER   Kind = "end defer"
 	END_TYPE    Kind = "end type"
 	END_ENUM    Kind = "end enum"
-	END_UNION   Kind = "end union"
 	SELECT_CASE Kind = "select case"
 	CASE_ELSE   Kind = "case else"
 	CAN_ERROR   Kind = "can error"
@@ -143,7 +141,6 @@ var singleWordKeywords = map[string]Kind{
 	"dim":      DIM,
 	"type":     TYPE,
 	"enum":     ENUM,
-	"union":    UNION,
 	"fn":       FN,
 	"extern":   EXTERN,
 	"byref":    BYREF,
@@ -192,7 +189,6 @@ var twoWordKeywords = map[twoWordKey]Kind{
 	{first: "end", second: "defer"}:   END_DEFER,
 	{first: "end", second: "type"}:    END_TYPE,
 	{first: "end", second: "enum"}:    END_ENUM,
-	{first: "end", second: "union"}:   END_UNION,
 	{first: "select", second: "case"}: SELECT_CASE,
 	{first: "case", second: "else"}:   CASE_ELSE,
 	{first: "can", second: "error"}:   CAN_ERROR,

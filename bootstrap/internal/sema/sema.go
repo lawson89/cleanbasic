@@ -21,7 +21,6 @@ const (
 	KindBool   TypeKind = "bool"
 	KindStruct TypeKind = "struct"
 	KindEnum   TypeKind = "enum"
-	KindUnion  TypeKind = "union"
 	KindList   TypeKind = "list"
 	KindDict   TypeKind = "dict"
 	KindErr    TypeKind = "err"
@@ -51,7 +50,7 @@ func (t Type) String() string {
 	switch t.Kind {
 	case "":
 		return "void"
-	case KindStruct, KindEnum, KindUnion:
+	case KindStruct, KindEnum:
 		return t.Name
 	case KindList:
 		if t.ElemType != nil {
@@ -77,7 +76,7 @@ func (t Type) Equals(other Type) bool {
 		return false
 	}
 	switch t.Kind {
-	case KindStruct, KindEnum, KindUnion:
+	case KindStruct, KindEnum:
 		return t.Name == other.Name && t.ModuleID == other.ModuleID
 	case KindList:
 		if t.ElemType == nil || other.ElemType == nil {
@@ -208,32 +207,12 @@ type EnumSymbol struct {
 	Pos        token.Position
 }
 
-// UnionVariantSymbol represents a variant in a user-defined union type.
-type UnionVariantSymbol struct {
-	Name string
-	Type Type
-	Pos  token.Position
-}
-
-// UnionSymbol represents a user-defined discriminated union type.
-type UnionSymbol struct {
-	Name       string
-	GoName     string
-	ModuleID   string
-	Variants   []UnionVariantSymbol
-	VariantMap map[string]UnionVariantSymbol
-	Public     bool
-	Decl       *ast.UnionDecl
-	Pos        token.Position
-}
-
 // CallKind identifies how a CallExpr was resolved during semantic analysis.
 type CallKind int
 
 const (
 	CallFunc CallKind = iota
 	CallStructCtor
-	CallUnionCtor
 	CallMethod
 	CallUFCS
 	CallError
@@ -241,16 +220,14 @@ const (
 
 // CallInfo records the resolved target of a CallExpr for code generation.
 type CallInfo struct {
-	Kind        CallKind
-	Fn          *FnSymbol
-	Struct      *StructSymbol
-	NamedArgs   bool
-	Union       *UnionSymbol
-	VariantName string
-	MethodName  string
-	Receiver    ast.Expr
-	CanError    bool
-	HasValue    bool
+	Kind       CallKind
+	Fn         *FnSymbol
+	Struct     *StructSymbol
+	NamedArgs  bool
+	MethodName string
+	Receiver   ast.Expr
+	CanError   bool
+	HasValue   bool
 }
 
 // TypedProgram holds the AST and semantic type information for an analyzed CleanBasic program.
@@ -266,7 +243,6 @@ type TypedProgram struct {
 	IdentGoNames map[ast.Expr]string
 	Functions    map[string]*FnSymbol
 	CallInfos    map[*ast.CallExpr]*CallInfo
-	SelectUnion  map[*ast.SelectStmt]*UnionSymbol
 }
 
 // LoadAndAnalyze reads, parses, and semantically analyzes the CleanBasic file at entryPath.
@@ -317,7 +293,6 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 		IdentGoNames: make(map[ast.Expr]string),
 		Functions:    entryMod.Functions,
 		CallInfos:    make(map[*ast.CallExpr]*CallInfo),
-		SelectUnion:  make(map[*ast.SelectStmt]*UnionSymbol),
 	}
 
 	a := &analyzer{
@@ -362,17 +337,8 @@ func (a *analyzer) lookupStruct(t Type) *StructSymbol {
 	return a.mod.Structs[t.Name]
 }
 
-func (a *analyzer) lookupUnion(t Type) *UnionSymbol {
-	if t.ModuleID != "" {
-		if m, ok := a.prog.ModuleByID[t.ModuleID]; ok {
-			return m.Unions[t.Name]
-		}
-	}
-	return a.mod.Unions[t.Name]
-}
-
 func (a *analyzer) analyzeProgram(prog *ast.Program) error {
-	// Pass 0: Pre-declare all user-defined types (type, enum, union) so they can reference each other.
+	// Pass 0: Pre-declare all user-defined types (type, enum) so they can reference each other.
 	for _, decl := range prog.Decls {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
@@ -401,23 +367,10 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 				Decl:       d,
 				Pos:        d.Pos,
 			}
-		case *ast.UnionDecl:
-			if err := a.predeclareType(d.Name, d.Pos); err != nil {
-				return err
-			}
-			a.mod.Unions[d.Name] = &UnionSymbol{
-				Name:       d.Name,
-				GoName:     a.mod.symbolGoName(d.Name),
-				ModuleID:   a.mod.ID,
-				VariantMap: make(map[string]UnionVariantSymbol),
-				Public:     d.Public,
-				Decl:       d,
-				Pos:        d.Pos,
-			}
 		}
 	}
 
-	// Pass 0.5: Resolve struct fields, enum variants, and union variants.
+	// Pass 0.5: Resolve struct fields and enum variants.
 	for _, decl := range prog.Decls {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
@@ -426,10 +379,6 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 			}
 		case *ast.EnumDecl:
 			if err := a.resolveEnumDecl(d); err != nil {
-				return err
-			}
-		case *ast.UnionDecl:
-			if err := a.resolveUnionDecl(d); err != nil {
 				return err
 			}
 		}
@@ -478,9 +427,6 @@ func (a *analyzer) predeclareType(name string, pos token.Position) error {
 	if _, exists := a.mod.Enums[name]; exists {
 		return newSemaError(pos, "type %q is already declared", name)
 	}
-	if _, exists := a.mod.Unions[name]; exists {
-		return newSemaError(pos, "type %q is already declared", name)
-	}
 	return nil
 }
 
@@ -509,23 +455,6 @@ func (a *analyzer) resolveEnumDecl(d *ast.EnumDecl) error {
 		}
 		sym.Variants = append(sym.Variants, v)
 		sym.VariantSet[v] = true
-	}
-	return nil
-}
-
-func (a *analyzer) resolveUnionDecl(d *ast.UnionDecl) error {
-	sym := a.mod.Unions[d.Name]
-	for _, v := range d.Variants {
-		if _, dup := sym.VariantMap[v.Name]; dup {
-			return newSemaError(v.Pos, "duplicate variant %q in union %q", v.Name, d.Name)
-		}
-		vType, err := a.resolveTypeExpr(v.Type)
-		if err != nil {
-			return err
-		}
-		uv := UnionVariantSymbol{Name: v.Name, Type: vType, Pos: v.Pos}
-		sym.Variants = append(sym.Variants, uv)
-		sym.VariantMap[v.Name] = uv
 	}
 	return nil
 }
@@ -1054,83 +983,24 @@ func (a *analyzer) analyzeSelectStmt(s *ast.SelectStmt, scope *Scope) error {
 	if err != nil {
 		return err
 	}
+	if !a.isComparableType(exprType) {
+		return newSemaError(s.Target.ExprPos(), "select case expression of type %s is not comparable", exprType.String())
+	}
 
-	if exprType.Kind == KindUnion {
-		unionSym := a.lookupUnion(exprType)
-		a.prog.SelectUnion[s] = unionSym
-		for _, cc := range s.Cases {
-			if cc.Binding != "" && len(cc.Values) != 1 {
-				return newSemaError(cc.Pos, "cannot use 'as' binding with multiple patterns in select case")
+	for _, cc := range s.Cases {
+		for _, pat := range cc.Values {
+			patType, err := a.inferExpr(pat, scope)
+			if err != nil {
+				return err
 			}
-			var boundType Type
-			for _, pat := range cc.Values {
-				var variantName string
-				switch p := pat.(type) {
-				case *ast.IdentExpr:
-					variantName = p.Name
-				case *ast.FieldAccessExpr:
-					if objIdent, ok := p.Target.(*ast.IdentExpr); ok {
-						if objIdent.Name != unionSym.Name || unionSym.ModuleID != a.mod.ID {
-							return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
-						}
-						variantName = p.Field
-					} else if innerFA, ok := p.Target.(*ast.FieldAccessExpr); ok {
-						modIdent, ok2 := innerFA.Target.(*ast.IdentExpr)
-						if !ok2 {
-							return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
-						}
-						impMod, modOk := a.mod.Imports[modIdent.Name]
-						if !modOk || impMod.ID != unionSym.ModuleID || innerFA.Field != unionSym.Name {
-							return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
-						}
-						variantName = p.Field
-					} else {
-						return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
-					}
-				default:
-					return newSemaError(pat.ExprPos(), "invalid union case pattern in select case for %s", unionSym.Name)
-				}
-				uv, exists := unionSym.VariantMap[variantName]
-				if !exists {
-					return newSemaError(pat.ExprPos(), "union %q has no variant %q", unionSym.Name, variantName)
-				}
-				boundType = uv.Type
-			}
-			caseScope := NewScope(scope)
-			if cc.Binding != "" {
-				if err := caseScope.Define(&VarSymbol{
-					Name: cc.Binding,
-					Type: boundType,
-					Pos:  cc.Pos,
-				}); err != nil {
-					return err
-				}
-			}
-			for _, st := range cc.Body {
-				if err := a.analyzeStmt(st, caseScope); err != nil {
-					return err
-				}
+			if !patType.Equals(exprType) {
+				return newSemaError(pat.ExprPos(), "case pattern type %s does not match select expression type %s", patType.String(), exprType.String())
 			}
 		}
-	} else {
-		for _, cc := range s.Cases {
-			if cc.Binding != "" {
-				return newSemaError(cc.Pos, "'as' binding in select case is only supported for union types")
-			}
-			for _, pat := range cc.Values {
-				patType, err := a.inferExpr(pat, scope)
-				if err != nil {
-					return err
-				}
-				if !patType.Equals(exprType) {
-					return newSemaError(pat.ExprPos(), "case pattern type %s does not match select expression type %s", patType.String(), exprType.String())
-				}
-			}
-			caseScope := NewScope(scope)
-			for _, st := range cc.Body {
-				if err := a.analyzeStmt(st, caseScope); err != nil {
-					return err
-				}
+		caseScope := NewScope(scope)
+		for _, st := range cc.Body {
+			if err := a.analyzeStmt(st, caseScope); err != nil {
+				return err
 			}
 		}
 	}
@@ -1725,46 +1595,7 @@ func (a *analyzer) expectPositionalArgs(e *ast.CallExpr, methodName string, scop
 	return nil
 }
 
-func (a *analyzer) inferUnionCtorCall(e *ast.CallExpr, unionSym *UnionSymbol, variantName string, scope *Scope) (Type, error) {
-	uv, exists := unionSym.VariantMap[variantName]
-	if !exists {
-		return VoidType, newSemaError(e.Pos, "union %q has no variant %q", unionSym.Name, variantName)
-	}
-	if len(e.Args) != 1 || e.Args[0].Name != "" {
-		return VoidType, newSemaError(e.Pos, "union constructor %s.%s expects 1 positional argument", unionSym.Name, variantName)
-	}
-	argType, err := a.inferExpr(e.Args[0].Value, scope)
-	if err != nil {
-		return VoidType, err
-	}
-	if !uv.Type.Equals(argType) {
-		return VoidType, newSemaError(e.Args[0].Pos, "union constructor %s.%s expects %s, got %s", unionSym.Name, variantName, uv.Type.String(), argType.String())
-	}
-	a.prog.CallInfos[e] = &CallInfo{
-		Kind:        CallUnionCtor,
-		Union:       unionSym,
-		VariantName: variantName,
-	}
-	return Type{Kind: KindUnion, Name: unionSym.Name, ModuleID: unionSym.ModuleID, GoName: unionSym.GoName}, nil
-}
-
 func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
-	// Cross-module union constructor: modAlias.Union.Variant(arg)
-	if innerFA, ok := fa.Target.(*ast.FieldAccessExpr); ok {
-		if modIdent, ok2 := innerFA.Target.(*ast.IdentExpr); ok2 {
-			if impMod, isMod := a.mod.Imports[modIdent.Name]; isMod {
-				if unionSym, isUnion := impMod.Unions[innerFA.Field]; isUnion {
-					if !unionSym.Public {
-						return VoidType, newSemaError(e.Pos, "union %q in module %q is private", innerFA.Field, modIdent.Name)
-					}
-					return a.inferUnionCtorCall(e, unionSym, fa.Field, scope)
-				}
-				if _, isGlobal := impMod.GlobalVars.Lookup(innerFA.Field); !isGlobal {
-					return VoidType, newSemaError(e.Pos, "module %q has no union %q", modIdent.Name, innerFA.Field)
-				}
-			}
-		}
-	}
 
 	if objIdent, ok := fa.Target.(*ast.IdentExpr); ok {
 		// Cross-module function or struct constructor: modAlias.Symbol(...)
@@ -1808,10 +1639,6 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 				return fnSym.ReturnType, nil
 			}
 			return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
-		}
-
-		if unionSym, isUnion := a.mod.Unions[objIdent.Name]; isUnion {
-			return a.inferUnionCtorCall(e, unionSym, fa.Field, scope)
 		}
 
 		if objIdent.Name == "str" && fa.Field == "join" {
@@ -2010,9 +1837,6 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 			if sym, ok := a.mod.Enums[name]; ok {
 				return Type{Kind: KindEnum, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
 			}
-			if sym, ok := a.mod.Unions[name]; ok {
-				return Type{Kind: KindUnion, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
-			}
 		} else if len(t.Parts) == 2 {
 			modAlias, typeName := t.Parts[0], t.Parts[1]
 			impMod, ok := a.mod.Imports[modAlias]
@@ -2030,12 +1854,6 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 					return VoidType, newSemaError(t.Pos, "enum %q in module %q is private", typeName, modAlias)
 				}
 				return Type{Kind: KindEnum, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
-			}
-			if sym, ok := impMod.Unions[typeName]; ok {
-				if !sym.Public {
-					return VoidType, newSemaError(t.Pos, "union %q in module %q is private", typeName, modAlias)
-				}
-				return Type{Kind: KindUnion, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
 			}
 		}
 	}
@@ -2221,22 +2039,7 @@ func (a *analyzer) isComparableTypeVisited(t Type, visited map[string]bool) bool
 			}
 		}
 		return true
-	case KindUnion:
-		key := "union:" + t.ModuleID + "." + t.Name
-		if visited[key] {
-			return true
-		}
-		visited[key] = true
-		sym := a.lookupUnion(t)
-		if sym == nil {
-			return false
-		}
-		for _, v := range sym.Variants {
-			if !a.isComparableTypeVisited(v.Type, visited) {
-				return false
-			}
-		}
-		return true
+
 	default:
 		return false
 	}

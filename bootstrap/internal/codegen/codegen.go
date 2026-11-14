@@ -139,7 +139,6 @@ type emitter struct {
 	errCounter       int
 	condCounter      int
 	loopCounter      int
-	switchCounter    int
 	tryUsedCatch     map[int]bool
 	liftedExprs      map[ast.Expr]string
 }
@@ -258,24 +257,6 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 				}
 			}
 			sb.WriteString(")\n\n")
-
-		case *ast.UnionDecl:
-			var unionSym *sema.UnionSymbol
-			if e.currentMod != nil {
-				unionSym = e.currentMod.Unions[d.Name]
-			}
-			goName := d.Name
-			if unionSym != nil && unionSym.GoName != "" {
-				goName = unionSym.GoName
-			}
-			goName = goIdent(goName)
-			sb.WriteString(fmt.Sprintf("type %s interface {\n\tis%s()\n}\n\n", goName, goName))
-			for i, v := range d.Variants {
-				vStruct := fmt.Sprintf("%s_%s", goName, v.Name)
-				vType := e.goSemaType(unionSym.Variants[i].Type)
-				sb.WriteString(fmt.Sprintf("type %s struct {\n\tValue %s\n}\n", vStruct, vType))
-				sb.WriteString(fmt.Sprintf("func (%s) is%s() {}\n\n", vStruct, goName))
-			}
 
 		case *ast.ConstDecl:
 			goName := d.Name
@@ -402,7 +383,7 @@ func (e *emitter) goSemaType(t sema.Type) string {
 	case sema.KindErr:
 		e.usedCbError = true
 		return "CbError"
-	case sema.KindStruct, sema.KindEnum, sema.KindUnion:
+	case sema.KindStruct, sema.KindEnum:
 		switch t.ModuleID {
 		case "std/os":
 			e.usedStdOs = true
@@ -449,7 +430,7 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 	case sema.KindErr:
 		e.usedCbError = true
 		return "CbError{}"
-	case sema.KindList, sema.KindDict, sema.KindUnion:
+	case sema.KindList, sema.KindDict:
 		return "nil"
 	case sema.KindEnum:
 		return e.goSemaType(t) + "(0)"
@@ -717,68 +698,20 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 
 	case *ast.SelectStmt:
 		e.liftFallibleCalls(sb, s.Target, indent)
-		if unionSym, isUnion := e.prog.SelectUnion[s]; isUnion {
-			unionGoName := unionSym.Name
-			if unionSym.GoName != "" {
-				unionGoName = unionSym.GoName
+		sb.WriteString(fmt.Sprintf("%sswitch %s {\n", indent, e.emitExpr(s.Target)))
+		for _, cc := range s.Cases {
+			var vals []string
+			for _, v := range cc.Values {
+				vals = append(vals, e.emitExpr(v))
 			}
-			unionGoName = goIdent(unionGoName)
-			hasBinding := false
-			for _, cc := range s.Cases {
-				if cc.Binding != "" {
-					hasBinding = true
-					break
-				}
-			}
-			e.switchCounter++
-			swVar := fmt.Sprintf("_cbSwitch_%d", e.switchCounter)
-			if hasBinding {
-				sb.WriteString(fmt.Sprintf("%sswitch %s := (%s).(type) {\n", indent, swVar, e.emitExpr(s.Target)))
-			} else {
-				sb.WriteString(fmt.Sprintf("%sswitch (%s).(type) {\n", indent, e.emitExpr(s.Target)))
-			}
-			for _, cc := range s.Cases {
-				var caseTypes []string
-				for _, val := range cc.Values {
-					var vName string
-					switch p := val.(type) {
-					case *ast.IdentExpr:
-						vName = p.Name
-					case *ast.FieldAccessExpr:
-						vName = p.Field
-					}
-					caseTypes = append(caseTypes, fmt.Sprintf("%s_%s", unionGoName, vName))
-				}
-				sb.WriteString(fmt.Sprintf("%scase %s:\n", indent, strings.Join(caseTypes, ", ")))
-				if cc.Binding != "" {
-					bindGo := goIdent(cc.Binding)
-					sb.WriteString(fmt.Sprintf("%s\tvar %s = %s.Value\n", indent, bindGo, swVar))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, bindGo))
-				}
-				e.emitScopedBlock(cc.Body, indent+"\t", sb, cc.Binding)
-			}
-			if s.HasElse {
-				sb.WriteString(fmt.Sprintf("%sdefault:\n", indent))
-				e.emitScopedBlock(s.ElseBody, indent+"\t", sb)
-			}
-
-			sb.WriteString(fmt.Sprintf("%s}\n", indent))
-		} else {
-			sb.WriteString(fmt.Sprintf("%sswitch %s {\n", indent, e.emitExpr(s.Target)))
-			for _, cc := range s.Cases {
-				var vals []string
-				for _, v := range cc.Values {
-					vals = append(vals, e.emitExpr(v))
-				}
-				sb.WriteString(fmt.Sprintf("%scase %s:\n", indent, strings.Join(vals, ", ")))
-				e.emitScopedBlock(cc.Body, indent+"\t", sb)
-			}
-			if s.HasElse {
-				sb.WriteString(fmt.Sprintf("%sdefault:\n", indent))
-				e.emitScopedBlock(s.ElseBody, indent+"\t", sb)
-			}
-			sb.WriteString(fmt.Sprintf("%s}\n", indent))
+			sb.WriteString(fmt.Sprintf("%scase %s:\n", indent, strings.Join(vals, ", ")))
+			e.emitScopedBlock(cc.Body, indent+"\t", sb)
 		}
+		if s.HasElse {
+			sb.WriteString(fmt.Sprintf("%sdefault:\n", indent))
+			e.emitScopedBlock(s.ElseBody, indent+"\t", sb)
+		}
+		sb.WriteString(fmt.Sprintf("%s}\n", indent))
 
 	case *ast.WhileStmt:
 		var liftBuf strings.Builder
@@ -1013,14 +946,6 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 					structGoName = goIdent(structGoName)
 				}
 				return fmt.Sprintf("%s{%s}", structGoName, strings.Join(fields, ", "))
-
-			case sema.CallUnionCtor:
-				unionGoName := ci.Union.Name
-				if ci.Union.GoName != "" {
-					unionGoName = ci.Union.GoName
-				}
-				unionGoName = goIdent(unionGoName)
-				return fmt.Sprintf("%s_%s{Value: %s}", unionGoName, ci.VariantName, e.emitExpr(ex.Args[0].Value))
 
 			case sema.CallMethod:
 				switch ci.MethodName {

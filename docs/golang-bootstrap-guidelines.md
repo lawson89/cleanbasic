@@ -9,7 +9,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
 
 ## Architectural & Coding Rules
 1. **Zero External Dependencies:** Use ONLY the Go standard library (`fmt`, `os`, `strings`, `strconv`, `path/filepath`, `os/exec`) in both the transpiler codebase and the emitted `main.go` output.
-2. **Self-Hosting Ready Style:** Write flat, procedural, data-oriented Go code. Use plain structs, tagged union interfaces/enums, and free functions. Avoid complex reflection, deep OOP hierarchies, or visitor-pattern boilerplate so the transpiler can be easily ported to CleanBasic itself later.
+2. **Self-Hosting Ready Style:** Write flat, procedural, data-oriented Go code. Use plain structs, enums, and free functions. Avoid complex reflection, deep OOP hierarchies, or visitor-pattern boilerplate so the transpiler can be easily ported to CleanBasic itself later.
 3. **Permanent Language Simplifications:**
    - **One-Way Bottom-Up Inference:** Expressions compute their own types bottom-up. Untyped empty collection literals (`dim x = []` or `foo([])`) are compile errors; require `dim x as list[int] = []`.
    - **Local & Prelude UFCS Only:** `obj.method(args)` resolves ONLY to methods in the built-in prelude (`str`, `list`, `dict`) or functions declared in the *same* `.cb` module. Cross-module calls must be module-qualified (`modAlias.fnName(obj, args)`).

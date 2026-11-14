@@ -25,7 +25,6 @@ type ModuleInfo struct {
 	Functions   map[string]*FnSymbol
 	Structs     map[string]*StructSymbol
 	Enums       map[string]*EnumSymbol
-	Unions      map[string]*UnionSymbol
 	GlobalVars  *Scope
 }
 
@@ -41,7 +40,6 @@ func newModuleInfo(id, filePath string, isEntry, isStdlib bool, prog *ast.Progra
 		Functions:   make(map[string]*FnSymbol),
 		Structs:     make(map[string]*StructSymbol),
 		Enums:       make(map[string]*EnumSymbol),
-		Unions:      make(map[string]*UnionSymbol),
 		GlobalVars:  NewScope(nil),
 	}
 }

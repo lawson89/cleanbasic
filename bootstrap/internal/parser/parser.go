@@ -203,15 +203,13 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 		return p.parseTypeDecl(startTok.Pos, isPublic)
 	case token.ENUM:
 		return p.parseEnumDecl(startTok.Pos, isPublic)
-	case token.UNION:
-		return p.parseUnionDecl(startTok.Pos, isPublic)
 	case token.FN, token.EXTERN:
 		return p.parseFnDecl(startTok.Pos, isPublic)
 	default:
 		tok := p.cur()
 		return nil, &ParseError{
 			Pos:     tok.Pos,
-			Message: fmt.Sprintf("unexpected token %s (%q) at top level; expected import, const, type, enum, union, or fn", tok.Kind, tok.Lexeme),
+			Message: fmt.Sprintf("unexpected token %s (%q) at top level; expected import, const, type, enum, or fn", tok.Kind, tok.Lexeme),
 		}
 	}
 }
@@ -381,67 +379,6 @@ func (p *Parser) parseEnumDecl(pos token.Position, isPublic bool) (*ast.EnumDecl
 	}
 
 	return &ast.EnumDecl{
-		Pos:      pos,
-		Public:   isPublic,
-		Name:     nameTok.Lexeme,
-		Variants: variants,
-	}, nil
-}
-
-// UnionDecl ::= ["public"] "union" Identifier NEWLINE UnionVariant+ "end union" NEWLINE
-// UnionVariant ::= Identifier "as" Type NEWLINE
-func (p *Parser) parseUnionDecl(pos token.Position, isPublic bool) (*ast.UnionDecl, error) {
-	if _, err := p.expect(token.UNION, "in union declaration"); err != nil {
-		return nil, err
-	}
-
-	nameTok, err := p.expectIdent("for union name")
-	if err != nil {
-		return nil, err
-	}
-
-	if err := p.expectNewline("union header"); err != nil {
-		return nil, err
-	}
-
-	var variants []ast.UnionVariant
-	for p.cur().Kind != token.END_UNION && p.cur().Kind != token.EOF {
-		varTok, err := p.expectIdent("for union variant name")
-		if err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(token.AS, "after union variant name"); err != nil {
-			return nil, err
-		}
-		varType, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-		if err := p.expectNewline("union variant"); err != nil {
-			return nil, err
-		}
-		variants = append(variants, ast.UnionVariant{
-			Pos:  varTok.Pos,
-			Name: varTok.Lexeme,
-			Type: varType,
-		})
-	}
-
-	if len(variants) == 0 {
-		return nil, &ParseError{
-			Pos:     pos,
-			Message: fmt.Sprintf("union %q must declare at least one variant", nameTok.Lexeme),
-		}
-	}
-
-	if _, err := p.expect(token.END_UNION, "to close union declaration"); err != nil {
-		return nil, err
-	}
-	if err := p.expectNewline("end union"); err != nil {
-		return nil, err
-	}
-
-	return &ast.UnionDecl{
 		Pos:      pos,
 		Public:   isPublic,
 		Name:     nameTok.Lexeme,
@@ -988,7 +925,7 @@ func (p *Parser) parseWhileStmt() (*ast.WhileStmt, error) {
 	}, nil
 }
 
-// SelectStmt ::= "select case" Expr NEWLINE ("case" ExprList ["as" Identifier] NEWLINE Statement*)* ["case else" NEWLINE Statement*] "end select" NEWLINE
+// SelectStmt ::= "select case" Expr NEWLINE ("case" ExprList NEWLINE Statement*)* ["case else" NEWLINE Statement*] "end select" NEWLINE
 func (p *Parser) parseSelectStmt() (*ast.SelectStmt, error) {
 	selTok, err := p.expect(token.SELECT_CASE, "at start of select case statement")
 	if err != nil {
@@ -1020,15 +957,6 @@ func (p *Parser) parseSelectStmt() (*ast.SelectStmt, error) {
 			values = append(values, nextVal)
 		}
 
-		binding := ""
-		if p.match(token.AS) {
-			bindTok, err := p.expectIdent("after 'as' in case clause")
-			if err != nil {
-				return nil, err
-			}
-			binding = bindTok.Lexeme
-		}
-
 		if err := p.expectNewline("case clause"); err != nil {
 			return nil, err
 		}
@@ -1039,10 +967,9 @@ func (p *Parser) parseSelectStmt() (*ast.SelectStmt, error) {
 		}
 
 		cases = append(cases, ast.CaseClause{
-			Pos:     caseTok.Pos,
-			Values:  values,
-			Binding: binding,
-			Body:    body,
+			Pos:    caseTok.Pos,
+			Values: values,
+			Body:   body,
 		})
 	}
 

@@ -126,24 +126,6 @@ type EnumDecl struct {
 func (d *EnumDecl) DeclPos() token.Position { return d.Pos }
 func (d *EnumDecl) declNode()               {}
 
-// UnionVariant represents a single variant inside a UnionDecl: Name as Type
-type UnionVariant struct {
-	Pos  token.Position
-	Name string
-	Type TypeExpr
-}
-
-// UnionDecl represents: [public] union Name ... end union
-type UnionDecl struct {
-	Pos      token.Position
-	Public   bool
-	Name     string
-	Variants []UnionVariant
-}
-
-func (d *UnionDecl) DeclPos() token.Position { return d.Pos }
-func (d *UnionDecl) declNode()               {}
-
 // Param represents a function parameter: [byref] Name as Type
 type Param struct {
 	Pos   token.Position
@@ -252,12 +234,11 @@ type WhileStmt struct {
 func (s *WhileStmt) StmtPos() token.Position { return s.Pos }
 func (s *WhileStmt) stmtNode()               {}
 
-// CaseClause represents: case ExprList [as Binding] ...
+// CaseClause represents: case ExprList ...
 type CaseClause struct {
-	Pos     token.Position
-	Values  []Expr
-	Binding string // optional union payload binding ("as r")
-	Body    []Statement
+	Pos    token.Position
+	Values []Expr
+	Body   []Statement
 }
 
 // SelectStmt represents: select case Target ... [case else ...] end select
@@ -509,16 +490,6 @@ func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 		}
 		fmt.Fprintf(sb, "%s%sEnumDecl(%s: [%s])\n", indent, vis, d.Name, strings.Join(d.Variants, ", "))
 
-	case *UnionDecl:
-		vis := ""
-		if d.Public {
-			vis = "public "
-		}
-		fmt.Fprintf(sb, "%s%sUnionDecl(%s)\n", indent, vis, d.Name)
-		for _, v := range d.Variants {
-			fmt.Fprintf(sb, "%s  Variant(%s as %s)\n", indent, v.Name, v.Type.String())
-		}
-
 	case *FnDecl:
 		var mods []string
 		if d.Public {
@@ -618,11 +589,7 @@ func dumpStmt(sb *strings.Builder, stmt Statement, indent string) {
 			for _, v := range c.Values {
 				vals = append(vals, FormatExpr(v))
 			}
-			bind := ""
-			if c.Binding != "" {
-				bind = " as " + c.Binding
-			}
-			fmt.Fprintf(sb, "%s  Case(%s%s)\n", indent, strings.Join(vals, ", "), bind)
+			fmt.Fprintf(sb, "%s  Case(%s)\n", indent, strings.Join(vals, ", "))
 			for _, st := range c.Body {
 				dumpStmt(sb, st, indent+"    ")
 			}

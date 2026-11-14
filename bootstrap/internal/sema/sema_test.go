@@ -279,33 +279,7 @@ end fn
 `,
 			wantErr: `enum "Color" has no variant "Green"`,
 		},
-		{
-			name: "non-existent union variant",
-			src: `
-union Val
-    Num as int
-end union
-fn main() as int
-    dim v = Val.Text("hi")
-    return 0
-end fn
-`,
-			wantErr: `union "Val" has no variant "Text"`,
-		},
-		{
-			name: "invalid select case binding on non-union",
-			src: `
-fn main() as int
-    dim x = 1
-    select case x
-        case 1 as y
-            print(y)
-    end select
-    return 0
-end fn
-`,
-			wantErr: `'as' binding in select case is only supported for union types`,
-		},
+
 		{
 			name: "invalid select case pattern type",
 			src: `

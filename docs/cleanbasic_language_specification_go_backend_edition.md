@@ -29,7 +29,7 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 ```
 Program         ::= TopLevelDecl*
 
-TopLevelDecl    ::= ImportDecl | ConstDecl | TypeDecl | EnumDecl | UnionDecl | FnDecl
+TopLevelDecl    ::= ImportDecl | ConstDecl | TypeDecl | EnumDecl | FnDecl
 
 ImportDecl      ::= "import" StringLiteral ["as" Identifier] NEWLINE
 
@@ -37,8 +37,6 @@ ConstDecl       ::= ["public"] "const" Identifier ["as" Type] "=" Expr NEWLINE
 
 EnumDecl        ::= ["public"] "enum" Identifier NEWLINE Identifier* "end enum" NEWLINE
 
-UnionDecl       ::= ["public"] "union" Identifier NEWLINE UnionVariant+ "end union" NEWLINE
-UnionVariant    ::= Identifier "as" Type NEWLINE
 
 TypeDecl        ::= ["public"] "type" Identifier NEWLINE FieldDecl* "end type" NEWLINE
 FieldDecl       ::= Identifier "as" Type NEWLINE
@@ -78,7 +76,7 @@ WhileStmt       ::= "while" Expr NEWLINE
                     "end while" NEWLINE
 
 SelectStmt      ::= "select case" Expr NEWLINE
-                    ("case" ExprList ["as" Identifier] NEWLINE Statement*)*
+                    ("case" ExprList NEWLINE Statement*)*
                     ["case else" NEWLINE Statement*]
                     "end select" NEWLINE
 ExprList        ::= Expr ("," Expr)*
@@ -128,7 +126,7 @@ QualifiedIdent  ::= Identifier ("." Identifier)*
 
 ### 1. Multi-File Modules, Explicit Qualification & Name Mangling
 
-Every `.cb` file is implicitly a module. Everything is private by default; the `public` keyword exposes types, enums, unions, constants, and functions to the importer.
+Every `.cb` file is implicitly a module. Everything is private by default; the `public` keyword exposes types, enums, constants, and functions to the importer.
 
 * **Relative Nested Paths:** Module imports (`import "entities/hero.cb"`) are resolved relative to the importing file and normalized to canonical module IDs (`entities/hero`).
 

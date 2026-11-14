@@ -9,23 +9,25 @@ enum Status
     Closed
 end enum
 
-type RectData
+enum ShapeKind
+    Circle
+    Rect
+    Empty
+end enum
+
+type Shape
+    kind as ShapeKind
+    radius as int
     width as int
     height as int
 end type
 
-union Shape
-    Circle as int
-    Rect as RectData
-    Empty as bool
-end union
-
 fn calcArea(s as Shape) as int
-    select case s
-        case Circle as r
-            return 3 * r * r
-        case Rect as rect
-            return rect.width * rect.height
+    select case s.kind
+        case ShapeKind.Circle
+            return 3 * s.radius * s.radius
+        case ShapeKind.Rect
+            return s.width * s.height
         case else
             return 0
     end select
@@ -40,9 +42,9 @@ fn main() as int
             print("status: Other")
     end select
 
-    dim s1 = Shape.Circle(5)
-    dim s2 = Shape.Rect(RectData(4, 6))
-    dim s3 = Shape.Empty(true)
+    dim s1 = Shape(ShapeKind.Circle, 5, 0, 0)
+    dim s2 = Shape(ShapeKind.Rect, 0, 4, 6)
+    dim s3 = Shape(ShapeKind.Empty, 0, 0, 0)
 
     print("circle area: ", calcArea(s1))
     print("rect area: ", calcArea(s2))

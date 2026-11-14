@@ -118,9 +118,9 @@ func TestSyntaxErrorReporting(t *testing.T) {
 			wantSub: "unexpected token return",
 		},
 		{
-			name:    "empty union",
-			src:     "union Empty\nend union\n",
-			wantSub: "must declare at least one variant",
+			name:    "as binding in select case",
+			src:     "fn main()\n    select case x\n        case 1 as v\n            print(v)\n    end select\nend fn\n",
+			wantSub: "expected newline after case clause",
 		},
 	}
 
