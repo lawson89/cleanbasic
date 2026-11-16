@@ -48,7 +48,7 @@ func init() {
 		"str.len":  {Emit: emitBuiltinLen},
 		"list.push": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				recv := e.emitPlaceExpr(ci.Receiver)
+				recv := e.emitExpr(ci.Receiver)
 				return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0]))
 			},
 		},
@@ -276,10 +276,6 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 			if goName, ok := e.prog.IdentGoNames[ex]; ok {
 				return goIdent(goName)
 			}
-			if _, boxed := e.isBoxedFieldAccess(ex); boxed {
-				e.usedBoxHelpers = true
-				return fmt.Sprintf("cbUnbox(%s.%s)", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
-			}
 			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok {
 				if targetType.Kind == sema.KindErr && ex.Field == "msg" {
 					return fmt.Sprintf("%s.Error()", e.emitExpr(ex.Target))
@@ -366,13 +362,8 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 			switch ci.Kind {
 			case sema.CallStructCtor:
 				var fields []string
-				for i, a := range ex.Args {
-					valStr := e.emitExpr(a)
-					if i < len(ci.Struct.Fields) && ci.Struct.Fields[i].Boxed {
-						e.usedBoxHelpers = true
-						valStr = fmt.Sprintf("cbBox(%s)", valStr)
-					}
-					fields = append(fields, valStr)
+				for _, a := range ex.Args {
+					fields = append(fields, e.emitExpr(a))
 				}
 				structGoName := ci.Struct.Name
 				if ci.Struct.GoName != "" {
@@ -409,55 +400,6 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 	}
 
 	return ""
-}
-
-func (e *emitter) lookupStructSymbol(t sema.Type) *sema.StructSymbol {
-	if e.prog == nil || t.Kind != sema.KindStruct {
-		return nil
-	}
-	if t.ModuleID != "" {
-		if m, ok := e.prog.ModuleByID[t.ModuleID]; ok {
-			return m.Structs[t.Name]
-		}
-	}
-	if e.currentMod != nil {
-		return e.currentMod.Structs[t.Name]
-	}
-	return nil
-}
-
-func (e *emitter) isBoxedFieldAccess(fa *ast.FieldAccessExpr) (sema.FieldSymbol, bool) {
-	if e.prog == nil || fa == nil {
-		return sema.FieldSymbol{}, false
-	}
-	targetType, ok := e.prog.ExprTypes[fa.Target]
-	if !ok || targetType.Kind != sema.KindStruct {
-		return sema.FieldSymbol{}, false
-	}
-	sym := e.lookupStructSymbol(targetType)
-	if sym == nil {
-		return sema.FieldSymbol{}, false
-	}
-	fs, found := sym.FieldMap[fa.Field]
-	return fs, found && fs.Boxed
-}
-
-func (e *emitter) emitPlaceExpr(expr ast.Expr) string {
-	switch ex := expr.(type) {
-	case *ast.FieldAccessExpr:
-		if _, boxed := e.isBoxedFieldAccess(ex); boxed {
-			e.usedBoxHelpers = true
-			return fmt.Sprintf("cbEnsureBox(&%s.%s)", e.emitPlaceExpr(ex.Target), goStructFieldName(ex.Field))
-		}
-		if e.prog != nil {
-			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok && targetType.Kind == sema.KindStruct {
-				return fmt.Sprintf("%s.%s", e.emitPlaceExpr(ex.Target), goStructFieldName(ex.Field))
-			}
-		}
-		return fmt.Sprintf("%s.%s", e.emitPlaceExpr(ex.Target), ex.Field)
-	default:
-		return e.emitExpr(expr)
-	}
 }
 
 func (e *emitter) emitStartJobExpr(ex *ast.StartJobExpr) string {

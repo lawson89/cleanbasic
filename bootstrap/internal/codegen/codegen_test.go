@@ -520,11 +520,11 @@ func TestEmitGoLineDirectives(t *testing.T) {
 	}
 }
 
-func TestEmitConcurrencyAndBoxedRecursiveStructs(t *testing.T) {
+func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 	src := strings.Join([]string{
-		"type Node",
+		"type TreeNode",
 		"    val as int",
-		"    next as Node",
+		"    children as list[TreeNode]",
 		"end type",
 		"",
 		"fn worker(box as mailbox[int]) as int",
@@ -536,15 +536,17 @@ func TestEmitConcurrencyAndBoxedRecursiveStructs(t *testing.T) {
 		"end fn",
 		"",
 		"fn main()",
-		"    dim n = Node()",
+		"    dim n = TreeNode()",
 		"    n.val = 10",
-		"    n.next.val = 20",
+		"    dim child = TreeNode()",
+		"    child.val = 20",
+		"    n.children.push(child)",
 		"    dim box = mailbox[int](4)",
 		"    dim j = start job worker(box)",
 		"    try",
 		"        box.post(42)",
 		"        dim res = j.wait()",
-		"        print(res, n.next.val)",
+		"        print(res, n.children[0].val)",
 		"    catch e",
 		"        print(e)",
 		"    end try",
@@ -558,9 +560,14 @@ func TestEmitConcurrencyAndBoxedRecursiveStructs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	for _, want := range []string{"Cb_next *Node", "cbEnsureBox(&n.Cb_next).Cb_val = int64(20)", "cbNewMailbox[int64](int64(4))", "cbStartJob("} {
+	for _, want := range []string{"Cb_children []TreeNode", "cbNewMailbox[int64](int64(4))", "cbStartJob("} {
 		if !strings.Contains(goCode, want) {
 			t.Errorf("expected generated Go code to contain %q, got:\n%s", want, goCode)
+		}
+	}
+	for _, unwanted := range []string{"cbBox", "cbUnbox", "cbEnsureBox", "*TreeNode"} {
+		if strings.Contains(goCode, unwanted) {
+			t.Errorf("did not expect generated Go code to contain %q, got:\n%s", unwanted, goCode)
 		}
 	}
 }

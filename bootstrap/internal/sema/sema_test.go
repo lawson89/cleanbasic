@@ -543,7 +543,7 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 		}
 	})
 
-	t.Run("recursive_struct_marks_boxed_and_disallows_eq", func(t *testing.T) {
+	t.Run("direct_recursive_value_struct_rejected", func(t *testing.T) {
 		src := strings.Join([]string{
 			"type Node",
 			"    val as int",
@@ -551,17 +551,16 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			"end type",
 			"fn main()",
 			"    dim a = Node()",
-			"    dim b = Node()",
-			"    dim eq = (a == b)",
 			"end fn",
 		}, "\n")
-		_, err := AnalyzeSource(src, "rec_eq.cb")
-		if err == nil || !strings.Contains(err.Error(), "cannot be compared with") {
-			t.Fatalf("expected non-comparable error for recursive struct, got: %v", err)
+		_, err := AnalyzeSource(src, "rec_direct.cb")
+		want := "recursive struct field 'Node.next' cannot contain 'Node' directly by value; use 'list[Node]' for recursive child nodes"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error %q, got: %v", want, err)
 		}
 	})
 
-	t.Run("mutual_recursion_marks_boxed", func(t *testing.T) {
+	t.Run("mutual_recursive_value_struct_rejected", func(t *testing.T) {
 		src := strings.Join([]string{
 			"type Expr",
 			"    val as int",
@@ -574,14 +573,49 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			"    dim e = Expr()",
 			"end fn",
 		}, "\n")
-		prog, err := AnalyzeSource(src, "mutual.cb")
-		if err != nil {
-			t.Fatalf("unexpected sema error: %v", err)
+		_, err := AnalyzeSource(src, "mutual.cb")
+		want := "recursive struct field 'Expr.blk' cannot contain 'Block' directly by value; use 'list[Block]' for recursive child nodes"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error %q, got: %v", want, err)
 		}
-		exprSym := prog.EntryModule.Structs["Expr"]
-		blkSym := prog.EntryModule.Structs["Block"]
-		if !exprSym.FieldMap["blk"].Boxed || !blkSym.FieldMap["expr"].Boxed {
-			t.Fatalf("expected mutually recursive fields to be marked Boxed")
+	})
+
+	t.Run("recursive_struct_with_list_and_dict_succeeds", func(t *testing.T) {
+		src := strings.Join([]string{
+			"type TreeNode",
+			"    val as int",
+			"    children as list[TreeNode]",
+			"    named as dict[str, TreeNode]",
+			"end type",
+			"fn main()",
+			"    dim a = TreeNode()",
+			"    dim b = TreeNode()",
+			"    dim eq = (a == b)",
+			"end fn",
+		}, "\n")
+		_, err := AnalyzeSource(src, "rec_list.cb")
+		if err == nil || !strings.Contains(err.Error(), "cannot be compared with") {
+			t.Fatalf("expected non-comparable error for struct containing list/dict, got: %v", err)
+		}
+	})
+
+	t.Run("recursive_struct_with_list_valid", func(t *testing.T) {
+		src := strings.Join([]string{
+			"type Expr",
+			"    val as int",
+			"    blocks as list[Block]",
+			"end type",
+			"type Block",
+			"    exprs as list[Expr]",
+			"end type",
+			"fn main()",
+			"    dim e = Expr()",
+			"    dim b = Block()",
+			"    e.blocks.push(b)",
+			"end fn",
+		}, "\n")
+		if _, err := AnalyzeSource(src, "rec_list_valid.cb"); err != nil {
+			t.Fatalf("unexpected sema error: %v", err)
 		}
 	})
 

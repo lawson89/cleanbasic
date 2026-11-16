@@ -76,23 +76,6 @@ const (
 
 `
 
-	cbBoxRuntimeHelpers = `func cbBox[T any](v T) *T { return &v }
-func cbUnbox[T any](p *T) T {
-	if p == nil {
-		var zero T
-		return zero
-	}
-	return *p
-}
-func cbEnsureBox[T any](p **T) *T {
-	if *p == nil {
-		*p = new(T)
-	}
-	return *p
-}
-
-`
-
 	cbMailboxRuntimeHelper = `type CbMailbox[T any] struct {
 	ch     chan T
 	mu     sync.Mutex
@@ -241,9 +224,6 @@ func (e *emitter) emitRuntimeHelpers() string {
 	}
 	if e.usedStrFromCharCode {
 		helpers.WriteString(cbStrFromCharCodeRuntimeHelper)
-	}
-	if e.usedBoxHelpers {
-		helpers.WriteString(cbBoxRuntimeHelpers)
 	}
 	if e.usedMailbox {
 		helpers.WriteString(cbMailboxRuntimeHelper)

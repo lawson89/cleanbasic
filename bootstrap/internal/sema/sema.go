@@ -194,10 +194,9 @@ func (s *Scope) Lookup(name string) (*VarSymbol, bool) {
 
 // FieldSymbol represents a field in a user-defined struct type.
 type FieldSymbol struct {
-	Name  string
-	Type  Type
-	Pos   token.Position
-	Boxed bool
+	Name string
+	Type Type
+	Pos  token.Position
 }
 
 // StructSymbol represents a user-defined struct type.
@@ -376,7 +375,7 @@ func (a *analyzer) isComparableTypeVisited(t Type, visited map[string]bool) bool
 			return false
 		}
 		for _, f := range sym.Fields {
-			if f.Boxed || !a.isComparableTypeVisited(f.Type, visited) {
+			if !a.isComparableTypeVisited(f.Type, visited) {
 				return false
 			}
 		}

@@ -322,15 +322,14 @@ CleanBasic provides structured, data-race-safe concurrency built around typed me
   * Arguments are evaluated eagerly by value before spawning the goroutine, and `byref` parameters are rejected at compile time.
   * `j.wait() [as T] can error` and `j.isDone() as bool` await completion and propagate errors or recovered panics.
 
-### 7. Auto-Boxed Recursive Structs (Zero-Nil Value Semantics)
+### 7. Pure Value Structs & Recursive Trees (`list[T]`)
 
-Self-recursive (`Node -> Node`) and mutually recursive (`Expr <-> Block`) struct fields are automatically detected during semantic analysis and lowered to Go pointer fields (`*Struct`) while preserving 100% CleanBasic value semantics and zero-nil safety:
+User-defined `type` structs map 1:1 to native Go value structs with zero hidden pointer indirection:
 
-* Reading an unset recursive field safely returns a zero-initialized value copy (`cbUnbox`).
-* Assigning a recursive field or passing it in a struct constructor copies by value (`cbBox`) to prevent unintended aliasing.
-* Nested field mutations (`node.left.right.val = 99`) automatically lazy-allocate intermediate nodes (`cbEnsureBox`), while `byref` arguments require mutable local variables.
-* Recursive structs cannot be compared directly with raw `==` or `!=`.
-
+* Structs are always passed and assigned by value, guaranteeing value-copy isolation and zero-nil safety.
+* Direct or mutually recursive value cycles (e.g. `Node -> Node` or `Expr <-> Block`) are rejected at compile time with a clear diagnostic.
+* Recursive trees, ASTs, and linked structures model child nodes using `list[T]` (or `dict[K, T]`), which provide fixed-size reference headers in Go.
+* Structs containing `list` or `dict` fields cannot be compared directly with raw `==` or `!=`.
 ### 8. `go.mod` Passthrough & Persistent Build Workspace
 
 When running `cb build` or `cb run`, the CLI searches upward from the entry `.cb` file (and imported local modules, ignoring `bootstrap/go.mod` outside `bootstrap/`) for a project `go.mod` and `go.sum`. It syncs them into a persistent per-project workspace under the user cache directory (rewriting relative `replace` paths to absolute project paths) so CleanBasic projects can depend on external or local Go modules seamlessly.

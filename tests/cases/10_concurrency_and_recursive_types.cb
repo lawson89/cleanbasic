@@ -1,4 +1,4 @@
-' EXPECT_OUT: leaf zero=0 hasNext=false
+' EXPECT_OUT: leaf zero=0 len=0
 ' EXPECT_OUT: isolation orig=10 copy=10
 ' EXPECT_OUT: nested=99 byref=55
 ' EXPECT_OUT: mutual=77
@@ -13,18 +13,17 @@
 type TreeNode
     val as int
     hasNext as bool
-    left as TreeNode
-    right as TreeNode
+    children as list[TreeNode]
 end type
 
 type Expr
     tag as int
-    blk as Block
+    blocks as list[Block]
 end type
 
 type Block
     num as int
-    expr as Expr
+    exprs as list[Expr]
 end type
 
 fn bumpVal(byref n as TreeNode, v as int)
@@ -46,31 +45,35 @@ fn quickJob(x as int) as int
 end fn
 
 fn main() as int
-    ' 1. Recursive struct zero-nil safety, value-copy isolation, nested mutation, byref
+    ' 1. Pure value struct zero-initialization, value-copy isolation, nested mutation, byref
+    ' 1. Pure value struct zero-initialization, value-copy isolation, nested mutation, byref
     dim empty = TreeNode()
-    empty.val = 1
-    print("leaf zero=" & empty.left.val & " hasNext=" & empty.left.hasNext)
-
+    print("leaf zero=" & empty.val & " len=" & empty.children.len())
     dim child = TreeNode()
     child.val = 10
     dim parent = TreeNode()
     parent.val = 1
-    parent.left = child
+    parent.children.push(child)
     child.val = 999
-    print("isolation orig=10 copy=" & parent.left.val)
+    print("isolation orig=10 copy=" & parent.children[0].val)
 
-    parent.left.right.val = 99
-    dim leftNode = parent.left
-    bumpVal(leftNode, 55)
-    parent.left = leftNode
-    print("nested=" & parent.left.right.val & " byref=" & parent.left.val)
+    dim grand = TreeNode()
+    grand.val = 99
+    parent.children[0].children.push(grand)
+    dim firstChild = parent.children[0]
+    bumpVal(firstChild, 55)
+    parent.children[0] = firstChild
+    print("nested=" & parent.children[0].children[0].val & " byref=" & parent.children[0].val)
 
-    ' 2. Mutually recursive structs
+    ' 2. Mutually recursive structs via list[T]
     dim e = Expr()
     e.tag = 1
-    e.blk.expr.tag = 77
-    print("mutual=" & e.blk.expr.tag)
-
+    dim blk = Block()
+    dim inner = Expr()
+    inner.tag = 77
+    blk.exprs.push(inner)
+    e.blocks.push(blk)
+    print("mutual=" & e.blocks[0].exprs[0].tag)
     ' 3. Mailbox check, post, close, error on closed post & empty get
     dim mb = mailbox[int](2)
     dim outVal = 0

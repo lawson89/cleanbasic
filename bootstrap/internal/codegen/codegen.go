@@ -88,7 +88,6 @@ type emitter struct {
 	usedDictContains    bool
 	usedStrToInt        bool
 	usedStrFromCharCode bool
-	usedBoxHelpers      bool
 	usedMailbox         bool
 	usedJob             bool
 	byRefVars           map[string]bool
@@ -186,9 +185,6 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
 			for i, f := range d.Fields {
 				fType := e.goSemaType(structSym.Fields[i].Type)
-				if structSym != nil && i < len(structSym.Fields) && structSym.Fields[i].Boxed {
-					fType = "*" + fType
-				}
 				sb.WriteString(fmt.Sprintf("\t%s %s \x60json:%q\x60\n", goStructFieldName(f.Name), fType, f.Name))
 			}
 			sb.WriteString("}\n\n")

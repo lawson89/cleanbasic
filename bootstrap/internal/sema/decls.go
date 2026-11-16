@@ -58,8 +58,10 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 		}
 	}
 
-	// Pass 0.6: Detect direct and mutually recursive struct fields for auto-boxing.
-	a.markRecursiveStructFields()
+	// Pass 0.6: Reject direct and mutually recursive value struct fields.
+	if err := a.checkRecursiveStructFields(); err != nil {
+		return err
+	}
 
 	// Pass 1: Register all top-level function declarations so functions can call each other regardless of order.
 	for _, decl := range prog.Decls {
@@ -124,43 +126,58 @@ func (a *analyzer) resolveTypeDecl(d *ast.TypeDecl) error {
 	return nil
 }
 
-func (a *analyzer) markRecursiveStructFields() {
-	for _, sym := range a.mod.Structs {
-		if sym.IsGoType {
+func (a *analyzer) checkRecursiveStructFields() error {
+	for _, decl := range a.mod.Program.Decls {
+		td, ok := decl.(*ast.TypeDecl)
+		if !ok || td.GoName != "" {
 			continue
 		}
-		for i := range sym.Fields {
-			f := &sym.Fields[i]
-			if f.Type.Kind == KindStruct && a.structReaches(f.Type, sym, make(map[string]bool)) {
-				f.Boxed = true
-				sym.FieldMap[f.Name] = *f
+		sym := a.mod.Structs[td.Name]
+		if sym == nil || sym.IsGoType {
+			continue
+		}
+		for _, f := range sym.Fields {
+			if a.structReaches(f.Type, sym, make(map[string]bool)) {
+				return newSemaError(
+					f.Pos,
+					"recursive struct field '%s.%s' cannot contain '%s' directly by value; use 'list[%s]' for recursive child nodes",
+					sym.Name,
+					f.Name,
+					f.Type.Name,
+					f.Type.Name,
+				)
 			}
 		}
 	}
+	return nil
 }
 
 func (a *analyzer) structReaches(t Type, target *StructSymbol, visited map[string]bool) bool {
-	if t.Kind != KindStruct {
+	switch t.Kind {
+	case KindList, KindDict, KindMailbox, KindJob:
 		return false
-	}
-	s := a.lookupStruct(t)
-	if s == nil || s.IsGoType {
-		return false
-	}
-	if s == target {
-		return true
-	}
-	key := s.ModuleID + "." + s.Name
-	if visited[key] {
-		return false
-	}
-	visited[key] = true
-	for _, f := range s.Fields {
-		if f.Type.Kind == KindStruct && a.structReaches(f.Type, target, visited) {
+	case KindStruct:
+		s := a.lookupStruct(t)
+		if s == nil || s.IsGoType {
+			return false
+		}
+		if s == target {
 			return true
 		}
+		key := s.ModuleID + "." + s.Name
+		if visited[key] {
+			return false
+		}
+		visited[key] = true
+		for _, f := range s.Fields {
+			if a.structReaches(f.Type, target, visited) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
 	}
-	return false
 }
 
 func (a *analyzer) resolveEnumDecl(d *ast.EnumDecl) error {

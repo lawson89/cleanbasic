@@ -92,14 +92,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 	case *ast.Assignment:
 		valStr := e.emitRhs(sb, s.Value, indent)
 		if idx, ok := s.Target.(*ast.IndexExpr); ok {
-			sb.WriteString(fmt.Sprintf("%s%s[%s] = %s\n", indent, e.emitPlaceExpr(idx.Target), e.emitExpr(idx.Index), valStr))
-		} else if fa, ok := s.Target.(*ast.FieldAccessExpr); ok {
-			if _, boxed := e.isBoxedFieldAccess(fa); boxed {
-				e.usedBoxHelpers = true
-				sb.WriteString(fmt.Sprintf("%s%s.%s = cbBox(%s)\n", indent, e.emitPlaceExpr(fa.Target), goStructFieldName(fa.Field), valStr))
-			} else {
-				sb.WriteString(fmt.Sprintf("%s%s = %s\n", indent, e.emitPlaceExpr(s.Target), valStr))
-			}
+			sb.WriteString(fmt.Sprintf("%s%s[%s] = %s\n", indent, e.emitExpr(idx.Target), e.emitExpr(idx.Index), valStr))
 		} else {
 			sb.WriteString(fmt.Sprintf("%s%s = %s\n", indent, e.emitExpr(s.Target), valStr))
 		}
