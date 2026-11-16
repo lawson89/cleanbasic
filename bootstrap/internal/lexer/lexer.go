@@ -17,6 +17,13 @@ func (e *LexError) Error() string {
 	return fmt.Sprintf("%s: syntax error: %s", e.Pos.String(), e.Message)
 }
 
+var singleCharTokens = map[byte]token.Kind{
+	'+': token.PLUS, '-': token.MINUS, '*': token.STAR, '/': token.SLASH,
+	'%': token.PERCENT, '.': token.DOT, ',': token.COMMA, ':': token.COLON,
+	'(': token.LPAREN, ')': token.RPAREN, '[': token.LBRACKET, ']': token.RBRACKET,
+	'{': token.LBRACE, '}': token.RBRACE,
+}
+
 // Lexer scans CleanBasic source text into a stream of tokens.
 type Lexer struct {
 	file string
@@ -469,16 +476,11 @@ func (l *Lexer) scanNextToken() (token.Token, error) {
 			return token.Token{Kind: token.GTE, Lexeme: ">=", Pos: startPos}, nil
 		}
 		return token.Token{Kind: token.GT, Lexeme: ">", Pos: startPos}, nil
-	case '+', '-', '*', '/', '%', '.', ',', ':', '(', ')', '[', ']', '{', '}':
-		l.advance()
-		kinds := map[byte]token.Kind{
-			'+': token.PLUS, '-': token.MINUS, '*': token.STAR, '/': token.SLASH,
-			'%': token.PERCENT, '.': token.DOT, ',': token.COMMA, ':': token.COLON,
-			'(': token.LPAREN, ')': token.RPAREN, '[': token.LBRACKET, ']': token.RBRACKET,
-			'{': token.LBRACE, '}': token.RBRACE,
-		}
-		return token.Token{Kind: kinds[ch], Lexeme: string(ch), Pos: startPos}, nil
 	default:
+		if kind, ok := singleCharTokens[ch]; ok {
+			l.advance()
+			return token.Token{Kind: kind, Lexeme: string(ch), Pos: startPos}, nil
+		}
 		return token.Token{}, &LexError{Pos: startPos, Message: fmt.Sprintf("unexpected character %q", ch)}
 	}
 }

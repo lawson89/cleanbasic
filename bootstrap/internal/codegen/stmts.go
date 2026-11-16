@@ -87,11 +87,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 
 	case *ast.Assignment:
 		valStr := e.emitRhs(sb, s.Value, indent)
-		if idx, ok := s.Target.(*ast.IndexExpr); ok {
-			sb.WriteString(fmt.Sprintf("%s%s[%s] = %s\n", indent, e.emitExpr(idx.Target), e.emitExpr(idx.Index), valStr))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s%s = %s\n", indent, e.emitExpr(s.Target), valStr))
-		}
+		sb.WriteString(fmt.Sprintf("%s%s = %s\n", indent, e.emitExpr(s.Target), valStr))
 
 	case *ast.ExprStmt:
 		if valVar, ok := e.emitFallibleCallExpr(sb, s.Expr, indent); ok {

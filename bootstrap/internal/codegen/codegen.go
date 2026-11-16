@@ -36,11 +36,7 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 			continue
 		}
 		e.currentMod = mod
-		modCode, err := e.emitProgram(mod.Program)
-		if err != nil {
-			return "", err
-		}
-		bodyBuf.WriteString(modCode)
+		bodyBuf.WriteString(e.emitProgram(mod.Program))
 	}
 
 	if prog.EntryModule != nil {
@@ -146,7 +142,7 @@ func (e *emitter) formatImportLines() []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
-func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
+func (e *emitter) emitProgram(prog *ast.Program) string {
 	var sb strings.Builder
 
 	for _, decl := range prog.Decls {
@@ -221,16 +217,12 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 				sb.WriteString("\n")
 				continue
 			}
-			fnCode, err := e.emitFn(d)
-			if err != nil {
-				return "", err
-			}
-			sb.WriteString(fnCode)
+			sb.WriteString(e.emitFn(d))
 			sb.WriteString("\n")
 		}
 	}
 
-	return sb.String(), nil
+	return sb.String()
 }
 
 func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
@@ -239,14 +231,9 @@ func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
 	if e.currentMod != nil {
 		fnSym = e.currentMod.Functions[fn.Name]
 	}
-	name := fn.Name
-	if fnSym != nil && fnSym.GoName != "" {
-		name = fnSym.GoName
-	}
-	if name == "main" && (e.currentMod == nil || e.currentMod.IsEntry) {
-		name = "cb_main"
-	} else {
-		name = goIdent(name)
+	name := goIdent(fn.Name)
+	if fnSym != nil {
+		name = e.fnGoName(fnSym)
 	}
 
 	var params []string
@@ -284,20 +271,15 @@ func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
 	return sb.String()
 }
 
-func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
+func (e *emitter) emitFn(fn *ast.FnDecl) string {
 	var sb strings.Builder
 	var fnSym *sema.FnSymbol
 	if e.currentMod != nil {
 		fnSym = e.currentMod.Functions[fn.Name]
 	}
-	name := fn.Name
-	if fnSym != nil && fnSym.GoName != "" {
-		name = fnSym.GoName
-	}
-	if name == "main" && (e.currentMod == nil || e.currentMod.IsEntry) {
-		name = "cb_main"
-	} else {
-		name = goIdent(name)
+	name := goIdent(fn.Name)
+	if fnSym != nil {
+		name = e.fnGoName(fnSym)
 	}
 
 	prevByRef := e.byRefVars
@@ -359,7 +341,7 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 		}
 	}
 	sb.WriteString("}\n")
-	return sb.String(), nil
+	return sb.String()
 }
 
 func (e *emitter) goSemaType(t sema.Type) string {

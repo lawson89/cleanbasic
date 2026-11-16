@@ -7,6 +7,8 @@
 // EXPECT_OUT: cliHelp=true
 // EXPECT_OUT: paths=true:false:hello.txt:/tmp/cb_test_08_dir:.txt
 // EXPECT_OUT: cwdNonEmpty=true
+// EXPECT_OUT: cacheDirNonEmpty=true
+// EXPECT_OUT: execInDir=0:7
 // EXPECT_OUT: strMethods=true:true:6:-1:hello-stdlib
 // EXPECT_OUT: regex=true:12:12,34:aXbX:true
 
@@ -72,6 +74,18 @@ fn main() as int
         print("cwdNonEmpty=" + (cwd.len() > 0).toStr())
     catch e
         print("cwd error: " + e.msg)
+        return 1
+    end try
+
+    dim cdir = os.cacheDir()
+    print("cacheDirNonEmpty=" + (cdir.len() > 0).toStr())
+
+    try
+        dim ec0 = os.execInDir(dir, "sh", ["-c", "test -f hello.txt"])
+        dim ec7 = os.execInDir(dir, "sh", ["-c", "exit 7"])
+        print("execInDir=" + ec0.toStr() + ":" + ec7.toStr())
+    catch e
+        print("execInDir error: " + e.msg)
         return 1
     end try
 

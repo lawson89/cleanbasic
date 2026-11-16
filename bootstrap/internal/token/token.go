@@ -89,7 +89,6 @@ const (
 	END_DEFER   Kind = "end defer"
 	END_TYPE    Kind = "end type"
 	END_ENUM    Kind = "end enum"
-	END_GO      Kind = "end go"
 	GO_IMPORT   Kind = "go import"
 	SELECT_CASE Kind = "select case"
 	CASE_ELSE   Kind = "case else"
@@ -197,7 +196,6 @@ var twoWordKeywords = map[twoWordKey]Kind{
 	{first: "end", second: "defer"}:   END_DEFER,
 	{first: "end", second: "type"}:    END_TYPE,
 	{first: "end", second: "enum"}:    END_ENUM,
-	{first: "end", second: "go"}:      END_GO,
 	{first: "go", second: "import"}:   GO_IMPORT,
 	{first: "select", second: "case"}: SELECT_CASE,
 	{first: "case", second: "else"}:   CASE_ELSE,

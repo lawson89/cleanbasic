@@ -57,6 +57,32 @@ func cbStdOsEprint(msg string) {
 func cbStdOsEprintln(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
 }
+
+func cbStdOsExecInDir(dir string, cmd string, args []string) (int64, error) {
+	c := exec.Command(cmd, args...)
+	if dir != "" {
+		c.Dir = dir
+	}
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	err := c.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return int64(exitErr.ExitCode()), nil
+		}
+		return 0, err
+	}
+	return 0, nil
+}
+
+func cbStdOsCacheDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil || dir == "" {
+		return os.TempDir()
+	}
+	return dir
+}
 end go
 
 public fn args() as list[str] = go "cbStdOsArgs"
@@ -67,3 +93,5 @@ public fn readStdin() as str can error = go "cbStdOsReadStdin"
 public fn cwd() as str can error = go "os.Getwd"
 public fn eprint(msg as str) = go "cbStdOsEprint"
 public fn eprintln(msg as str) = go "cbStdOsEprintln"
+public fn execInDir(dir as str, cmd as str, args as list[str]) as int can error = go "cbStdOsExecInDir"
+public fn cacheDir() as str = go "cbStdOsCacheDir"

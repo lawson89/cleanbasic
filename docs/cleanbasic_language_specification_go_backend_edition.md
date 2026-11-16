@@ -20,7 +20,7 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 
 * **Procedural Purity & Value Semantics:** CleanBasic strictly bans classes, inheritance, exceptions, and raw user pointers. Structs and primitives use value semantics by default, explicit `byref` pointers (`*T`) for mutation, and local/prelude Unified Function Call Syntax (UFCS).
 
-* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are disallowed; empty collections must declare their type (`dim nums as list[int] = []`) or use typed constructors (`list[int]()`).
+* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are rejected by the parser; empty collections always use typed constructors (`list[T]()` and `dict[K, V]()`).
 
 * **English-Over-Symbols:** C-style logical operators (`&&`, `||`, `!`) are forbidden at the lexer level and replaced with `and`, `or`, and `not`.
 
@@ -53,7 +53,7 @@ Param           ::= ["byref"] Identifier "as" Type
 
 Statement       ::= VarDecl | Assignment | ExprStmt
                   | IfStmt | ForStmt | WhileStmt | SelectStmt
-                  | TryCatchStmt | DeferStmt | ReturnStmt | BreakStmt | ContinueStmt
+                  | TryCatchStmt | DeferStmt | StartJobStmt | ReturnStmt | BreakStmt | ContinueStmt
 
 VarDecl         ::= "dim" Identifier ["as" Type] "=" Expr NEWLINE
 Assignment      ::= Expr "=" Expr NEWLINE
@@ -106,7 +106,7 @@ PostfixExpr     ::= PrimaryExpr
 
 PrimaryExpr     ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
 
-TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
+TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")" | "mailbox" "[" Type "]" "(" [Expr] ")"
 CallArgList     ::= Expr ("," Expr)* [","]
 
 Literal         ::= NumberLiteral | StringLiteral | ByteLiteral
@@ -119,6 +119,7 @@ DictEntry       ::= Expr ":" Expr
 Type            ::= "int" | "float" | "str" | "bool" | "byte" | "err"
                   | "list" "[" Type "]"
                   | "dict" "[" Type "," Type "]"
+                  | "mailbox" "[" Type "]"
                   | QualifiedIdent
 
 IdentList       ::= Identifier ("," Identifier)*
@@ -164,7 +165,7 @@ CleanBasic enforces strict bottom-up type inference:
 
 * **Inferred Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression.
 
-* **Explicit Empty Collections:** Untyped `[]` and `{}` literals are forbidden. Empty containers require either an explicit variable type (`dim scores as dict[str, int] = {}`) or a typed constructor (`dim scores = dict[str, int]()`).
+* **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers always use typed constructors (`dim scores = dict[str, int]()`, `dim items = list[str]()`).
 
 **main.cb (The Executable Module)**
 
@@ -249,7 +250,7 @@ end fn
 
 * **`byte` Primitive Type, Byte Literals & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, single-quoted ASCII byte literals (`'a'`, `'\n'`, `'\0'`) produce `byte`, and `int.toByte()` and `byte.toInt()` convert explicitly. Read-only string indexing `s[i]` returns `byte` directly via Go indexing.
 
-* **Bounds-Safe Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` clamp out-of-bounds or negative indices without panicking and evaluate as r-values.
+* **Native Go Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` compile directly to native Go slicing `x[start:end]` (standard Go bounds rules apply) and evaluate as r-values.
 
 * **2-Variable `for-in` Loops & `byref` Addressability/Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. Mutable variables, struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Local `dim`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
 
@@ -329,6 +330,6 @@ User-defined `type` structs map 1:1 to native Go value structs with zero hidden 
 * Direct or mutually recursive value cycles (e.g. `Node -> Node` or `Expr <-> Block`) are rejected at compile time with a clear diagnostic.
 * Recursive trees, ASTs, and linked structures model child nodes using `list[T]` (or `dict[K, T]`), which provide fixed-size reference headers in Go.
 * Structs containing `list` or `dict` fields cannot be compared directly with raw `==` or `!=`.
-### 8. `go.mod` Passthrough & Persistent Build Workspace
+### 8. Deterministic Standard-Library Build Workspace
 
-When running `cb build` or `cb run`, the CLI searches upward from the entry `.cb` file (and imported local modules, ignoring `bootstrap/go.mod` outside `bootstrap/`) for a project `go.mod` and `go.sum`. It syncs them into a persistent per-project workspace under the user cache directory (rewriting relative `replace` paths to absolute project paths) so CleanBasic projects can depend on external or local Go modules seamlessly.
+When running `cb build` or `cb run`, the CLI maintains a deterministic standard-library Go build workspace at `<userCacheDir>/cleanbasic/work-default/go.mod` (falling back to `os.TempDir()`), writing each transpiled `main.go` into a temporary `job-*` subdirectory inside that workspace for fast `go build` execution.

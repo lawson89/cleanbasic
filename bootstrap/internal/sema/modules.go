@@ -20,7 +20,6 @@ type ModuleInfo struct {
 	FilePath    string
 	SanitizedID string
 	IsEntry     bool
-	IsStdlib    bool
 	Program     *ast.Program
 	Imports     map[string]*ModuleInfo
 	Functions   map[string]*FnSymbol
@@ -29,13 +28,12 @@ type ModuleInfo struct {
 	GlobalVars  *Scope
 }
 
-func newModuleInfo(id, filePath string, isEntry, isStdlib bool, prog *ast.Program) *ModuleInfo {
+func newModuleInfo(id, filePath string, isEntry bool, prog *ast.Program) *ModuleInfo {
 	return &ModuleInfo{
 		ID:          id,
 		FilePath:    filePath,
 		SanitizedID: sanitizeModuleID(id),
 		IsEntry:     isEntry,
-		IsStdlib:    isStdlib,
 		Program:     prog,
 		Imports:     make(map[string]*ModuleInfo),
 		Functions:   make(map[string]*FnSymbol),
@@ -101,14 +99,14 @@ func (l *moduleLoader) loadEntry(entryPath string, entryProg *ast.Program) ([]*M
 			absEntry = filepath.Clean(abs)
 		}
 	}
-	mod, err := l.visitFile(absEntry, entryProg, true, "", false)
+	mod, err := l.visitFile(absEntry, entryProg, true, "")
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	return l.topoOrder, mod, l.byID, nil
 }
 
-func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry bool, overrideID string, isStdlib bool) (*ModuleInfo, error) {
+func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry bool, overrideID string) (*ModuleInfo, error) {
 	key := absPath
 	if key == "" {
 		key = "<memory>"
@@ -145,7 +143,7 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 		prog = parsed
 	}
 
-	mod := newModuleInfo(modID, absPath, isEntry, isStdlib, prog)
+	mod := newModuleInfo(modID, absPath, isEntry, prog)
 	l.modules[key] = mod
 	l.byID[modID] = mod
 
@@ -199,7 +197,7 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 			return nil, newSemaError(imp.Pos, "cannot import %q: %v", imp.Path, err)
 		}
 
-		depMod, err := l.visitFile(targetPath, nil, false, "", false)
+		depMod, err := l.visitFile(targetPath, nil, false, "")
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +225,7 @@ func (l *moduleLoader) getOrCreateStdlib(modPath string, pos token.Position) (*M
 		return nil, newSemaError(pos, "circular import detected: %s", strings.Join(cycle, " -> "))
 	}
 
-	return l.visitFile(stdFile, nil, false, modPath, true)
+	return l.visitFile(stdFile, nil, false, modPath)
 }
 
 func findStdlibFile(rootDir, modPath string) (string, bool) {
