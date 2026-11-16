@@ -273,7 +273,7 @@ func TestEmitGoPhase5MultiFileAndStdlib(t *testing.T) {
 		for _, want := range []string{
 			"cbStdFsReadFile",
 			"cbStdOsExec",
-			"cbStdJsonParse",
+
 			"cb_std_cli__newParser",
 		} {
 			if !strings.Contains(goCode, want) {
@@ -402,7 +402,7 @@ func runGeneratedGo(t *testing.T, goCode string) string {
 
 func TestEmitGoReviewRegressions(t *testing.T) {
 	src := strings.Join([]string{
-		`import "std/json"`,
+
 		`import "std/regex"`,
 		`import "std/cli"`,
 		"",
@@ -448,14 +448,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		`    print(sum.toStr() + ":" + endCalls.toStr())`,
 		"",
 		`    dim u = User("Ada", 7)`,
-		"    print(json.stringify(u))",
-		"    try",
-		`        dim jv = json.parse("{\"k\":1}")`,
-		"        print(json.stringify(jv))",
-		"    catch e",
-		`        print("json-err:" + e.msg)`,
-		"    end try",
-		"",
+		`    print(u.name + ":" + u.func.toStr())`,
 		"    dim fmt = 10",
 		"    dim map = 20",
 		"    updateByRef(fmt)",
@@ -488,8 +481,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"sc-and-ok",
 		"sc-or-ok",
 		"15:1",
-		"{\"name\":\"Ada\",\"func\":7}",
-		"{\"k\":1}",
+		"Ada:7",
 		"inner=99",
 		"vars=11:20",
 		"re=false",
@@ -532,11 +524,7 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 		"end type",
 		"",
 		"fn worker(box as mailbox[int]) as int",
-		"    try",
-		"        return box.get()",
-		"    catch e",
-		"        return -1",
-		"    end try",
+		"    return box.get()",
 		"end fn",
 		"",
 		"fn main()",
@@ -547,12 +535,8 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 		"    n.children.push(child)",
 		"    dim box = mailbox[int](4)",
 		"    start job worker(box)",
-		"    try",
-		"        box.post(42)",
-		"        print(n.children[0].val)",
-		"    catch e",
-		"        print(e)",
-		"    end try",
+		"    box.post(42)",
+		"    print(n.children[0].val)",
 		"end fn",
 	}, "\n")
 	prog, err := sema.AnalyzeSource(src, "cg_test.cb")
@@ -563,7 +547,7 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	for _, want := range []string{"Cb_children []TreeNode", "cbNewMailbox[int64](int64(4))", "go worker("} {
+	for _, want := range []string{"Cb_children []TreeNode", "make(chan int64, int64(4))", "go worker("} {
 		if !strings.Contains(goCode, want) {
 			t.Errorf("expected generated Go code to contain %q, got:\n%s", want, goCode)
 		}
@@ -606,7 +590,7 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	if !strings.Contains(goCode, "cbNewMailbox[int64](cap") {
-		t.Errorf("expected cap variable in cbNewMailbox, got:\n%s", goCode)
+	if !strings.Contains(goCode, "make(chan int64, cap") {
+		t.Errorf("expected cap variable in make(chan int64, ...), got:\n%s", goCode)
 	}
 }

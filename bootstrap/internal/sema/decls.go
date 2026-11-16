@@ -207,15 +207,9 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 			return newSemaError(p.Pos, "duplicate parameter %q in function %q (previous at %s)", p.Name, fn.Name, prevPos.String())
 		}
 		seenParams[p.Name] = p.Pos
-		var pType Type
-		var err error
-		if fn.GoTarget != "" && p.Type.Kind == ast.TypeQualified && len(p.Type.Parts) == 1 && p.Type.Parts[0] == "any" {
-			pType = AnyType
-		} else {
-			pType, err = a.resolveTypeExpr(p.Type)
-			if err != nil {
-				return err
-			}
+		pType, err := a.resolveTypeExpr(p.Type)
+		if err != nil {
+			return err
 		}
 		params = append(params, ParamSymbol{
 			Name:  p.Name,

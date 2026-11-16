@@ -16,7 +16,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
    - **No `byref` Shadowing:** Local `dim`/`const`, `for` loop variables, and `catch` variables may not shadow an enclosing function's `byref` parameter.
 4. **Go Target Emitter Hygiene & Stdlib Modules:**
    - CleanBasic `int` maps to `int64`; `float` maps to `float64`; `str` maps to `string`; `bool` maps to `bool`; `byte` maps to `byte` (`uint8`); `list[byte]` maps to `[]byte`.
-   - Standard library modules (`std/fs`, `std/os`, `std/json`, `std/cli`, `std/regex`) live as real `.cb` files in `std/` using CleanBasic Go interop (`go import`, `go ... end go`, `type ... = go "..."`, `fn ... = go "..."`) or pure CleanBasic (`std/cli.cb`).
+   - Standard library modules (`std/fs`, `std/os`, `std/cli`, `std/regex`) live as real `.cb` files in `std/` using CleanBasic Go interop (`go import`, `go ... end go`, `type ... = go "..."`, `fn ... = go "..."`) or pure CleanBasic (`std/cli.cb`).
    - Emit `_ = varName` after local variable declarations so Go's unused-variable rule never breaks valid CleanBasic programs.
    - Emit column-1 `//line <filepath>:<line>` directives before statements by default so Go stack traces and debuggers point directly to `.cb` source lines.
    - Track used standard library packages (`fmt`, `strings`, `os`, etc.) and `go import` declarations during code generation and emit only the imports actually referenced in `main.go`.
@@ -30,7 +30,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
 - `internal/parser/` — Recursive-descent parser matching the EBNF grammar
 - `internal/sema/` — Symbol tables, module import graph (including `std/*.cb` discovery), type checking, mutability, `byref` shadowing checks, and fallibility verification
 - `internal/codegen/` — Single-file procedural Go code emitter with `//line` directives
-- `../std/` — Standard library modules (`fs.cb`, `os.cb`, `json.cb`, `cli.cb`, `regex.cb`)
+- `../std/` — Standard library modules (`fs.cb`, `os.cb`, `cli.cb`, `regex.cb`)
 
 ## Verification Workflow
 - Run `go test ./...` after every change.

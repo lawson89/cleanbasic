@@ -1,4 +1,4 @@
-' EXPECT_OUT: containers: sum=162, loopTotal=6
+' EXPECT_OUT: containers: sum=162, loopTotal=6, hasPresent=false, dictLen=0
 ' EXPECT_OUT: interp: User=Alice, Score=100
 ' EXPECT_OUT: prelude: alpha-beta:42
 
@@ -24,7 +24,8 @@ fn main() as int
     for x in [1, 2, 3]
         loopTotal = loopTotal + x
     end for
-    print("containers: sum=" + sum.toStr() + ", loopTotal=" + loopTotal.toStr())
+    d.remove("present")
+    print("containers: sum=" + sum.toStr() + ", loopTotal=" + loopTotal.toStr() + ", hasPresent=" + d.contains("present").toStr() + ", dictLen=" + d.len().toStr())
 
     dim u = User("Alice", 100)
     print("interp: User=" + u.name + ", Score=" + u.score.toStr())

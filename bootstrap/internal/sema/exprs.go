@@ -453,11 +453,7 @@ func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.Expr, par
 		if err != nil {
 			return err
 		}
-		if param.Type.Kind == KindAny {
-			if argType.IsVoid() {
-				return newSemaError(arg.ExprPos(), "argument %d (%q) to function %q cannot be void", i+1, param.Name, fnName)
-			}
-		} else if !param.Type.Equals(argType) {
+		if !param.Type.Equals(argType) {
 			return newSemaError(arg.ExprPos(), "argument %d (%q) to function %q has type %s, expected %s",
 				i+1, param.Name, fnName, argType.String(), param.Type.String())
 		}

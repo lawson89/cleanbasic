@@ -20,7 +20,6 @@ const (
 	KindStr     TypeKind = "str"
 	KindBool    TypeKind = "bool"
 	KindByte    TypeKind = "byte"
-	KindAny     TypeKind = "any"
 	KindStruct  TypeKind = "struct"
 	KindEnum    TypeKind = "enum"
 	KindList    TypeKind = "list"
@@ -66,7 +65,6 @@ var (
 	StrType   = Type{Kind: KindStr}
 	BoolType  = Type{Kind: KindBool}
 	ByteType  = Type{Kind: KindByte}
-	AnyType   = Type{Kind: KindAny}
 	ErrType   = Type{Kind: KindErr}
 )
 
@@ -370,7 +368,7 @@ func (a *analyzer) isComparableTypeVisited(t Type, visited map[string]bool) bool
 	switch t.Kind {
 	case KindInt, KindFloat, KindStr, KindByte, KindBool, KindEnum:
 		return true
-	case KindVoid, KindList, KindDict, KindErr, KindAny:
+	case KindVoid, KindList, KindDict, KindErr:
 		return false
 	case KindStruct:
 		key := "struct:" + t.ModuleID + "." + t.Name

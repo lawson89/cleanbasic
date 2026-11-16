@@ -76,26 +76,22 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 }
 
 type emitter struct {
-	prog                *sema.TypedProgram
-	emitLineDirectives  bool
-	currentMod          *sema.ModuleInfo
-	currentFnSym        *sema.FnSymbol
-	imports             map[string]bool
-	goImports           map[string]string
-	usedSliceStr        bool
-	usedSliceList       bool
-	usedDictGet         bool
-	usedDictContains    bool
-	usedStrToInt        bool
-	usedStrFromCharCode bool
-	usedMailbox         bool
-	byRefVars           map[string]bool
-	currentFn           *ast.FnDecl
-	currentTryID        int
-	tryCounter          int
-	errCounter          int
-	loopCounter         int
-	tryUsedCatch        map[int]bool
+	prog               *sema.TypedProgram
+	emitLineDirectives bool
+	currentMod         *sema.ModuleInfo
+	currentFnSym       *sema.FnSymbol
+	imports            map[string]bool
+	goImports          map[string]string
+	usedDictGet        bool
+	usedDictContains   bool
+	usedStrToInt       bool
+	byRefVars          map[string]bool
+	currentFn          *ast.FnDecl
+	currentTryID       int
+	tryCounter         int
+	errCounter         int
+	loopCounter        int
+	tryUsedCatch       map[int]bool
 }
 
 var goReservedIdents = map[string]bool{
@@ -184,7 +180,7 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
 			for i, f := range d.Fields {
 				fType := e.goSemaType(structSym.Fields[i].Type)
-				sb.WriteString(fmt.Sprintf("\t%s %s \x60json:%q\x60\n", goStructFieldName(f.Name), fType, f.Name))
+				sb.WriteString(fmt.Sprintf("\t%s %s\n", goStructFieldName(f.Name), fType))
 			}
 			sb.WriteString("}\n\n")
 
@@ -381,8 +377,7 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		return "bool"
 	case sema.KindByte:
 		return "byte"
-	case sema.KindAny:
-		return "any"
+
 	case sema.KindErr:
 		return "error"
 	case sema.KindStruct, sema.KindEnum:
@@ -402,11 +397,10 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		}
 		return "map[any]any"
 	case sema.KindMailbox:
-		e.usedMailbox = true
 		if len(t.SubTypes) == 1 {
-			return fmt.Sprintf("*CbMailbox[%s]", e.goSemaType(t.SubTypes[0]))
+			return "chan " + e.goSemaType(t.SubTypes[0])
 		}
-		return "*CbMailbox[any]"
+		return "chan any"
 	default:
 		return "any"
 	}

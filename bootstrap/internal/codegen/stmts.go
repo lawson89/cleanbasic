@@ -168,16 +168,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, v0, goIdent(s.Vars[1]), iterExpr))
 				}
 			case sema.KindMailbox:
-				e.loopCounter++
-				lid := e.loopCounter
-				msgTmp := fmt.Sprintf("_cbMsg_%d", lid)
-				errTmp := fmt.Sprintf("_cbErr_%d", lid)
-				boxTmp := fmt.Sprintf("_cbBox_%d", lid)
-				sb.WriteString(fmt.Sprintf("%s%s := %s\n", indent, boxTmp, iterExpr))
-				sb.WriteString(fmt.Sprintf("%sfor {\n", indent))
-				sb.WriteString(fmt.Sprintf("%s\t%s, %s := %s.get()\n", indent, msgTmp, errTmp, boxTmp))
-				sb.WriteString(fmt.Sprintf("%s\tif %s != nil {\n%s\t\tbreak\n%s\t}\n", indent, errTmp, indent, indent))
-				sb.WriteString(fmt.Sprintf("%s\tvar %s = %s\n", indent, v0, msgTmp))
+				sb.WriteString(fmt.Sprintf("%sfor %s := range %s {\n", indent, v0, iterExpr))
 			}
 			for _, v := range s.Vars {
 				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, goIdent(v)))

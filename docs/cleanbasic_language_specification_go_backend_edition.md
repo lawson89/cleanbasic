@@ -136,7 +136,7 @@ Every `.cb` file is implicitly a module. Everything is private by default; the `
 
 * **Default & Explicit Aliases (`as`):** `import "entities/hero.cb"` binds the alias `hero`. Use `import "input/button.cb" as inputBtn` to disambiguate colliding filenames.
 
-* **Go Identifier Mangling & Native Go Interop:** Declarations emit with collision-free mangled Go identifiers (`cb_<sanitizedModuleId>__<name>`, e.g., `cb_entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting `any` parameter types on Go-bound functions and native `error` returns for `can error` bindings).
+* **Go Identifier Mangling & Native Go Interop:** Declarations emit with collision-free mangled Go identifiers (`cb_<sanitizedModuleId>__<name>`, e.g., `cb_entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting native `error` returns for `can error` bindings).
 
 * **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `byte`, `list`, `dict`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
 
@@ -313,11 +313,10 @@ end fn
 
 CleanBasic provides structured, data-race-safe concurrency built around typed message queues and goroutine-backed `start job` statements:
 
-* **Typed Mailboxes (`mailbox[T]`):** Created with `mailbox[T]()` (default buffer capacity 64) or `mailbox[T](cap)` (including `0` for rendezvous).
-  * `box.post(msg as T) can error` — sends `msg`, blocking if full and raising an error if closed.
-  * `box.check(byref out as T) as bool` — non-blocking atomic receive into `out`.
-  * `box.get() as T can error` — blocking receive; raises an error when closed and empty.
-  * `box.close()`, `box.count() as int`, and `for msg in box ... end for` (drains until closed and empty).
+* **Typed Mailboxes (`mailbox[T]`):** Lowered 1:1 to Go `chan T`. Created with `mailbox[T]()` (`make(chan T)`, unbuffered) or `mailbox[T](cap)` (`make(chan T, cap)`).
+  * `box.post(msg as T)` — sends `msg` (`box <- msg`, infallible).
+  * `box.get() as T` — blocking receive (`(<-box)`, infallible).
+  * `box.close()` (`close(box)`), `box.count() as int` (`int64(len(box))`), and `for msg in box ... end for` (`for msg := range box`).
 * **Background Jobs (`start job` Statement):**
   * `start job fnCall(...)` is a standalone statement that lowers 1:1 to `go fnCall(...)`.
   * Target must be a user or module function/UFCS call; `can error` functions and `byref` parameters are rejected at compile time. Results and completion signals are communicated via `mailbox[T]`.

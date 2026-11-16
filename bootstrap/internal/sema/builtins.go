@@ -44,8 +44,6 @@ type builtinMethodSpec struct {
 	Params          []builtinTypeRef
 	Return          builtinTypeRef
 	MutatesReceiver bool
-	FirstArgByRef   bool
-	CanError        bool
 }
 
 var staticStrMethods = map[string]builtinMethodSpec{
@@ -64,6 +62,7 @@ var instanceBuiltinMethods = map[TypeKind]map[string]builtinMethodSpec{
 		"len":      {MethodName: "dict.len", Return: bt(IntType)},
 		"get":      {MethodName: "dict.get", Params: []builtinTypeRef{btKeyRef, btValRef}, Return: btValRef},
 		"contains": {MethodName: "dict.contains", Params: []builtinTypeRef{btKeyRef}, Return: bt(BoolType)},
+		"remove":   {MethodName: "dict.remove", Params: []builtinTypeRef{btKeyRef}, Return: bt(VoidType), MutatesReceiver: true},
 	},
 	KindStr: {
 		"len":        {MethodName: "str.len", Return: bt(IntType)},
@@ -95,9 +94,8 @@ var instanceBuiltinMethods = map[TypeKind]map[string]builtinMethodSpec{
 		"toStr": {MethodName: "byte.toStr", Return: bt(StrType)},
 	},
 	KindMailbox: {
-		"post":  {MethodName: "mailbox.post", Params: []builtinTypeRef{btElemRef}, Return: bt(VoidType), CanError: true},
-		"check": {MethodName: "mailbox.check", Params: []builtinTypeRef{btElemRef}, Return: bt(BoolType), FirstArgByRef: true},
-		"get":   {MethodName: "mailbox.get", Return: btElemRef, CanError: true},
+		"post":  {MethodName: "mailbox.post", Params: []builtinTypeRef{btElemRef}, Return: bt(VoidType)},
+		"get":   {MethodName: "mailbox.get", Return: btElemRef},
 		"close": {MethodName: "mailbox.close", Return: bt(VoidType)},
 		"count": {MethodName: "mailbox.count", Return: bt(IntType)},
 	},
@@ -118,30 +116,15 @@ func (a *analyzer) applyBuiltinMethod(e *ast.CallExpr, recvExpr ast.Expr, recvTy
 		}
 	}
 	retType := spec.Return.resolve(recvType)
-	firstArgByRef := spec.FirstArgByRef
 
 	if err := a.expectPositionalArgs(e, spec.MethodName, scope, params...); err != nil {
 		return VoidType, err
-	}
-	if firstArgByRef {
-		if err := a.checkByRefArg(e.Args[0], 1, "out", spec.MethodName, scope); err != nil {
-			return VoidType, err
-		}
-	}
-	if spec.CanError && e != a.startJobCall {
-		if !a.inFallibleContext() {
-			return VoidType, newSemaError(e.Pos, "call to 'can error' method '%s' must be inside a 'try' block or a 'can error' function", spec.MethodName)
-		}
-		if e != a.allowedFallibleExpr {
-			return VoidType, newSemaError(e.Pos, "call to 'can error' method '%s' may only appear as a top-level statement expression", spec.MethodName)
-		}
 	}
 
 	a.prog.CallInfos[e] = &CallInfo{
 		Kind:       CallMethod,
 		MethodName: spec.MethodName,
 		Receiver:   recvExpr,
-		CanError:   spec.CanError,
 		HasValue:   !retType.IsVoid(),
 	}
 	return retType, nil

@@ -3,7 +3,6 @@
 ' EXPECT_OUT: files=1
 ' EXPECT_OUT: envNonEmpty=true
 ' EXPECT_OUT: exec=0:hello-exec
-' EXPECT_OUT: json=ok:42:true
 ' EXPECT_OUT: cli=true:res.txt:myPat:false
 ' EXPECT_OUT: cliHelp=true
 ' EXPECT_OUT: paths=true:false:hello.txt:/tmp/cb_test_08_dir:.txt
@@ -13,7 +12,6 @@
 
 import "std/fs"
 import "std/os"
-import "std/json"
 import "std/cli"
 import "std/regex"
 
@@ -47,15 +45,6 @@ fn main() as int
         print("exec=" + res.exitCode.toStr() + ":" + res.stdout.trim())
     catch e
         print("exec error: " + e.msg)
-        return 1
-    end try
-
-    dim rawJson = json.stringify({"name": "ok", "count": "42"})
-    try
-        dim jv = json.parse(rawJson)
-        print("json=" + jv.get("name").asStr() + ":" + jv.get("count").asInt().toStr() + ":" + jv.has("name").toStr())
-    catch e
-        print("json error: " + e.msg)
         return 1
     end try
 

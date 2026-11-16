@@ -2,9 +2,7 @@
 ' EXPECT_OUT: isolation orig=10 copy=10
 ' EXPECT_OUT: nested=99 byref=55
 ' EXPECT_OUT: mutual=77
-' EXPECT_OUT: check empty=false val=0
-' EXPECT_OUT: post after close err=cannot post to closed mailbox
-' EXPECT_OUT: get after close err=mailbox is closed and empty
+' EXPECT_OUT: count=2 val=10
 ' EXPECT_OUT: pool sum=60
 ' EXPECT_OUT: drain=100,200,300
 ' EXPECT_OUT: done=true
@@ -31,22 +29,13 @@ end fn
 
 fn worker(id as int, tasks as mailbox[int], results as mailbox[int], done as mailbox[bool])
     for item in tasks
-        try
-            results.post(item * 2)
-        catch ex
-        end try
+        results.post(item * 2)
     end for
-    try
-        done.post(true)
-    catch ex
-    end try
+    done.post(true)
 end fn
 
 fn quickWorker(x as int, outBox as mailbox[int])
-    try
-        outBox.post(x + 1)
-    catch ex
-    end try
+    outBox.post(x + 1)
 end fn
 
 fn main() as int
@@ -79,24 +68,13 @@ fn main() as int
     e.blocks.push(blk)
     print("mutual=" + e.blocks[0].exprs[0].tag.toStr())
 
-    ' 3. Mailbox check, post, close, error on closed post & empty get
+    ' 3. Buffered mailbox post, count, get, close
     dim mb = mailbox[int](2)
-    dim outVal = 0
-    dim ok = mb.check(outVal)
-    print("check empty=" + ok.toStr() + " val=" + outVal.toStr())
-
+    mb.post(10)
+    mb.post(20)
+    print("count=" + mb.count().toStr() + " val=" + mb.get().toStr())
+    mb.get()
     mb.close()
-    try
-        mb.post(123)
-    catch ex
-        print("post after close err=" + ex.msg)
-    end try
-    try
-        dim v = mb.get()
-        print("unexpected=" + v.toStr())
-    catch ex
-        print("get after close err=" + ex.msg)
-    end try
 
     ' 4. Worker pool with mailbox[T] and start job statement
     dim tasks = mailbox[int]()
@@ -106,36 +84,28 @@ fn main() as int
         start job worker(w, tasks, results, done)
     end for
 
-    try
-        tasks.post(5)
-        tasks.post(10)
-        tasks.post(15)
-        tasks.close()
+    tasks.post(5)
+    tasks.post(10)
+    tasks.post(15)
+    tasks.close()
 
-        for w = 1 to 2
-            done.get()
-        end for
-        results.close()
+    for w = 1 to 2
+        done.get()
+    end for
+    results.close()
 
-        dim sum = 0
-        for r in results
-            sum = sum + r
-        end for
-        print("pool sum=" + sum.toStr())
-    catch ex
-        print("pool err=" + ex.msg)
-    end try
+    dim sum = 0
+    for r in results
+        sum = sum + r
+    end for
+    print("pool sum=" + sum.toStr())
 
     ' 5. Mailbox for-in drain & single start job communication
     dim q = mailbox[int](4)
-    try
-        q.post(100)
-        q.post(200)
-        q.post(300)
-        q.close()
-    catch ex
-        print("q err=" + ex.msg)
-    end try
+    q.post(100)
+    q.post(200)
+    q.post(300)
+    q.close()
     dim parts = list[str]()
     for msg in q
         parts.push(msg.toStr())
@@ -144,12 +114,8 @@ fn main() as int
 
     dim qOutBox = mailbox[int](1)
     start job quickWorker(41, qOutBox)
-    try
-        dim qOut = qOutBox.get()
-        print("done=" + (qOut == 42).toStr())
-    catch ex
-        print("qj err=" + ex.msg)
-    end try
+    dim qOut = qOutBox.get()
+    print("done=" + (qOut == 42).toStr())
 
     return 0
 end fn

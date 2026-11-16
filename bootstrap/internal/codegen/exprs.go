@@ -27,9 +27,8 @@ func init() {
 			},
 		},
 		"str.fromCharCode": {
-			Setup: func(e *emitter) { e.usedStrFromCharCode = true },
 			Emit: func(e *emitter, ex *ast.CallExpr, _ *sema.CallInfo) string {
-				return fmt.Sprintf("cbStrFromCharCode(%s)", e.emitExpr(ex.Args[0]))
+				return fmt.Sprintf("string(rune(%s))", e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.quote": {
@@ -62,6 +61,11 @@ func init() {
 			Setup: func(e *emitter) { e.usedDictContains = true },
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
 				return fmt.Sprintf("cbDictContains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
+			},
+		},
+		"dict.remove": {
+			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
+				return fmt.Sprintf("delete(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.trim": {
@@ -146,29 +150,20 @@ func init() {
 		},
 		"mailbox.post": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.post(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
-			},
-		},
-		"mailbox.check": {
-			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.check(%s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0], true))
+				return fmt.Sprintf("%s <- %s", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"mailbox.get": {
 			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.get()", e.emitExpr(ci.Receiver))
+				return fmt.Sprintf("(<-%s)", e.emitExpr(ci.Receiver))
 			},
 		},
 		"mailbox.close": {
 			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.close()", e.emitExpr(ci.Receiver))
+				return fmt.Sprintf("close(%s)", e.emitExpr(ci.Receiver))
 			},
 		},
-		"mailbox.count": {
-			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.count()", e.emitExpr(ci.Receiver))
-			},
-		},
+		"mailbox.count": {Emit: emitBuiltinLen},
 		"int.toStr": {
 			Imports: []string{"strconv"},
 			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
@@ -265,12 +260,11 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 	case *ast.TypedEmptyCtorExpr:
 		t := e.prog.ExprTypes[ex]
 		if t.Kind == sema.KindMailbox {
-			e.usedMailbox = true
-			capStr := "int64(64)"
+			elemGo := e.goSemaType(t.Elem())
 			if len(ex.Args) == 1 {
-				capStr = e.emitExpr(ex.Args[0])
+				return fmt.Sprintf("make(chan %s, %s)", elemGo, e.emitExpr(ex.Args[0]))
 			}
-			return fmt.Sprintf("cbNewMailbox[%s](%s)", e.goSemaType(t.Elem()), capStr)
+			return fmt.Sprintf("make(chan %s)", elemGo)
 		}
 		return fmt.Sprintf("%s{}", e.goSemaType(t))
 
@@ -294,21 +288,15 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("%s[%s]", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
 
 	case *ast.SliceExpr:
-		targetType := e.prog.ExprTypes[ex.Target]
-		startStr := "int64(0)"
+		startStr := ""
 		if ex.Start != nil {
 			startStr = e.emitExpr(ex.Start)
 		}
-		endStr := "int64(0x7fffffffffffffff)"
+		endStr := ""
 		if ex.End != nil {
 			endStr = e.emitExpr(ex.End)
 		}
-		if targetType.Kind == sema.KindStr {
-			e.usedSliceStr = true
-			return fmt.Sprintf("cbSliceStr(%s, %s, %s)", e.emitExpr(ex.Target), startStr, endStr)
-		}
-		e.usedSliceList = true
-		return fmt.Sprintf("cbSliceList(%s, %s, %s)", e.emitExpr(ex.Target), startStr, endStr)
+		return fmt.Sprintf("%s[%s:%s]", e.emitExpr(ex.Target), startStr, endStr)
 
 	case *ast.CallExpr:
 		return e.emitCallExprRaw(ex)
