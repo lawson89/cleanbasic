@@ -122,6 +122,16 @@ func TestSyntaxErrorReporting(t *testing.T) {
 			src:     "fn main()\n    select case x\n        case 1 as v\n            print(v)\n    end select\nend fn\n",
 			wantSub: "expected newline after case clause",
 		},
+		{
+			name:    "empty list literal rejected",
+			src:     "fn main()\n    dim xs = []\nend fn\n",
+			wantSub: "empty list literal '[]' is not allowed",
+		},
+		{
+			name:    "empty dict literal rejected",
+			src:     "fn main()\n    dim d = {}\nend fn\n",
+			wantSub: "empty dict literal '{}' is not allowed",
+		},
 	}
 
 	for _, tc := range tests {

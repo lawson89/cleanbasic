@@ -99,10 +99,8 @@ type emitter struct {
 	currentTryID        int
 	tryCounter          int
 	errCounter          int
-	condCounter         int
 	loopCounter         int
 	tryUsedCatch        map[int]bool
-	liftedExprs         map[ast.Expr]string
 }
 
 var goReservedIdents = map[string]bool{

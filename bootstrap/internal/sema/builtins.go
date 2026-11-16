@@ -148,12 +148,17 @@ func (a *analyzer) applyBuiltinMethod(e *ast.CallExpr, recvExpr ast.Expr, recvTy
 		return VoidType, err
 	}
 	if firstArgByRef {
-		if err := a.checkByRefArg(e.Args[0].Value, 1, "out", spec.MethodName, scope); err != nil {
+		if err := a.checkByRefArg(e.Args[0], 1, "out", spec.MethodName, scope); err != nil {
 			return VoidType, err
 		}
 	}
-	if spec.CanError && !a.inFallibleContext() {
-		return VoidType, newSemaError(e.Pos, "call to 'can error' method '%s' must be inside a 'try' block or a 'can error' function", spec.MethodName)
+	if spec.CanError {
+		if !a.inFallibleContext() {
+			return VoidType, newSemaError(e.Pos, "call to 'can error' method '%s' must be inside a 'try' block or a 'can error' function", spec.MethodName)
+		}
+		if e != a.allowedFallibleExpr && e != a.startJobCall {
+			return VoidType, newSemaError(e.Pos, "call to 'can error' method '%s' may only appear as a top-level statement expression", spec.MethodName)
+		}
 	}
 
 	a.prog.CallInfos[e] = &CallInfo{

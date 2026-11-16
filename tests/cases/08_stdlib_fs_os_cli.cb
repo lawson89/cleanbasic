@@ -59,7 +59,7 @@ fn main() as int
         return 1
     end try
 
-    dim p = cli.newParser(name="cbgrep", version="1.0", description="Search files")
+    dim p = cli.newParser("cbgrep", "1.0", "Search files")
     p.addFlag("ignore-case", "i", "Case-insensitive")
     p.addOption("output", "o", "Output path", "out.txt")
     p.addArg("pattern", "Search pattern")

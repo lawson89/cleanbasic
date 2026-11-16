@@ -468,18 +468,11 @@ type SliceExpr struct {
 func (e *SliceExpr) ExprPos() token.Position { return e.Pos }
 func (e *SliceExpr) exprNode()               {}
 
-// CallArg represents an argument in a function/method call, supporting optional named syntax (e.g. code=408).
-type CallArg struct {
-	Pos   token.Position
-	Name  string // empty for positional arguments, non-empty for named arguments like code=408
-	Value Expr
-}
-
 // CallExpr represents a function, constructor, or UFCS method call: Callee(Args...)
 type CallExpr struct {
 	Pos    token.Position
 	Callee Expr
-	Args   []CallArg
+	Args   []Expr
 }
 
 func (e *CallExpr) ExprPos() token.Position { return e.Pos }
@@ -495,6 +488,34 @@ func (e *StartJobExpr) ExprPos() token.Position { return e.Pos }
 func (e *StartJobExpr) exprNode()               {}
 
 // --- Pretty Printer / AST Dump ---
+
+func visPrefix(pub bool) string {
+	if pub {
+		return "public "
+	}
+	return ""
+}
+
+func optTypeStr(t *TypeExpr) string {
+	if t == nil {
+		return ""
+	}
+	return " as " + t.String()
+}
+
+func mapJoin[T any](items []T, fn func(T) string) string {
+	parts := make([]string, len(items))
+	for i, it := range items {
+		parts[i] = fn(it)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func dumpBlock(sb *strings.Builder, stmts []Statement, indent string) {
+	for _, st := range stmts {
+		dumpStmt(sb, st, indent)
+	}
+}
 
 // Dump returns a deterministic, human-readable multi-line string representation of the AST.
 func Dump(prog *Program) string {
@@ -514,78 +535,43 @@ func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 		} else {
 			fmt.Fprintf(sb, "%sImport(%q)\n", indent, d.Path)
 		}
-
 	case *GoImportDecl:
 		if d.Alias != "" {
 			fmt.Fprintf(sb, "%sGoImport(%q as %s)\n", indent, d.Path, d.Alias)
 		} else {
 			fmt.Fprintf(sb, "%sGoImport(%q)\n", indent, d.Path)
 		}
-
 	case *GoBlockDecl:
 		fmt.Fprintf(sb, "%sGoBlock(%d bytes)\n", indent, len(d.Code))
-
 	case *ConstDecl:
-		vis := ""
-		if d.Public {
-			vis = "public "
-		}
-		typeStr := ""
-		if d.Type != nil {
-			typeStr = " as " + d.Type.String()
-		}
-		fmt.Fprintf(sb, "%s%sConstDecl(%s%s = %s)\n", indent, vis, d.Name, typeStr, FormatExpr(d.Value))
-
+		fmt.Fprintf(sb, "%s%sConstDecl(%s%s = %s)\n", indent, visPrefix(d.Public), d.Name, optTypeStr(d.Type), FormatExpr(d.Value))
 	case *TypeDecl:
-		vis := ""
-		if d.Public {
-			vis = "public "
-		}
 		if d.GoName != "" {
-			fmt.Fprintf(sb, "%s%sTypeDecl(%s = go %q)\n", indent, vis, d.Name, d.GoName)
+			fmt.Fprintf(sb, "%s%sTypeDecl(%s = go %q)\n", indent, visPrefix(d.Public), d.Name, d.GoName)
 		} else {
-			fmt.Fprintf(sb, "%s%sTypeDecl(%s)\n", indent, vis, d.Name)
+			fmt.Fprintf(sb, "%s%sTypeDecl(%s)\n", indent, visPrefix(d.Public), d.Name)
 			for _, f := range d.Fields {
 				fmt.Fprintf(sb, "%s  Field(%s as %s)\n", indent, f.Name, f.Type.String())
 			}
 		}
-
 	case *EnumDecl:
-		vis := ""
-		if d.Public {
-			vis = "public "
-		}
-		fmt.Fprintf(sb, "%s%sEnumDecl(%s: [%s])\n", indent, vis, d.Name, strings.Join(d.Variants, ", "))
-
+		fmt.Fprintf(sb, "%s%sEnumDecl(%s: [%s])\n", indent, visPrefix(d.Public), d.Name, strings.Join(d.Variants, ", "))
 	case *FnDecl:
-		modPrefix := ""
-		if d.Public {
-			modPrefix = "public "
-		}
-		var params []string
-		for _, p := range d.Params {
-			prefix := ""
+		params := mapJoin(d.Params, func(p Param) string {
 			if p.ByRef {
-				prefix = "byref "
+				return fmt.Sprintf("byref %s as %s", p.Name, p.Type.String())
 			}
-			params = append(params, fmt.Sprintf("%s%s as %s", prefix, p.Name, p.Type.String()))
-		}
-		ret := ""
-		if d.ReturnType != nil {
-			ret = " as " + d.ReturnType.String()
-		}
-		errSuffix := ""
+			return fmt.Sprintf("%s as %s", p.Name, p.Type.String())
+		})
+		errSuffix, goSuffix := "", ""
 		if d.CanError {
 			errSuffix = " can error"
 		}
-		goSuffix := ""
 		if d.GoTarget != "" {
 			goSuffix = fmt.Sprintf(" = go %q", d.GoTarget)
 		}
-		fmt.Fprintf(sb, "%s%sFnDecl(%s(%s)%s%s%s)\n", indent, modPrefix, d.Name, strings.Join(params, ", "), ret, errSuffix, goSuffix)
-		for _, st := range d.Body {
-			dumpStmt(sb, st, indent+"  ")
-		}
+		fmt.Fprintf(sb, "%s%sFnDecl(%s(%s)%s%s%s)\n", indent, visPrefix(d.Public), d.Name, params, optTypeStr(d.ReturnType), errSuffix, goSuffix)
+		dumpBlock(sb, d.Body, indent+"  ")
 	}
 }
 
@@ -596,36 +582,22 @@ func dumpStmt(sb *strings.Builder, stmt Statement, indent string) {
 		if s.IsConst {
 			kw = "const"
 		}
-		typeStr := ""
-		if s.Type != nil {
-			typeStr = " as " + s.Type.String()
-		}
-		fmt.Fprintf(sb, "%sVarDecl(%s %s%s = %s)\n", indent, kw, s.Name, typeStr, FormatExpr(s.Value))
-
+		fmt.Fprintf(sb, "%sVarDecl(%s %s%s = %s)\n", indent, kw, s.Name, optTypeStr(s.Type), FormatExpr(s.Value))
 	case *Assignment:
 		fmt.Fprintf(sb, "%sAssignment(%s = %s)\n", indent, FormatExpr(s.Target), FormatExpr(s.Value))
-
 	case *ExprStmt:
 		fmt.Fprintf(sb, "%sExprStmt(%s)\n", indent, FormatExpr(s.Expr))
-
 	case *IfStmt:
 		fmt.Fprintf(sb, "%sIf(%s)\n", indent, FormatExpr(s.Cond))
-		for _, st := range s.ThenBody {
-			dumpStmt(sb, st, indent+"  ")
-		}
+		dumpBlock(sb, s.ThenBody, indent+"  ")
 		for _, elif := range s.ElseIfs {
 			fmt.Fprintf(sb, "%sElseIf(%s)\n", indent, FormatExpr(elif.Cond))
-			for _, st := range elif.Body {
-				dumpStmt(sb, st, indent+"  ")
-			}
+			dumpBlock(sb, elif.Body, indent+"  ")
 		}
 		if s.HasElse {
 			fmt.Fprintf(sb, "%sElse\n", indent)
-			for _, st := range s.ElseBody {
-				dumpStmt(sb, st, indent+"  ")
-			}
+			dumpBlock(sb, s.ElseBody, indent+"  ")
 		}
-
 	case *ForStmt:
 		if s.IsRange {
 			stepStr := ""
@@ -636,61 +608,36 @@ func dumpStmt(sb *strings.Builder, stmt Statement, indent string) {
 		} else {
 			fmt.Fprintf(sb, "%sForIn(%s in %s)\n", indent, strings.Join(s.Vars, ", "), FormatExpr(s.Iterable))
 		}
-		for _, st := range s.Body {
-			dumpStmt(sb, st, indent+"  ")
-		}
-
+		dumpBlock(sb, s.Body, indent+"  ")
 	case *WhileStmt:
 		fmt.Fprintf(sb, "%sWhile(%s)\n", indent, FormatExpr(s.Cond))
-		for _, st := range s.Body {
-			dumpStmt(sb, st, indent+"  ")
-		}
-
+		dumpBlock(sb, s.Body, indent+"  ")
 	case *SelectStmt:
 		fmt.Fprintf(sb, "%sSelectCase(%s)\n", indent, FormatExpr(s.Target))
 		for _, c := range s.Cases {
-			var vals []string
-			for _, v := range c.Values {
-				vals = append(vals, FormatExpr(v))
-			}
-			fmt.Fprintf(sb, "%s  Case(%s)\n", indent, strings.Join(vals, ", "))
-			for _, st := range c.Body {
-				dumpStmt(sb, st, indent+"    ")
-			}
+			fmt.Fprintf(sb, "%s  Case(%s)\n", indent, mapJoin(c.Values, FormatExpr))
+			dumpBlock(sb, c.Body, indent+"    ")
 		}
 		if s.HasElse {
 			fmt.Fprintf(sb, "%s  CaseElse\n", indent)
-			for _, st := range s.ElseBody {
-				dumpStmt(sb, st, indent+"    ")
-			}
+			dumpBlock(sb, s.ElseBody, indent+"    ")
 		}
-
 	case *TryCatchStmt:
 		fmt.Fprintf(sb, "%sTry\n", indent)
-		for _, st := range s.TryBody {
-			dumpStmt(sb, st, indent+"  ")
-		}
+		dumpBlock(sb, s.TryBody, indent+"  ")
 		fmt.Fprintf(sb, "%sCatch(%s)\n", indent, s.CatchVar)
-		for _, st := range s.CatchBody {
-			dumpStmt(sb, st, indent+"  ")
-		}
-
+		dumpBlock(sb, s.CatchBody, indent+"  ")
 	case *DeferStmt:
 		fmt.Fprintf(sb, "%sDefer\n", indent)
-		for _, st := range s.Body {
-			dumpStmt(sb, st, indent+"  ")
-		}
-
+		dumpBlock(sb, s.Body, indent+"  ")
 	case *ReturnStmt:
 		if s.Value != nil {
 			fmt.Fprintf(sb, "%sReturn(%s)\n", indent, FormatExpr(s.Value))
 		} else {
 			fmt.Fprintf(sb, "%sReturn()\n", indent)
 		}
-
 	case *BreakStmt:
 		fmt.Fprintf(sb, "%sBreak\n", indent)
-
 	case *ContinueStmt:
 		fmt.Fprintf(sb, "%sContinue\n", indent)
 	}
@@ -711,28 +658,15 @@ func FormatExpr(expr Expr) string {
 	case *StringLitExpr:
 		return fmt.Sprintf("%q", e.Value)
 	case *BoolLitExpr:
-		if e.Value {
-			return "true"
-		}
-		return "false"
+		return fmt.Sprintf("%v", e.Value)
 	case *ListLitExpr:
-		var parts []string
-		for _, el := range e.Elements {
-			parts = append(parts, FormatExpr(el))
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
+		return "[" + mapJoin(e.Elements, FormatExpr) + "]"
 	case *DictLitExpr:
-		var parts []string
-		for _, ent := range e.Entries {
-			parts = append(parts, fmt.Sprintf("%s: %s", FormatExpr(ent.Key), FormatExpr(ent.Value)))
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		return "{" + mapJoin(e.Entries, func(ent DictEntryExpr) string {
+			return FormatExpr(ent.Key) + ": " + FormatExpr(ent.Value)
+		}) + "}"
 	case *TypedEmptyCtorExpr:
-		var args []string
-		for _, a := range e.Args {
-			args = append(args, FormatExpr(a))
-		}
-		return fmt.Sprintf("%s(%s)", e.Type.String(), strings.Join(args, ", "))
+		return fmt.Sprintf("%s(%s)", e.Type.String(), mapJoin(e.Args, FormatExpr))
 	case *StartJobExpr:
 		return fmt.Sprintf("start job %s", FormatExpr(e.Call))
 	case *UnaryExpr:
@@ -744,25 +678,16 @@ func FormatExpr(expr Expr) string {
 	case *IndexExpr:
 		return fmt.Sprintf("%s[%s]", FormatExpr(e.Target), FormatExpr(e.Index))
 	case *SliceExpr:
-		startStr := ""
+		startStr, endStr := "", ""
 		if e.Start != nil {
 			startStr = FormatExpr(e.Start)
 		}
-		endStr := ""
 		if e.End != nil {
 			endStr = FormatExpr(e.End)
 		}
 		return fmt.Sprintf("%s[%s:%s]", FormatExpr(e.Target), startStr, endStr)
 	case *CallExpr:
-		var args []string
-		for _, a := range e.Args {
-			if a.Name != "" {
-				args = append(args, fmt.Sprintf("%s=%s", a.Name, FormatExpr(a.Value)))
-			} else {
-				args = append(args, FormatExpr(a.Value))
-			}
-		}
-		return fmt.Sprintf("%s(%s)", FormatExpr(e.Callee), strings.Join(args, ", "))
+		return fmt.Sprintf("%s(%s)", FormatExpr(e.Callee), mapJoin(e.Args, FormatExpr))
 	default:
 		return "<unknown-expr>"
 	}

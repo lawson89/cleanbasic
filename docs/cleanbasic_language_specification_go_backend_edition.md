@@ -6,7 +6,7 @@ CleanBasic is a statically typed, procedural systems programming language. It co
 
 The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go pipeline (`cmd/cb` and `internal/...`):
 
-* `internal/token` & `internal/lexer` — Tokenization, two-word keyword coalescing (`else if`, `end fn`), forbidden C-style logical operators (`&&`, `||`, `!`), and lexer-level desugaring of simple `$"..."` string interpolation.
+* `internal/token` & `internal/lexer` — Tokenization, two-word keyword coalescing (`else if`, `end fn`), and forbidden C-style logical operators (`&&`, `||`, `!`).
 
 * `internal/parser` — Recursive-descent parser emitting a flat AST with strict bottom-up type rules.
 
@@ -108,10 +108,9 @@ PrimaryExpr     ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
 TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
 CallArgList     ::= Expr ("," Expr)* [","]
 
-Literal         ::= NumberLiteral | StringLiteral | InterpString
+Literal         ::= NumberLiteral | StringLiteral
                   | "true" | "false"
                   | NonEmptyListLiteral | NonEmptyDictLiteral
-InterpString    ::= '$"' (StringChar | "{{" | "}}" | "{" Expr "}")* '"'
 NonEmptyListLiteral ::= "[" Expr ("," Expr)* [","] "]"
 NonEmptyDictLiteral ::= "{" DictEntry ("," DictEntry)* [","] "}"
 DictEntry       ::= Expr ":" Expr
@@ -185,11 +184,11 @@ fn main() as int
 
     ' Same-module function supports UFCS:
     if hero.isAlive()
-        print($"Hero {hero.name} has {hero.health} HP")
+        print("Hero " & hero.name & " has " & hero.health & " HP")
     end if
 
-    ' Empty collections require explicit type annotation or typed constructor:
-    dim emptyItems as list[str] = []
+    ' Empty collections require typed constructors:
+    dim emptyItems = list[str]()
     dim lookup = dict[str, int]()
     return 0
 end fn
@@ -235,17 +234,15 @@ end fn
 fn startServer()
     try
         dim records = processNetwork()
-        print($"Connected and processed {records} records.")
+        print("Connected and processed " & records & " records.")
     catch e
-        print($"Failed to start server (code={e.code}): {e.msg}")
+        print("Failed to start server (code=" & e.code & "): " & e.msg)
     end try
 end fn
 
 ```
 
-### 4. Full-Expression String Interpolation, `byte`, Slicing, 2-Var Loops & `&`
-
-* **Lexer-Desugared `$"..."`:** String interpolation supports arbitrary CleanBasic expressions inside `{...}` (tracking nested braces and nested string/interpolated literals). The lexer lowers `$"Sum: {a + b}"` into parenthesized `( a + b )` tokens joined with `&` (with leading `"" &` when starting with a placeholder).
+### 4. `byte`, Slicing, 2-Var Loops & `&`
 
 * **Universal `&` Concatenation:** The `&` operator unconditionally coerces operands to strings (lowering to `fmt.Sprint(a) + fmt.Sprint(b)` in Go).
 
@@ -272,7 +269,7 @@ fn demoContainers() as int
     dim aliceScore = scores["alice"]
     select case aliceScore
         case 100
-            print($"Perfect score! Total: {total}")
+            print("Perfect score! Total: " & total)
         case else
             print("Keep trying")
     end select
@@ -332,7 +329,7 @@ Self-recursive (`Node -> Node`) and mutually recursive (`Expr <-> Block`) struct
 
 * Reading an unset recursive field safely returns a zero-initialized value copy (`cbUnbox`).
 * Assigning a recursive field or passing it in a struct constructor copies by value (`cbBox`) to prevent unintended aliasing.
-* Nested field mutations (`node.left.right.val = 99`) and `byref` arguments (`bump(node.left)`) automatically lazy-allocate intermediate nodes (`cbEnsureBox`).
+* Nested field mutations (`node.left.right.val = 99`) automatically lazy-allocate intermediate nodes (`cbEnsureBox`), while `byref` arguments require mutable local variables.
 * Recursive structs cannot be compared directly with raw `==` or `!=`.
 
 ### 8. `go.mod` Passthrough & Persistent Build Workspace

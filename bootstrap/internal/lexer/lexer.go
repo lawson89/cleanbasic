@@ -40,8 +40,7 @@ func New(src string, filename string) *Lexer {
 
 // Tokenize lexes the entire CleanBasic source string into a slice of tokens
 // ending with token.EOF. It performs comment skipping, newline coalescing,
-// C-style logical operator rejection, two-word keyword coalescing, and
-// lexer-level desugaring of $"..." interpolated strings.
+// C-style logical operator rejection, and two-word keyword coalescing.
 func Tokenize(src string, filename string) ([]token.Token, error) {
 	l := New(src, filename)
 	raw, err := l.scanAll()
@@ -148,11 +147,11 @@ func (l *Lexer) scanAll() ([]token.Token, error) {
 			continue
 		}
 
-		nextTokens, err := l.scanNextTokens()
+		tok, err := l.scanNextToken()
 		if err != nil {
 			return nil, err
 		}
-		tokens = append(tokens, nextTokens...)
+		tokens = append(tokens, tok)
 	}
 
 	// Ensure a trailing NEWLINE before EOF if any tokens were emitted and the last token wasn't NEWLINE.
@@ -285,143 +284,8 @@ func (l *Lexer) scanEscapeSequence() (rune, error) {
 	}
 }
 
-// scanInterpString lexes $"..." and desugars it directly into STRING_LIT, AMP (&),
-// and identifier/dot/index path tokens.
-func (l *Lexer) scanInterpString() ([]token.Token, error) {
-	startPos := l.currentPos()
-	l.advance() // consume '$'
-	l.advance() // consume '"'
-
-	type segment struct {
-		isLiteral bool
-		litText   string
-		litPos    token.Position
-		exprToks  []token.Token
-	}
-
-	var segments []segment
-	var litBuilder strings.Builder
-	litPos := startPos
-
-	flushLiteral := func(force bool) {
-		if litBuilder.Len() > 0 || force {
-			segments = append(segments, segment{
-				isLiteral: true,
-				litText:   litBuilder.String(),
-				litPos:    litPos,
-			})
-			litBuilder.Reset()
-		}
-	}
-
-	for l.pos < len(l.src) {
-		ch := l.peek()
-		if ch == '"' {
-			l.advance() // consume closing '"'
-			flushLiteral(len(segments) == 0)
-
-			var out []token.Token
-			for i, seg := range segments {
-				if i > 0 {
-					ampPos := seg.litPos
-					if !seg.isLiteral && len(seg.exprToks) > 0 {
-						ampPos = seg.exprToks[0].Pos
-					}
-					out = append(out, token.Token{
-						Kind:   token.AMP,
-						Lexeme: "&",
-						Pos:    ampPos,
-					})
-				} else if !seg.isLiteral {
-					// Ensure an interpolated string starting with "{x}" begins with "" & x
-					// so the & operator always coerces x to a string even when there's only 1 placeholder.
-					out = append(out,
-						token.Token{Kind: token.STRING_LIT, Lexeme: "", Pos: startPos},
-						token.Token{Kind: token.AMP, Lexeme: "&", Pos: startPos},
-					)
-				}
-
-				if seg.isLiteral {
-					out = append(out, token.Token{
-						Kind:   token.STRING_LIT,
-						Lexeme: seg.litText,
-						Pos:    seg.litPos,
-					})
-				} else {
-					out = append(out, seg.exprToks...)
-				}
-			}
-			return out, nil
-		}
-
-		if ch == '\n' || ch == '\r' {
-			return nil, &LexError{
-				Pos:     startPos,
-				Message: "unterminated interpolated string literal",
-			}
-		}
-
-		if ch == '\\' {
-			esc, err := l.scanEscapeSequence()
-			if err != nil {
-				return nil, err
-			}
-			litBuilder.WriteRune(esc)
-			continue
-		}
-
-		// Escaped "{{" -> literal "{"
-		if ch == '{' && l.peekNext() == '{' {
-			l.advance()
-			l.advance()
-			litBuilder.WriteRune('{')
-			continue
-		}
-
-		// Escaped "}}" -> literal "}"
-		if ch == '}' && l.peekNext() == '}' {
-			l.advance()
-			l.advance()
-			litBuilder.WriteRune('}')
-			continue
-		}
-
-		// Unescaped "}" without matching "{"
-		if ch == '}' {
-			return nil, &LexError{
-				Pos:     l.currentPos(),
-				Message: "unescaped '}' in interpolated string (use '}}' for a literal brace)",
-			}
-		}
-
-		// Start of "{...}" placeholder
-		if ch == '{' {
-			bracePos := l.currentPos()
-			l.advance() // consume '{'
-			flushLiteral(false)
-
-			exprToks, err := l.scanInterpPlaceholder(bracePos)
-			if err != nil {
-				return nil, err
-			}
-			segments = append(segments, segment{
-				isLiteral: false,
-				exprToks:  exprToks,
-			})
-			litPos = l.currentPos()
-			continue
-		}
-
-		litBuilder.WriteRune(l.advance())
-	}
-
-	return nil, &LexError{
-		Pos:     startPos,
-		Message: "unterminated interpolated string literal",
-	}
-}
-
 func (l *Lexer) isRestOfLineEmptyOrComment() bool {
+
 	savedPos := l.pos
 	savedLine := l.line
 	savedCol := l.col
@@ -499,214 +363,70 @@ func isEndGoDirective(trimmed string) bool {
 	return len(afterGo) == 0 || afterGo[0] == 39 || afterGo[0] == '#'
 }
 
-func (l *Lexer) scanNextTokens() ([]token.Token, error) {
+func (l *Lexer) scanNextToken() (token.Token, error) {
 	ch := l.peek()
-
-	// Handle interpolated string $"..."
-	if ch == '$' && l.peekNext() == '"' {
-		return l.scanInterpString()
-	}
-
-	// Handle regular string literal "..."
 	if ch == '"' {
-		tok, err := l.scanString()
-		if err != nil {
-			return nil, err
-		}
-		return []token.Token{tok}, nil
+		return l.scanString()
 	}
-
-	// Handle numbers
 	if isDigit(ch) {
-		tok, err := l.scanNumber()
-		if err != nil {
-			return nil, err
-		}
-		return []token.Token{tok}, nil
+		return l.scanNumber()
 	}
-
-	// Handle identifiers and keywords
 	if isIdentStart(ch) {
-		return []token.Token{l.scanIdentifier()}, nil
+		return l.scanIdentifier(), nil
 	}
 
-	// Handle operators and punctuation
 	startPos := l.currentPos()
 	switch ch {
 	case '&':
 		if l.peekNext() == '&' {
-			return nil, &LexError{
-				Pos:     startPos,
-				Message: "C-style logical operator '&&' is forbidden in CleanBasic; use 'and' instead",
-			}
+			return token.Token{}, &LexError{Pos: startPos, Message: "C-style logical operator '&&' is forbidden in CleanBasic; use 'and' instead"}
 		}
 		l.advance()
-		return []token.Token{{Kind: token.AMP, Lexeme: "&", Pos: startPos}}, nil
-
+		return token.Token{Kind: token.AMP, Lexeme: "&", Pos: startPos}, nil
 	case '|':
 		if l.peekNext() == '|' {
-			return nil, &LexError{
-				Pos:     startPos,
-				Message: "C-style logical operator '||' is forbidden in CleanBasic; use 'or' instead",
-			}
+			return token.Token{}, &LexError{Pos: startPos, Message: "C-style logical operator '||' is forbidden in CleanBasic; use 'or' instead"}
 		}
-		return nil, &LexError{
-			Pos:     startPos,
-			Message: fmt.Sprintf("unexpected character %q", ch),
-		}
-
+		return token.Token{}, &LexError{Pos: startPos, Message: fmt.Sprintf("unexpected character %q", ch)}
 	case '!':
 		if l.peekNext() == '=' {
 			l.advance()
 			l.advance()
-			return []token.Token{{Kind: token.NEQ, Lexeme: "!=", Pos: startPos}}, nil
+			return token.Token{Kind: token.NEQ, Lexeme: "!=", Pos: startPos}, nil
 		}
-		return nil, &LexError{
-			Pos:     startPos,
-			Message: "C-style logical operator '!' is forbidden in CleanBasic; use 'not' instead",
-		}
-
+		return token.Token{}, &LexError{Pos: startPos, Message: "C-style logical operator '!' is forbidden in CleanBasic; use 'not' instead"}
 	case '=':
 		l.advance()
 		if l.peek() == '=' {
 			l.advance()
-			return []token.Token{{Kind: token.EQ, Lexeme: "==", Pos: startPos}}, nil
+			return token.Token{Kind: token.EQ, Lexeme: "==", Pos: startPos}, nil
 		}
-		return []token.Token{{Kind: token.ASSIGN, Lexeme: "=", Pos: startPos}}, nil
-
+		return token.Token{Kind: token.ASSIGN, Lexeme: "=", Pos: startPos}, nil
 	case '<':
 		l.advance()
 		if l.peek() == '=' {
 			l.advance()
-			return []token.Token{{Kind: token.LTE, Lexeme: "<=", Pos: startPos}}, nil
+			return token.Token{Kind: token.LTE, Lexeme: "<=", Pos: startPos}, nil
 		}
-		return []token.Token{{Kind: token.LT, Lexeme: "<", Pos: startPos}}, nil
-
+		return token.Token{Kind: token.LT, Lexeme: "<", Pos: startPos}, nil
 	case '>':
 		l.advance()
 		if l.peek() == '=' {
 			l.advance()
-			return []token.Token{{Kind: token.GTE, Lexeme: ">=", Pos: startPos}}, nil
+			return token.Token{Kind: token.GTE, Lexeme: ">=", Pos: startPos}, nil
 		}
-		return []token.Token{{Kind: token.GT, Lexeme: ">", Pos: startPos}}, nil
-
-	case '+':
+		return token.Token{Kind: token.GT, Lexeme: ">", Pos: startPos}, nil
+	case '+', '-', '*', '/', '%', '.', ',', ':', '(', ')', '[', ']', '{', '}':
 		l.advance()
-		return []token.Token{{Kind: token.PLUS, Lexeme: "+", Pos: startPos}}, nil
-	case '-':
-		l.advance()
-		return []token.Token{{Kind: token.MINUS, Lexeme: "-", Pos: startPos}}, nil
-	case '*':
-		l.advance()
-		return []token.Token{{Kind: token.STAR, Lexeme: "*", Pos: startPos}}, nil
-	case '/':
-		l.advance()
-		return []token.Token{{Kind: token.SLASH, Lexeme: "/", Pos: startPos}}, nil
-	case '%':
-		l.advance()
-		return []token.Token{{Kind: token.PERCENT, Lexeme: "%", Pos: startPos}}, nil
-	case '.':
-		l.advance()
-		return []token.Token{{Kind: token.DOT, Lexeme: ".", Pos: startPos}}, nil
-	case ',':
-		l.advance()
-		return []token.Token{{Kind: token.COMMA, Lexeme: ",", Pos: startPos}}, nil
-	case ':':
-		l.advance()
-		return []token.Token{{Kind: token.COLON, Lexeme: ":", Pos: startPos}}, nil
-	case '(':
-		l.advance()
-		return []token.Token{{Kind: token.LPAREN, Lexeme: "(", Pos: startPos}}, nil
-	case ')':
-		l.advance()
-		return []token.Token{{Kind: token.RPAREN, Lexeme: ")", Pos: startPos}}, nil
-	case '[':
-		l.advance()
-		return []token.Token{{Kind: token.LBRACKET, Lexeme: "[", Pos: startPos}}, nil
-	case ']':
-		l.advance()
-		return []token.Token{{Kind: token.RBRACKET, Lexeme: "]", Pos: startPos}}, nil
-	case '{':
-		l.advance()
-		return []token.Token{{Kind: token.LBRACE, Lexeme: "{", Pos: startPos}}, nil
-	case '}':
-		l.advance()
-		return []token.Token{{Kind: token.RBRACE, Lexeme: "}", Pos: startPos}}, nil
-
+		kinds := map[rune]token.Kind{
+			'+': token.PLUS, '-': token.MINUS, '*': token.STAR, '/': token.SLASH,
+			'%': token.PERCENT, '.': token.DOT, ',': token.COMMA, ':': token.COLON,
+			'(': token.LPAREN, ')': token.RPAREN, '[': token.LBRACKET, ']': token.RBRACKET,
+			'{': token.LBRACE, '}': token.RBRACE,
+		}
+		return token.Token{Kind: kinds[ch], Lexeme: string(ch), Pos: startPos}, nil
 	default:
-		return nil, &LexError{
-			Pos:     startPos,
-			Message: fmt.Sprintf("unexpected character %q", ch),
-		}
-	}
-}
-
-func (l *Lexer) scanInterpPlaceholder(openBracePos token.Position) ([]token.Token, error) {
-	l.skipHorizontalWhitespace()
-	if l.pos >= len(l.src) || l.peek() == '\n' || l.peek() == '\r' {
-		return nil, &LexError{
-			Pos:     openBracePos,
-			Message: "unterminated '{' in interpolated string",
-		}
-	}
-	if l.peek() == '}' {
-		return nil, &LexError{
-			Pos:     openBracePos,
-			Message: "empty '{}' placeholder in interpolated string",
-		}
-	}
-
-	var exprToks []token.Token
-	depth := 1
-	for l.pos < len(l.src) {
-		l.skipHorizontalWhitespace()
-		if l.pos >= len(l.src) || l.peek() == '\n' || l.peek() == '\r' {
-			return nil, &LexError{
-				Pos:     openBracePos,
-				Message: "unterminated '{' in interpolated string",
-			}
-		}
-
-		ch := l.peek()
-		if ch == '}' {
-			closePos := l.currentPos()
-			l.advance()
-			depth--
-			if depth == 0 {
-				if len(exprToks) == 0 {
-					return nil, &LexError{
-						Pos:     openBracePos,
-						Message: "empty '{}' placeholder in interpolated string",
-					}
-				}
-				wrapped := make([]token.Token, 0, len(exprToks)+2)
-				wrapped = append(wrapped, token.Token{Kind: token.LPAREN, Lexeme: "(", Pos: openBracePos})
-				wrapped = append(wrapped, exprToks...)
-				wrapped = append(wrapped, token.Token{Kind: token.RPAREN, Lexeme: ")", Pos: closePos})
-				return wrapped, nil
-			}
-			exprToks = append(exprToks, token.Token{Kind: token.RBRACE, Lexeme: "}", Pos: closePos})
-			continue
-		}
-
-		if ch == '{' {
-			bracePos := l.currentPos()
-			l.advance()
-			depth++
-			exprToks = append(exprToks, token.Token{Kind: token.LBRACE, Lexeme: "{", Pos: bracePos})
-			continue
-		}
-
-		nextToks, err := l.scanNextTokens()
-		if err != nil {
-			return nil, err
-		}
-		exprToks = append(exprToks, nextToks...)
-	}
-
-	return nil, &LexError{
-		Pos:     openBracePos,
-		Message: "unterminated '{' in interpolated string",
+		return token.Token{}, &LexError{Pos: startPos, Message: fmt.Sprintf("unexpected character %q", ch)}
 	}
 }
 

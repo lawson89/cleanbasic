@@ -89,311 +89,29 @@ func TestSemanticErrors(t *testing.T) {
 		src     string
 		wantErr string
 	}{
-		{
-			name: "reassign local const",
-			src: `
-fn main() as int
-    const x = 10
-    x = 20
-    return 0
-end fn
-`,
-			wantErr: `test.cb:4:5: semantic error: cannot reassign constant "x"`,
-		},
-		{
-			name: "reassign top-level const",
-			src: `
-const MAX_LIMIT = 50
-fn main() as int
-    MAX_LIMIT = 60
-    return 0
-end fn
-`,
-			wantErr: `test.cb:4:5: semantic error: cannot reassign constant "MAX_LIMIT"`,
-		},
-		{
-			name: "call undefined function",
-			src: `
-fn main() as int
-    dim x = unknownFunc(1, 2)
-    return x
-end fn
-`,
-			wantErr: `test.cb:3:13: semantic error: undefined function "unknownFunc"`,
-		},
-		{
-			name: "return wrong type",
-			src: `
-fn getCount() as int
-    return "not an int"
-end fn
-fn main() as int
-    return getCount()
-end fn
-`,
-			wantErr: `test.cb:3:5: semantic error: return type mismatch in function "getCount": expected int, got str`,
-		},
-		{
-			name: "missing return statement",
-			src: `
-fn getCount(x as int) as int
-    if x > 0
-        return x
-    end if
-end fn
-`,
-			wantErr: `missing a return statement on all control paths`,
-		},
-		{
-			name: "binary operator type mismatch",
-			src: `
-fn main() as int
-    dim x = 10 + 2.5
-    return 0
-end fn
-`,
-			wantErr: `type mismatch for operator "+": int and float`,
-		},
-		{
-			name: "if condition not bool",
-			src: `
-fn main() as int
-    if 123
-        return 1
-    end if
-    return 0
-end fn
-`,
-			wantErr: `if condition must be bool, got int`,
-		},
-		{
-			name: "function argument type mismatch",
-			src: `
-fn add(a as int, b as int) as int
-    return a + b
-end fn
-fn main() as int
-    return add(1, "two")
-end fn
-`,
-			wantErr: `argument 2 ("b") to function "add" has type str, expected int`,
-		},
-		{
-			name: "break outside loop",
-			src: `
-fn main() as int
-    break
-    return 0
-end fn
-`,
-			wantErr: `break statement is not inside a loop`,
-		},
-		{
-			name: "pass const to byref parameter",
-			src: `
-fn inc(byref x as int)
-    x = x + 1
-end fn
-fn main() as int
-    const c = 10
-    inc(c)
-    return 0
-end fn
-`,
-			wantErr: `cannot pass constant "c" to byref parameter`,
-		},
-		{
-			name: "pass literal to byref UFCS method",
-			src: `
-type Box
-    v as int
-end type
-fn bump(byref b as Box)
-    b.v = b.v + 1
-end fn
-fn main() as int
-    Box(1).bump()
-    return 0
-end fn
-`,
-			wantErr: `target expression is not mutable`,
-		},
-		{
-			name: "mutate field of const struct",
-			src: `
-type Box
-    v as int
-end type
-fn main() as int
-    const b = Box(1)
-    b.v = 2
-    return 0
-end fn
-`,
-			wantErr: `cannot mutate constant "b"`,
-		},
-		{
-			name: "untyped empty list literal",
-			src: `
-fn main() as int
-    dim xs = []
-    return 0
-end fn
-`,
-			wantErr: `cannot infer type of empty list literal []`,
-		},
-		{
-			name: "untyped empty dict literal",
-			src: `
-fn main() as int
-    dim d = {}
-    return 0
-end fn
-`,
-			wantErr: `cannot infer type of empty dict literal {}`,
-		},
-		{
-			name: "unknown named field in struct constructor",
-			src: `
-type Box
-    v as int
-end type
-fn main() as int
-    dim b = Box(nope=1)
-    return 0
-end fn
-`,
-			wantErr: `struct "Box" has no field "nope"`,
-		},
-		{
-			name: "non-existent enum variant",
-			src: `
-enum Color
-    Red
-    Blue
-end enum
-fn main() as int
-    dim c = Color.Green
-    return 0
-end fn
-`,
-			wantErr: `enum "Color" has no variant "Green"`,
-		},
-
-		{
-			name: "invalid select case pattern type",
-			src: `
-fn main() as int
-    dim x = 1
-    select case x
-        case "one"
-            print(1)
-    end select
-    return 0
-end fn
-`,
-			wantErr: `case pattern type str does not match select expression type int`,
-		},
-		{
-			name: "call can error function outside try in non-fallible function",
-			src: `
-fn risky() as int can error
-    return 1
-end fn
-fn main() as int
-    dim x = risky()
-    return x
-end fn
-`,
-			wantErr: `call to 'can error' function "risky" must be inside a 'try' block or a 'can error' function`,
-		},
-		{
-			name: "call error() outside try in non-fallible function",
-			src: `
-fn main() as int
-    error("boom")
-    return 0
-end fn
-`,
-			wantErr: `error() can only be called inside a 'can error' function or a 'try' block`,
-		},
-		{
-			name: "return inside defer block",
-			src: `
-fn main() as int
-    defer
-        return 1
-    end defer
-    return 0
-end fn
-`,
-			wantErr: `return statement is not allowed inside a defer block`,
-		},
-		{
-			name: "unhandled fallible call inside defer block",
-			src: `
-fn cleanup() can error
-    error("cleanup failed")
-end fn
-fn helper() can error
-    defer
-        cleanup()
-    end defer
-end fn
-fn main() as int
-    try
-        helper()
-    catch e
-        print(e.msg)
-    end try
-    return 0
-end fn
-`,
-			wantErr: `call to 'can error' function "cleanup" must be inside a 'try' block or a 'can error' function`,
-		},
-		{
-			name: "main cannot be declared can error",
-			src: `
-fn main() as int can error
-    return 0
-end fn
-`,
-			wantErr: `function "main" cannot be declared 'can error'`,
-		},
-		{
-			name: "mutate catch error binding",
-			src: `
-fn risky() can error
-    error("fail")
-end fn
-fn main() as int
-    try
-        risky()
-    catch e
-        e.msg = "mutated"
-    end try
-    return 0
-end fn
-`,
-			wantErr: `cannot mutate constant "e"`,
-		},
-		{
-			name: "access invalid field on err",
-			src: `
-fn risky() can error
-    error("fail")
-end fn
-fn main() as int
-    try
-        risky()
-    catch e
-        print(e.nope)
-    end try
-    return 0
-end fn
-`,
-			wantErr: `err type has no field "nope"`,
-		},
+		{"reassign local const", "\nfn main() as int\n    const x = 10\n    x = 20\n    return 0\nend fn\n", `test.cb:4:5: semantic error: cannot reassign constant "x"`},
+		{"reassign top-level const", "\nconst MAX_LIMIT = 50\nfn main() as int\n    MAX_LIMIT = 60\n    return 0\nend fn\n", `test.cb:4:5: semantic error: cannot reassign constant "MAX_LIMIT"`},
+		{"call undefined function", "\nfn main() as int\n    dim x = unknownFunc(1, 2)\n    return x\nend fn\n", `test.cb:3:13: semantic error: undefined function "unknownFunc"`},
+		{"return wrong type", "\nfn getCount() as int\n    return \"not an int\"\nend fn\nfn main() as int\n    return getCount()\nend fn\n", `test.cb:3:5: semantic error: return type mismatch in function "getCount": expected int, got str`},
+		{"missing return statement", "fn getCount(x as int) as int\n    if x > 0\n        return x\n    end if\nend fn\n", "missing a return statement on all control paths"},
+		{"binary operator type mismatch", "fn main() as int\n    dim x = 10 + 2.5\n    return 0\nend fn\n", `type mismatch for operator "+": int and float`},
+		{"if condition not bool", "fn main() as int\n    if 123\n        return 1\n    end if\n    return 0\nend fn\n", "if condition must be bool, got int"},
+		{"function argument type mismatch", "fn add(a as int, b as int) as int\n    return a + b\nend fn\nfn main() as int\n    return add(1, \"two\")\nend fn\n", `argument 2 ("b") to function "add" has type str, expected int`},
+		{"break outside loop", "fn main() as int\n    break\n    return 0\nend fn\n", "break statement is not inside a loop"},
+		{"pass const to byref parameter", "fn inc(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    const c = 10\n    inc(c)\n    return 0\nend fn\n", `cannot mutate constant "c"`},
+		{"pass literal to byref UFCS method", "type Box\n    v as int\nend type\nfn bump(byref b as Box)\n    b.v = b.v + 1\nend fn\nfn main() as int\n    Box(1).bump()\n    return 0\nend fn\n", "target expression is not mutable"},
+		{"mutate field of const struct", "type Box\n    v as int\nend type\nfn main() as int\n    const b = Box(1)\n    b.v = 2\n    return 0\nend fn\n", `cannot mutate constant "b"`},
+		{"nested fallible call rejected", "fn f() as int can error\n    return 1\nend fn\nfn g() as int can error\n    dim x = 1 + f()\n    return x\nend fn\n", "may only appear as a top-level statement expression"},
+		{"non-ident byref argument rejected", "type Box\n    v as int\nend type\nfn bump(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    dim b = Box(1)\n    bump(b.v)\n    return 0\nend fn\n", "must be a mutable variable"},
+		{"non-existent enum variant", "enum Color\n    Red\n    Blue\nend enum\nfn main() as int\n    dim c = Color.Green\n    return 0\nend fn\n", `enum "Color" has no variant "Green"`},
+		{"invalid select case pattern type", "fn main() as int\n    dim x = 1\n    select case x\n        case \"one\"\n            print(1)\n    end select\n    return 0\nend fn\n", "case pattern type str does not match select expression type int"},
+		{"call can error function outside try in non-fallible function", "fn risky() as int can error\n    return 1\nend fn\nfn main() as int\n    dim x = risky()\n    return x\nend fn\n", `call to 'can error' function "risky" must be inside a 'try' block or a 'can error' function`},
+		{"call error() outside try in non-fallible function", "fn main() as int\n    error(\"boom\")\n    return 0\nend fn\n", "error() can only be called inside a 'can error' function or a 'try' block"},
+		{"return inside defer block", "fn main() as int\n    defer\n        return 1\n    end defer\n    return 0\nend fn\n", "return statement is not allowed inside a defer block"},
+		{"unhandled fallible call inside defer block", "fn cleanup() can error\n    error(\"cleanup failed\")\nend fn\nfn helper() can error\n    defer\n        cleanup()\n    end defer\nend fn\nfn main() as int\n    try\n        helper()\n    catch e\n        print(e.msg)\n    end try\n    return 0\nend fn\n", `call to 'can error' function "cleanup" must be inside a 'try' block or a 'can error' function`},
+		{"main cannot be declared can error", "fn main() as int can error\n    return 0\nend fn\n", `function "main" cannot be declared 'can error'`},
+		{"mutate catch error binding", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        e.msg = \"mutated\"\n    end try\n    return 0\nend fn\n", `cannot mutate constant "e"`},
+		{"access invalid field on err", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        print(e.nope)\n    end try\n    return 0\nend fn\n", `err type has no field "nope"`},
 	}
 
 	for _, tc := range tests {
@@ -707,16 +425,6 @@ func TestReviewRegressionSema(t *testing.T) {
 			src:     "fn main() as int\n    for i = 1 to 10 step 0\n        print(i)\n    end for\n    return 0\nend fn\n",
 			wantErr: "for loop step cannot be 0",
 		},
-		{
-			name:    "named arg on print rejected",
-			src:     "fn main() as int\n    print(msg=\"hi\")\n    return 0\nend fn\n",
-			wantErr: "does not support named arguments",
-		},
-		{
-			name:    "named arg on positional method rejected",
-			src:     "fn main() as int\n    dim ok = \"hello\".contains(sub=\"ell\")\n    return 0\nend fn\n",
-			wantErr: "does not support named arguments",
-		},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -847,8 +555,8 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			"    next as Node",
 			"end type",
 			"fn main()",
-			"    dim a = Node(val=1)",
-			"    dim b = Node(val=2)",
+			"    dim a = Node()",
+			"    dim b = Node()",
 			"    dim eq = (a == b)",
 			"end fn",
 		}, "\n")
@@ -868,7 +576,7 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			"    expr as Expr",
 			"end type",
 			"fn main()",
-			"    dim e = Expr(val=1)",
+			"    dim e = Expr()",
 			"end fn",
 		}, "\n")
 		prog, err := AnalyzeSource(src, "mutual.cb")

@@ -153,7 +153,7 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 	src := strings.Join([]string{
 		"fn mightFail(n as int) as int can error",
 		"    if n < 0",
-		fmt.Sprintf("        error(%q, code=n)", "negative"),
+		fmt.Sprintf("        error(%q, n)", "negative"),
 		"    end if",
 		"    return n * 10",
 		"end fn",
@@ -167,9 +167,10 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		"end fn",
 		"",
 		"fn checkElseIf(n as int) as int can error",
+		"    dim v = mightFail(n)",
 		"    if n == 0",
 		"        return 0",
-		"    else if mightFail(n) > 20",
+		"    else if v > 20",
 		"        return 1",
 		"    else",
 		"        return 2",
@@ -179,14 +180,16 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		"fn loopAndSelect(limit as int) as int can error",
 		"    dim sum = 0",
 		"    dim i = 1",
-		"    while mightFail(i) <= limit * 10",
+		"    while i <= limit",
 		"        sum = sum + i",
 		"        i = i + 1",
 		"    end while",
-		"    for j = 1 to mightFail(1) / 5",
+		"    dim lim = mightFail(1)",
+		"    for j = 1 to lim / 5",
 		"        sum = sum + j",
 		"    end for",
-		"    select case mightFail(2)",
+		"    dim sel = mightFail(2)",
+		"    select case sel",
 		"        case 20",
 		"            sum = sum + 100",
 		"        case else",
@@ -199,11 +202,16 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		"    print(nonVoidEndingInTry(3))",
 		"    print(nonVoidEndingInTry(-7))",
 		"    try",
-		"        print(checkElseIf(0))",
-		"        print(checkElseIf(3))",
-		"        print(checkElseIf(1))",
-		"        print(loopAndSelect(2))",
-		"        print(checkElseIf(-1))",
+		"        dim c0 = checkElseIf(0)",
+		"        print(c0)",
+		"        dim c3 = checkElseIf(3)",
+		"        print(c3)",
+		"        dim c1 = checkElseIf(1)",
+		"        print(c1)",
+		"        dim ls = loopAndSelect(2)",
+		"        print(ls)",
+		"        dim cNeg = checkElseIf(-1)",
+		"        print(cNeg)",
 		"    catch e",
 		"        print(e.msg)",
 		"        print(e.code)",
@@ -334,7 +342,8 @@ fn main()
 
 		dim re = regex.compile("[0-9]+")
 		print(re.isMatch("ab12cd") & ":" & re.find("ab12cd34") & ":" & str.join(re.findAll("ab12cd34"), ",") & ":" & re.replaceAll("ab12cd34", "X"))
-		print(regex.match("^foo", "foobar"))
+		dim m = regex.match("^foo", "foobar")
+		print(m)
 	catch e
 		print("err:" & e.msg)
 	end try
@@ -418,19 +427,16 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"end fn",
 		"",
 		"fn main() as int",
-		"    try",
-		"        if false and boom()",
-		`            print("bad1")`,
-		"        else",
-		`            print("sc-and-ok")`,
-		"        end if",
-		"        if true or boom()",
-		`            print("sc-or-ok")`,
-		"        end if",
-		"    catch e",
-		`        print("unexpected-err:" & e.msg)`,
-		"    end try",
-		"",
+		"    dim scCalls = 0",
+		"    if false and (countCall(scCalls, 1) > 0)",
+		`        print("bad1")`,
+		"    else",
+		`        print("sc-and-ok")`,
+		"    end if",
+		"    if true or (countCall(scCalls, 1) > 0)",
+		`        print("sc-or-ok")`,
+		"    end if",
+
 		"    dim endCalls = 0",
 		"    dim stepCalls = 0",
 		"    dim sum = 0",
@@ -439,7 +445,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"    end for",
 		`    print(sum & ":" & endCalls & ":" & stepCalls)`,
 		"",
-		`    dim u = User(name="Ada", func=7)`,
+		`    dim u = User("Ada", 7)`,
 		"    print(json.stringify(u))",
 		"    try",
 		`        dim jv = json.parse("{\"k\":1}")`,
@@ -532,7 +538,8 @@ func TestEmitConcurrencyAndBoxedRecursiveStructs(t *testing.T) {
 		"end fn",
 		"",
 		"fn main()",
-		"    dim n = Node(val=10)",
+		"    dim n = Node()",
+		"    n.val = 10",
 		"    n.next.val = 20",
 		"    dim box = mailbox[int](4)",
 		"    dim j = start job worker(box)",
@@ -569,8 +576,10 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 		"    return x",
 		"end fn",
 		"fn runCase() can error",
-		"    dim box = mailbox[int](getCap())",
-		"    dim ok = true and (start job worker(getCap())).isDone()",
+		"    dim cap = getCap()",
+		"    dim box = mailbox[int](cap)",
+		"    dim j = start job worker(cap)",
+		"    dim ok = true and j.isDone()",
 		"    print(box.count(), ok)",
 		"end fn",
 		"fn main() as int",
@@ -590,10 +599,7 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	if !strings.Contains(goCode, "cbNewMailbox[int64](_val_1)") {
-		t.Errorf("expected lifted cap variable in cbNewMailbox, got:\n%s", goCode)
-	}
-	if !strings.Contains(goCode, "if _cbCond_") {
-		t.Errorf("expected short-circuiting _cbCond_ lift for StartJobExpr in binary expr, got:\n%s", goCode)
+	if !strings.Contains(goCode, "cbNewMailbox[int64](cap") {
+		t.Errorf("expected cap variable in cbNewMailbox, got:\n%s", goCode)
 	}
 }

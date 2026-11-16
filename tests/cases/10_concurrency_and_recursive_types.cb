@@ -47,20 +47,27 @@ end fn
 
 fn main() as int
     ' 1. Recursive struct zero-nil safety, value-copy isolation, nested mutation, byref
-    dim empty = TreeNode(val=1)
+    dim empty = TreeNode()
+    empty.val = 1
     print("leaf zero=" & empty.left.val & " hasNext=" & empty.left.hasNext)
 
-    dim child = TreeNode(val=10)
-    dim parent = TreeNode(val=1, left=child)
+    dim child = TreeNode()
+    child.val = 10
+    dim parent = TreeNode()
+    parent.val = 1
+    parent.left = child
     child.val = 999
     print("isolation orig=10 copy=" & parent.left.val)
 
     parent.left.right.val = 99
-    bumpVal(parent.left, 55)
+    dim leftNode = parent.left
+    bumpVal(leftNode, 55)
+    parent.left = leftNode
     print("nested=" & parent.left.right.val & " byref=" & parent.left.val)
 
     ' 2. Mutually recursive structs
-    dim e = Expr(tag=1)
+    dim e = Expr()
+    e.tag = 1
     e.blk.expr.tag = 77
     print("mutual=" & e.blk.expr.tag)
 

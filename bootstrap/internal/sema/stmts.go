@@ -102,7 +102,7 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 	case *ast.Assignment:
 		return a.analyzeAssignment(s, scope)
 	case *ast.ExprStmt:
-		_, err := a.inferExpr(s.Expr, scope)
+		_, err := a.inferRootExpr(s.Expr, scope)
 		return err
 	case *ast.IfStmt:
 		return a.analyzeIfStmt(s, scope)
@@ -133,41 +133,31 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 	}
 }
 
+func (a *analyzer) inferRootExpr(expr ast.Expr, scope *Scope) (Type, error) {
+	prev := a.allowedFallibleExpr
+	a.allowedFallibleExpr = expr
+	defer func() { a.allowedFallibleExpr = prev }()
+	return a.inferExpr(expr, scope)
+}
+
 func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
-	var finalType Type
+	valType, err := a.inferRootExpr(s.Value, scope)
+	if err != nil {
+		return err
+	}
+	if valType.IsVoid() {
+		return newSemaError(s.Pos, "cannot initialize variable %q with void expression", s.Name)
+	}
+	finalType := valType
 	if s.Type != nil {
 		declaredType, err := a.resolveTypeExpr(*s.Type)
 		if err != nil {
 			return err
 		}
-		if listLit, ok := s.Value.(*ast.ListLitExpr); ok && len(listLit.Elements) == 0 && declaredType.Kind == KindList {
-			a.prog.ExprTypes[listLit] = declaredType
-			finalType = declaredType
-		} else if dictLit, ok := s.Value.(*ast.DictLitExpr); ok && len(dictLit.Entries) == 0 && declaredType.Kind == KindDict {
-			a.prog.ExprTypes[dictLit] = declaredType
-			finalType = declaredType
-		} else {
-			valType, err := a.inferExpr(s.Value, scope)
-			if err != nil {
-				return err
-			}
-			if valType.IsVoid() {
-				return newSemaError(s.Pos, "cannot initialize variable %q with void expression", s.Name)
-			}
-			if !declaredType.Equals(valType) {
-				return newSemaError(s.Pos, "type mismatch in declaration of %q: expected %s, got %s", s.Name, declaredType.String(), valType.String())
-			}
-			finalType = declaredType
+		if !declaredType.Equals(valType) {
+			return newSemaError(s.Pos, "type mismatch in declaration of %q: expected %s, got %s", s.Name, declaredType.String(), valType.String())
 		}
-	} else {
-		valType, err := a.inferExpr(s.Value, scope)
-		if err != nil {
-			return err
-		}
-		if valType.IsVoid() {
-			return newSemaError(s.Pos, "cannot initialize variable %q with void expression", s.Name)
-		}
-		finalType = valType
+		finalType = declaredType
 	}
 
 	sym := &VarSymbol{
@@ -215,7 +205,7 @@ func (a *analyzer) checkMutableTarget(expr ast.Expr, scope *Scope) error {
 }
 
 func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
-	valType, err := a.inferExpr(s.Value, scope)
+	valType, err := a.inferRootExpr(s.Value, scope)
 	if err != nil {
 		return err
 	}
@@ -603,7 +593,7 @@ func (a *analyzer) analyzeReturnStmt(s *ast.ReturnStmt, scope *Scope) error {
 		return newSemaError(s.Pos, "function %q expects return value of type %s, got empty return", a.currentFn.Name, expected.String())
 	}
 
-	valType, err := a.inferExpr(s.Value, scope)
+	valType, err := a.inferRootExpr(s.Value, scope)
 	if err != nil {
 		return err
 	}

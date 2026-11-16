@@ -7,7 +7,7 @@ end type
 
 fn connect(ip as str) as Connection can error
     if ip == ""
-        error("IP cannot be empty", code=408)
+        error("IP cannot be empty", 408)
     end if
     return Connection(1)
 end fn
@@ -23,7 +23,7 @@ fn processNetwork(ip as str) as int can error
     end defer
 
     if ip == "bad-route"
-        error("Routing failed", code=500)
+        error("Routing failed", 500)
     end if
 
     return 100
@@ -34,7 +34,7 @@ fn main() as int
         dim v1 = processNetwork("")
         print("unreachable: ", v1)
     catch e
-        print($"caught expected error (code={e.code}): {e.msg}")
+        print("caught expected error (code=" & e.code & "): " & e.msg)
     end try
 
     try

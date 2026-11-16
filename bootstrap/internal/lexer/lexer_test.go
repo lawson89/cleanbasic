@@ -133,73 +133,7 @@ func TestCommentsAndNewlineCoalescing(t *testing.T) {
 	}
 }
 
-func TestInterpolatedStringDesugaring(t *testing.T) {
-	src := `print($"Hello {user.name}, score={{100}} and {parts[2]}!")
-`
-	toks, err := Tokenize(src, "interp.cb")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Expected sequence:
-	// IDENT("print") (
-	//   STRING_LIT("Hello ") & ( IDENT("user") . IDENT("name") ) & STRING_LIT(", score={100} and ") & ( IDENT("parts") [ INT_LIT("2") ] ) & STRING_LIT("!")
-	// ) NEWLINE EOF
-	wantKinds := []token.Kind{
-		token.IDENT, token.LPAREN,
-		token.STRING_LIT,
-		token.AMP, token.LPAREN, token.IDENT, token.DOT, token.IDENT, token.RPAREN,
-		token.AMP, token.STRING_LIT,
-		token.AMP, token.LPAREN, token.IDENT, token.LBRACKET, token.INT_LIT, token.RBRACKET, token.RPAREN,
-		token.AMP, token.STRING_LIT,
-		token.RPAREN, token.NEWLINE, token.EOF,
-	}
-
-	if len(toks) != len(wantKinds) {
-		t.Fatalf("got %d tokens, want %d:\n%v", len(toks), len(wantKinds), toks)
-	}
-	for i, want := range wantKinds {
-		if toks[i].Kind != want {
-			t.Errorf("tok[%d] = %s (%q), want %s", i, toks[i].Kind, toks[i].Lexeme, want)
-		}
-	}
-	if toks[10].Lexeme != ", score={100} and " {
-		t.Errorf("escaped brace segment = %q, want %q", toks[10].Lexeme, ", score={100} and ")
-	}
-}
-
-func TestInterpolatedStringFullExpressionsAndGoBlocks(t *testing.T) {
-	goodInputs := []string{
-		`print($"sum={a + b}")
-`,
-		`print($"call={foo(x)}")
-`,
-		`print($"bool={true}")
-`,
-		`print($"nested={str.quote("hi")}")
-`,
-		`print($"dict={{"k": 1}.len()}")
-`,
-	}
-	for _, src := range goodInputs {
-		if _, err := Tokenize(src, "good_interp.cb"); err != nil {
-			t.Errorf("unexpected error for %q: %v", src, err)
-		}
-	}
-
-	badInputs := []string{
-		`print($"empty={}")
-`,
-		`print($"unterm={a + b")
-`,
-		"print($\"newline={a\n+ b}\")\n",
-	}
-	for _, src := range badInputs {
-		if _, err := Tokenize(src, "bad_interp.cb"); err == nil {
-			t.Errorf("expected error for invalid interpolation %q, got nil", src)
-		}
-	}
-
+func TestGoBlocks(t *testing.T) {
 	goSrc := `go import "os"
 go
 func helper() bool { return true && !false }

@@ -144,9 +144,6 @@ func (a *analyzer) inferBinaryExpr(e *ast.BinaryExpr, scope *Scope) (Type, error
 }
 
 func (a *analyzer) inferListLitExpr(e *ast.ListLitExpr, scope *Scope) (Type, error) {
-	if len(e.Elements) == 0 {
-		return VoidType, newSemaError(e.Pos, "cannot infer type of empty list literal []; use list[T]() or an explicit type annotation")
-	}
 	firstType, err := a.inferExpr(e.Elements[0], scope)
 	if err != nil {
 		return VoidType, err
@@ -164,9 +161,6 @@ func (a *analyzer) inferListLitExpr(e *ast.ListLitExpr, scope *Scope) (Type, err
 }
 
 func (a *analyzer) inferDictLitExpr(e *ast.DictLitExpr, scope *Scope) (Type, error) {
-	if len(e.Entries) == 0 {
-		return VoidType, newSemaError(e.Pos, "cannot infer type of empty dict literal {}; use dict[K, V]() or an explicit type annotation")
-	}
 	firstKey, err := a.inferExpr(e.Entries[0].Key, scope)
 	if err != nil {
 		return VoidType, err
@@ -402,15 +396,12 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 
 	if fnSym.IsVariadic {
 		for _, arg := range e.Args {
-			if arg.Name != "" {
-				return VoidType, newSemaError(arg.Pos, "function %q does not support named arguments (%q)", fnSym.Name, arg.Name)
-			}
-			argType, err := a.inferExpr(arg.Value, scope)
+			argType, err := a.inferExpr(arg, scope)
 			if err != nil {
 				return VoidType, err
 			}
 			if argType.IsVoid() {
-				return VoidType, newSemaError(arg.Pos, "argument to %q cannot be void", fnSym.Name)
+				return VoidType, newSemaError(arg.ExprPos(), "argument to %q cannot be void", fnSym.Name)
 			}
 		}
 		return fnSym.ReturnType, nil
@@ -437,144 +428,89 @@ func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
 	if !a.inFallibleContext() {
 		return VoidType, newSemaError(e.Pos, "error() can only be called inside a 'can error' function or a 'try' block")
 	}
+	if e != a.allowedFallibleExpr {
+		return VoidType, newSemaError(e.Pos, "error() may only appear as a top-level statement expression")
+	}
 	if len(e.Args) < 1 || len(e.Args) > 2 {
 		return VoidType, newSemaError(e.Pos, "error() expects 1 or 2 argument(s), got %d", len(e.Args))
 	}
-	if e.Args[0].Name != "" && e.Args[0].Name != "msg" {
-		return VoidType, newSemaError(e.Args[0].Pos, "unknown named argument %q for error()", e.Args[0].Name)
-	}
-	msgType, err := a.inferExpr(e.Args[0].Value, scope)
+	msgType, err := a.inferExpr(e.Args[0], scope)
 	if err != nil {
 		return VoidType, err
 	}
 	if !msgType.Equals(StrType) {
-		return VoidType, newSemaError(e.Args[0].Pos, "error() message must be str, got %s", msgType.String())
+		return VoidType, newSemaError(e.Args[0].ExprPos(), "error() message must be str, got %s", msgType.String())
 	}
 	if len(e.Args) == 2 {
-		if e.Args[1].Name != "" && e.Args[1].Name != "code" {
-			return VoidType, newSemaError(e.Args[1].Pos, "unknown named argument %q for error()", e.Args[1].Name)
-		}
-		codeType, err := a.inferExpr(e.Args[1].Value, scope)
+		codeType, err := a.inferExpr(e.Args[1], scope)
 		if err != nil {
 			return VoidType, err
 		}
 		if !codeType.Equals(IntType) {
-			return VoidType, newSemaError(e.Args[1].Pos, "error() code must be int, got %s", codeType.String())
+			return VoidType, newSemaError(e.Args[1].ExprPos(), "error() code must be int, got %s", codeType.String())
 		}
 	}
-	a.prog.CallInfos[e] = &CallInfo{
-		Kind: CallError,
-	}
+	a.prog.CallInfos[e] = &CallInfo{Kind: CallError}
 	return VoidType, nil
 }
 
 func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *Scope) (Type, error) {
 	retType := Type{Kind: KindStruct, Name: s.Name, ModuleID: s.ModuleID, GoName: s.GoName}
-	if len(e.Args) == 0 {
-		a.prog.CallInfos[e] = &CallInfo{
-			Kind:   CallStructCtor,
-			Struct: s,
-		}
-		return retType, nil
-	}
-
-	hasNamed := e.Args[0].Name != ""
-	if hasNamed {
-		seen := make(map[string]bool)
-		for _, arg := range e.Args {
-			if arg.Name == "" {
-				return VoidType, newSemaError(arg.Pos, "cannot mix positional and named arguments in constructor for %q", s.Name)
-			}
-			if seen[arg.Name] {
-				return VoidType, newSemaError(arg.Pos, "duplicate named argument %q in constructor for %q", arg.Name, s.Name)
-			}
-			seen[arg.Name] = true
-			fs, exists := s.FieldMap[arg.Name]
-			if !exists {
-				return VoidType, newSemaError(arg.Pos, "struct %q has no field %q", s.Name, arg.Name)
-			}
-			argType, err := a.inferExpr(arg.Value, scope)
-			if err != nil {
-				return VoidType, err
-			}
-			if !fs.Type.Equals(argType) {
-				return VoidType, newSemaError(arg.Pos, "field %q of %q expects %s, got %s", arg.Name, s.Name, fs.Type.String(), argType.String())
-			}
-		}
-		a.prog.CallInfos[e] = &CallInfo{
-			Kind:      CallStructCtor,
-			Struct:    s,
-			NamedArgs: true,
-		}
-		return retType, nil
-	}
-
-	if len(e.Args) != len(s.Fields) {
-		return VoidType, newSemaError(e.Pos, "struct %q constructor expects %d argument(s), got %d", s.Name, len(s.Fields), len(e.Args))
+	if len(e.Args) != 0 && len(e.Args) != len(s.Fields) {
+		return VoidType, newSemaError(e.Pos, "struct %q constructor expects 0 or %d argument(s), got %d", s.Name, len(s.Fields), len(e.Args))
 	}
 	for i, arg := range e.Args {
-		if arg.Name != "" {
-			return VoidType, newSemaError(arg.Pos, "cannot mix positional and named arguments in constructor for %q", s.Name)
-		}
-		argType, err := a.inferExpr(arg.Value, scope)
+		argType, err := a.inferExpr(arg, scope)
 		if err != nil {
 			return VoidType, err
 		}
 		if !s.Fields[i].Type.Equals(argType) {
-			return VoidType, newSemaError(arg.Pos, "argument %d (%q) to %q constructor expects %s, got %s", i+1, s.Fields[i].Name, s.Name, s.Fields[i].Type.String(), argType.String())
+			return VoidType, newSemaError(arg.ExprPos(), "argument %d (%q) to %q constructor expects %s, got %s", i+1, s.Fields[i].Name, s.Name, s.Fields[i].Type.String(), argType.String())
 		}
 	}
-	a.prog.CallInfos[e] = &CallInfo{
-		Kind:   CallStructCtor,
-		Struct: s,
-	}
+	a.prog.CallInfos[e] = &CallInfo{Kind: CallStructCtor, Struct: s}
 	return retType, nil
 }
 
 func (a *analyzer) checkByRefArg(val ast.Expr, argIdx int, paramName, fnName string, scope *Scope) error {
-	switch v := val.(type) {
-	case *ast.IdentExpr:
-		sym, found := scope.Lookup(v.Name)
-		if !found || sym.IsConst {
-			return newSemaError(val.ExprPos(), "cannot pass constant %q to byref parameter %q of %q", v.Name, paramName, fnName)
-		}
-		return nil
-	case *ast.FieldAccessExpr:
-		return a.checkMutableTarget(v, scope)
-	default:
-		return newSemaError(val.ExprPos(), "argument %d (%q) to byref parameter of %q must be a mutable variable or field", argIdx, paramName, fnName)
+	id, ok := val.(*ast.IdentExpr)
+	if !ok {
+		return newSemaError(val.ExprPos(), "argument %d (%q) to byref parameter of %q must be a mutable variable", argIdx, paramName, fnName)
 	}
+	return a.checkMutableTarget(id, scope)
 }
 
-func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.CallArg, params []ParamSymbol, fnName string, canError bool, callKindDesc string, scope *Scope) error {
+func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.Expr, params []ParamSymbol, fnName string, canError bool, callKindDesc string, scope *Scope) error {
 	if len(args) != len(params) {
 		return newSemaError(callExpr.Pos, "%s %q expects %d argument(s), got %d", callKindDesc, fnName, len(params), len(args))
 	}
 	for i, arg := range args {
 		param := params[i]
-		if arg.Name != "" && arg.Name != param.Name {
-			return newSemaError(arg.Pos, "named argument %q does not match parameter %q of function %q", arg.Name, param.Name, fnName)
-		}
-		argType, err := a.inferExpr(arg.Value, scope)
+		argType, err := a.inferExpr(arg, scope)
 		if err != nil {
 			return err
 		}
 		if param.Type.Kind == KindAny {
 			if argType.IsVoid() {
-				return newSemaError(arg.Pos, "argument %d (%q) to function %q cannot be void", i+1, param.Name, fnName)
+				return newSemaError(arg.ExprPos(), "argument %d (%q) to function %q cannot be void", i+1, param.Name, fnName)
 			}
 		} else if !param.Type.Equals(argType) {
-			return newSemaError(arg.Pos, "argument %d (%q) to function %q has type %s, expected %s",
+			return newSemaError(arg.ExprPos(), "argument %d (%q) to function %q has type %s, expected %s",
 				i+1, param.Name, fnName, argType.String(), param.Type.String())
 		}
 		if param.ByRef {
-			if err := a.checkByRefArg(arg.Value, i+1, param.Name, fnName, scope); err != nil {
+			if err := a.checkByRefArg(arg, i+1, param.Name, fnName, scope); err != nil {
 				return err
 			}
 		}
 	}
-	if canError && !a.inFallibleContext() && callExpr != a.startJobCall {
-		return newSemaError(callExpr.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
+	if canError {
+		if !a.inFallibleContext() && callExpr != a.startJobCall {
+			return newSemaError(callExpr.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
+		}
+		if callExpr != a.allowedFallibleExpr && callExpr != a.startJobCall {
+			return newSemaError(callExpr.Pos, "call to 'can error' function %q may only appear as a top-level statement expression", fnName)
+		}
 	}
 	return nil
 }
@@ -584,15 +520,12 @@ func (a *analyzer) expectPositionalArgs(e *ast.CallExpr, methodName string, scop
 		return newSemaError(e.Pos, "%s() expects %d argument(s), got %d", methodName, len(expected), len(e.Args))
 	}
 	for i, expType := range expected {
-		if e.Args[i].Name != "" {
-			return newSemaError(e.Args[i].Pos, "%s() does not support named arguments (%q)", methodName, e.Args[i].Name)
-		}
-		at, err := a.inferExpr(e.Args[i].Value, scope)
+		at, err := a.inferExpr(e.Args[i], scope)
 		if err != nil {
 			return err
 		}
 		if !at.Equals(expType) {
-			return newSemaError(e.Args[i].Pos, "%s() argument %d must be %s, got %s", methodName, i+1, expType.String(), at.String())
+			return newSemaError(e.Args[i].ExprPos(), "%s() argument %d must be %s, got %s", methodName, i+1, expType.String(), at.String())
 		}
 	}
 	return nil

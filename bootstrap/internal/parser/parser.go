@@ -52,23 +52,13 @@ func ParseTokens(tokens []token.Token, filename string) (*ast.Program, error) {
 	return p.ParseProgram()
 }
 
-func (p *Parser) cur() token.Token {
-	if p.pos >= len(p.tokens) {
-		if len(p.tokens) > 0 {
-			last := p.tokens[len(p.tokens)-1]
-			return token.Token{Kind: token.EOF, Pos: last.Pos}
-		}
-		return token.Token{Kind: token.EOF, Pos: token.Position{File: p.file, Line: 1, Column: 1}}
-	}
-	return p.tokens[p.pos]
-}
+func (p *Parser) cur() token.Token { return p.peek(0) }
 
 func (p *Parser) peek(offset int) token.Token {
 	idx := p.pos + offset
 	if idx >= len(p.tokens) {
 		if len(p.tokens) > 0 {
-			last := p.tokens[len(p.tokens)-1]
-			return token.Token{Kind: token.EOF, Pos: last.Pos}
+			return token.Token{Kind: token.EOF, Pos: p.tokens[len(p.tokens)-1].Pos}
 		}
 		return token.Token{Kind: token.EOF, Pos: token.Position{File: p.file, Line: 1, Column: 1}}
 	}
@@ -91,13 +81,14 @@ func (p *Parser) match(kind token.Kind) bool {
 	return false
 }
 
+func errAt(pos token.Position, format string, args ...any) error {
+	return &ParseError{Pos: pos, Message: fmt.Sprintf(format, args...)}
+}
+
 func (p *Parser) expect(kind token.Kind, context string) (token.Token, error) {
 	tok := p.cur()
 	if tok.Kind != kind {
-		return token.Token{}, &ParseError{
-			Pos:     tok.Pos,
-			Message: fmt.Sprintf("expected %s %s, got %s (%q)", kind, context, tok.Kind, tok.Lexeme),
-		}
+		return token.Token{}, errAt(tok.Pos, "expected %s %s, got %s (%q)", kind, context, tok.Kind, tok.Lexeme)
 	}
 	p.advance()
 	return tok, nil
@@ -109,24 +100,16 @@ func (p *Parser) expectIdent(context string) (token.Token, error) {
 		p.advance()
 		return tok, nil
 	}
-	return token.Token{}, &ParseError{
-		Pos:     tok.Pos,
-		Message: fmt.Sprintf("expected identifier %s, got %s (%q)", context, tok.Kind, tok.Lexeme),
-	}
+	return token.Token{}, errAt(tok.Pos, "expected identifier %s, got %s (%q)", context, tok.Kind, tok.Lexeme)
 }
 
-// expectFieldOrMethodIdent allows ordinary identifiers as well as contextual words
-// that may appear after '.' (e.g., str.join, d.get, etc.).
 func (p *Parser) expectFieldOrMethodIdent(context string) (token.Token, error) {
 	tok := p.cur()
 	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.BYTE, token.LIST, token.DICT, token.ERR, token.MAILBOX, token.JOB}, tok.Kind) {
 		p.advance()
 		return tok, nil
 	}
-	return token.Token{}, &ParseError{
-		Pos:     tok.Pos,
-		Message: fmt.Sprintf("expected identifier %s, got %s (%q)", context, tok.Kind, tok.Lexeme),
-	}
+	return token.Token{}, errAt(tok.Pos, "expected identifier %s, got %s (%q)", context, tok.Kind, tok.Lexeme)
 }
 
 func (p *Parser) skipNewlines() {
@@ -144,10 +127,25 @@ func (p *Parser) expectNewline(context string) error {
 	if tok.Kind == token.EOF {
 		return nil
 	}
-	return &ParseError{
-		Pos:     tok.Pos,
-		Message: fmt.Sprintf("expected newline after %s, got %s (%q)", context, tok.Kind, tok.Lexeme),
+	return errAt(tok.Pos, "expected newline after %s, got %s (%q)", context, tok.Kind, tok.Lexeme)
+}
+
+func (p *Parser) expectEndBlock(endKind token.Kind, label string) error {
+	if _, err := p.expect(endKind, "to close "+label); err != nil {
+		return err
 	}
+	return p.expectNewline(string(endKind))
+}
+
+func (p *Parser) parseOptionalAsType() (*ast.TypeExpr, error) {
+	if !p.match(token.AS) {
+		return nil, nil
+	}
+	t, err := p.parseType()
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func (p *Parser) parseStmtBlock(stopKinds ...token.Kind) ([]ast.Statement, error) {
@@ -225,62 +223,40 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 	}
 }
 
-// ImportDecl ::= "import" StringLiteral ["as" Identifier] NEWLINE
-func (p *Parser) parseImportDecl() (*ast.ImportDecl, error) {
-	startTok := p.advance() // consume IMPORT
-
-	pathTok, err := p.expect(token.STRING_LIT, "in import declaration")
+func (p *Parser) parseImportSpec(ctx string) (token.Position, string, string, error) {
+	startTok := p.advance()
+	pathTok, err := p.expect(token.STRING_LIT, "in "+ctx)
 	if err != nil {
-		return nil, err
+		return token.Position{}, "", "", err
 	}
-
 	alias := ""
 	if p.match(token.AS) {
-		aliasTok, err := p.expectIdent("after 'as' in import declaration")
+		aliasTok, err := p.expectIdent("after 'as' in " + ctx)
 		if err != nil {
-			return nil, err
+			return token.Position{}, "", "", err
 		}
 		alias = aliasTok.Lexeme
 	}
-
-	if err := p.expectNewline("import declaration"); err != nil {
-		return nil, err
+	if err := p.expectNewline(ctx); err != nil {
+		return token.Position{}, "", "", err
 	}
-
-	return &ast.ImportDecl{
-		Pos:   startTok.Pos,
-		Path:  pathTok.Lexeme,
-		Alias: alias,
-	}, nil
+	return startTok.Pos, pathTok.Lexeme, alias, nil
 }
 
-// GoImportDecl ::= "go import" StringLiteral ["as" Identifier] NEWLINE
-func (p *Parser) parseGoImportDecl() (*ast.GoImportDecl, error) {
-	startTok := p.advance() // consume GO_IMPORT
-
-	pathTok, err := p.expect(token.STRING_LIT, "in go import declaration")
+func (p *Parser) parseImportDecl() (*ast.ImportDecl, error) {
+	pos, path, alias, err := p.parseImportSpec("import declaration")
 	if err != nil {
 		return nil, err
 	}
+	return &ast.ImportDecl{Pos: pos, Path: path, Alias: alias}, nil
+}
 
-	alias := ""
-	if p.match(token.AS) {
-		aliasTok, err := p.expectIdent("after 'as' in go import declaration")
-		if err != nil {
-			return nil, err
-		}
-		alias = aliasTok.Lexeme
-	}
-
-	if err := p.expectNewline("go import declaration"); err != nil {
+func (p *Parser) parseGoImportDecl() (*ast.GoImportDecl, error) {
+	pos, path, alias, err := p.parseImportSpec("go import declaration")
+	if err != nil {
 		return nil, err
 	}
-
-	return &ast.GoImportDecl{
-		Pos:   startTok.Pos,
-		Path:  pathTok.Lexeme,
-		Alias: alias,
-	}, nil
+	return &ast.GoImportDecl{Pos: pos, Path: path, Alias: alias}, nil
 }
 
 // ConstDecl ::= ["public"] "const" Identifier ["as" Type] "=" Expr NEWLINE
@@ -294,35 +270,21 @@ func (p *Parser) parseConstDecl(pos token.Position, isPublic bool) (*ast.ConstDe
 		return nil, err
 	}
 
-	var explicitType *ast.TypeExpr
-	if p.match(token.AS) {
-		t, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-		explicitType = &t
+	explicitType, err := p.parseOptionalAsType()
+	if err != nil {
+		return nil, err
 	}
-
 	if _, err := p.expect(token.ASSIGN, "in const declaration"); err != nil {
 		return nil, err
 	}
-
 	val, err := p.parseExpr()
 	if err != nil {
 		return nil, err
 	}
-
 	if err := p.expectNewline("const declaration"); err != nil {
 		return nil, err
 	}
-
-	return &ast.ConstDecl{
-		Pos:    pos,
-		Public: isPublic,
-		Name:   nameTok.Lexeme,
-		Type:   explicitType,
-		Value:  val,
-	}, nil
+	return &ast.ConstDecl{Pos: pos, Public: isPublic, Name: nameTok.Lexeme, Type: explicitType, Value: val}, nil
 }
 
 // TypeDecl ::= ["public"] "type" Identifier NEWLINE FieldDecl* "end type" NEWLINE
@@ -383,19 +345,10 @@ func (p *Parser) parseTypeDecl(pos token.Position, isPublic bool) (*ast.TypeDecl
 		})
 	}
 
-	if _, err := p.expect(token.END_TYPE, "to close type declaration"); err != nil {
+	if err := p.expectEndBlock(token.END_TYPE, "type declaration"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end type"); err != nil {
-		return nil, err
-	}
-
-	return &ast.TypeDecl{
-		Pos:    pos,
-		Public: isPublic,
-		Name:   nameTok.Lexeme,
-		Fields: fields,
-	}, nil
+	return &ast.TypeDecl{Pos: pos, Public: isPublic, Name: nameTok.Lexeme, Fields: fields}, nil
 }
 
 // EnumDecl ::= ["public"] "enum" Identifier NEWLINE Identifier* "end enum" NEWLINE
@@ -430,19 +383,10 @@ func (p *Parser) parseEnumDecl(pos token.Position, isPublic bool) (*ast.EnumDecl
 		}
 	}
 
-	if _, err := p.expect(token.END_ENUM, "to close enum declaration"); err != nil {
+	if err := p.expectEndBlock(token.END_ENUM, "enum declaration"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end enum"); err != nil {
-		return nil, err
-	}
-
-	return &ast.EnumDecl{
-		Pos:      pos,
-		Public:   isPublic,
-		Name:     nameTok.Lexeme,
-		Variants: variants,
-	}, nil
+	return &ast.EnumDecl{Pos: pos, Public: isPublic, Name: nameTok.Lexeme, Variants: variants}, nil
 }
 
 // FnDecl ::= ["public"] "fn" Identifier "(" [ParamList] ")" ["as" Type] ["can error"] ("=" "go" StringLiteral | NEWLINE ... "end fn") NEWLINE
@@ -469,19 +413,11 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 		return nil, err
 	}
 
-	var retType *ast.TypeExpr
-	if p.match(token.AS) {
-		t, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-		retType = &t
+	retType, err := p.parseOptionalAsType()
+	if err != nil {
+		return nil, err
 	}
-
-	canError := false
-	if p.match(token.CAN_ERROR) {
-		canError = true
-	}
+	canError := p.match(token.CAN_ERROR)
 
 	if p.match(token.ASSIGN) {
 		if _, err := p.expect(token.GO, "after '=' in Go function binding"); err != nil {
@@ -494,42 +430,20 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 		if err := p.expectNewline("go function binding"); err != nil {
 			return nil, err
 		}
-		return &ast.FnDecl{
-			Pos:        pos,
-			Public:     isPublic,
-			Name:       nameTok.Lexeme,
-			Params:     params,
-			ReturnType: retType,
-			CanError:   canError,
-			GoTarget:   goTok.Lexeme,
-		}, nil
+		return &ast.FnDecl{Pos: pos, Public: isPublic, Name: nameTok.Lexeme, Params: params, ReturnType: retType, CanError: canError, GoTarget: goTok.Lexeme}, nil
 	}
 
 	if err := p.expectNewline("function signature"); err != nil {
 		return nil, err
 	}
-
 	body, err := p.parseStmtBlock(token.END_FN)
 	if err != nil {
 		return nil, err
 	}
-
-	if _, err := p.expect(token.END_FN, "to close function declaration"); err != nil {
+	if err := p.expectEndBlock(token.END_FN, "function declaration"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end fn"); err != nil {
-		return nil, err
-	}
-
-	return &ast.FnDecl{
-		Pos:        pos,
-		Public:     isPublic,
-		Name:       nameTok.Lexeme,
-		Params:     params,
-		ReturnType: retType,
-		CanError:   canError,
-		Body:       body,
-	}, nil
+	return &ast.FnDecl{Pos: pos, Public: isPublic, Name: nameTok.Lexeme, Params: params, ReturnType: retType, CanError: canError, Body: body}, nil
 }
 
 // ParamList ::= Param ("," Param)* [","]
@@ -586,12 +500,7 @@ func (p *Parser) parseParamList() ([]ast.Param, error) {
 			return ast.Param{}, err
 		}
 
-		return ast.Param{
-			Pos:   paramPos,
-			ByRef: byRef,
-			Name:  nameTok.Lexeme,
-			Type:  paramType,
-		}, nil
+		return ast.Param{Pos: paramPos, ByRef: byRef, Name: nameTok.Lexeme, Type: paramType}, nil
 	})
 }
 
@@ -611,23 +520,23 @@ func (p *Parser) parseType() (ast.TypeExpr, error) {
 			Name: tok.Lexeme,
 		}, nil
 
-	case token.LIST:
+	case token.LIST, token.MAILBOX:
 		p.advance()
-		if _, err := p.expect(token.LBRACKET, "after 'list'"); err != nil {
+		if _, err := p.expect(token.LBRACKET, "after '"+tok.Lexeme+"'"); err != nil {
 			return ast.TypeExpr{}, err
 		}
 		elemType, err := p.parseType()
 		if err != nil {
 			return ast.TypeExpr{}, err
 		}
-		if _, err := p.expect(token.RBRACKET, "after list element type"); err != nil {
+		if _, err := p.expect(token.RBRACKET, "after "+tok.Lexeme+" element type"); err != nil {
 			return ast.TypeExpr{}, err
 		}
-		return ast.TypeExpr{
-			Pos:      tok.Pos,
-			Kind:     ast.TypeList,
-			ElemType: &elemType,
-		}, nil
+		kind := ast.TypeList
+		if tok.Kind == token.MAILBOX {
+			kind = ast.TypeMailbox
+		}
+		return ast.TypeExpr{Pos: tok.Pos, Kind: kind, ElemType: &elemType}, nil
 
 	case token.DICT:
 		p.advance()
@@ -653,24 +562,6 @@ func (p *Parser) parseType() (ast.TypeExpr, error) {
 			Kind:    ast.TypeDict,
 			KeyType: &keyType,
 			ValType: &valType,
-		}, nil
-
-	case token.MAILBOX:
-		p.advance()
-		if _, err := p.expect(token.LBRACKET, "after 'mailbox'"); err != nil {
-			return ast.TypeExpr{}, err
-		}
-		elemType, err := p.parseType()
-		if err != nil {
-			return ast.TypeExpr{}, err
-		}
-		if _, err := p.expect(token.RBRACKET, "after mailbox element type"); err != nil {
-			return ast.TypeExpr{}, err
-		}
-		return ast.TypeExpr{
-			Pos:      tok.Pos,
-			Kind:     ast.TypeMailbox,
-			ElemType: &elemType,
 		}, nil
 
 	case token.JOB:
@@ -768,35 +659,21 @@ func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {
 		return nil, err
 	}
 
-	var explicitType *ast.TypeExpr
-	if p.match(token.AS) {
-		t, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-		explicitType = &t
+	explicitType, err := p.parseOptionalAsType()
+	if err != nil {
+		return nil, err
 	}
-
 	if _, err := p.expect(token.ASSIGN, "in variable declaration"); err != nil {
 		return nil, err
 	}
-
 	val, err := p.parseExpr()
 	if err != nil {
 		return nil, err
 	}
-
 	if err := p.expectNewline("variable declaration"); err != nil {
 		return nil, err
 	}
-
-	return &ast.VarDecl{
-		Pos:     kwTok.Pos,
-		IsConst: isConst,
-		Name:    nameTok.Lexeme,
-		Type:    explicitType,
-		Value:   val,
-	}, nil
+	return &ast.VarDecl{Pos: kwTok.Pos, IsConst: isConst, Name: nameTok.Lexeme, Type: explicitType, Value: val}, nil
 }
 
 // Assignment ::= Expr "=" Expr NEWLINE
@@ -887,21 +764,10 @@ func (p *Parser) parseIfStmt() (*ast.IfStmt, error) {
 		}
 	}
 
-	if _, err := p.expect(token.END_IF, "to close if statement"); err != nil {
+	if err := p.expectEndBlock(token.END_IF, "if statement"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end if"); err != nil {
-		return nil, err
-	}
-
-	return &ast.IfStmt{
-		Pos:      ifTok.Pos,
-		Cond:     cond,
-		ThenBody: thenBody,
-		ElseIfs:  elseIfs,
-		ElseBody: elseBody,
-		HasElse:  hasElse,
-	}, nil
+	return &ast.IfStmt{Pos: ifTok.Pos, Cond: cond, ThenBody: thenBody, ElseIfs: elseIfs, ElseBody: elseBody, HasElse: hasElse}, nil
 }
 
 // ForStmt ::= "for" Identifier "=" Expr "to" Expr ["step" Expr] NEWLINE Statement* "end for" NEWLINE
@@ -983,10 +849,7 @@ func (p *Parser) finishForStmt(stmt *ast.ForStmt, headerCtx string) (*ast.ForStm
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(token.END_FOR, "to close for loop"); err != nil {
-		return nil, err
-	}
-	if err := p.expectNewline("end for"); err != nil {
+	if err := p.expectEndBlock(token.END_FOR, "for loop"); err != nil {
 		return nil, err
 	}
 	stmt.Body = body
@@ -1013,18 +876,10 @@ func (p *Parser) parseWhileStmt() (*ast.WhileStmt, error) {
 		return nil, err
 	}
 
-	if _, err := p.expect(token.END_WHILE, "to close while loop"); err != nil {
+	if err := p.expectEndBlock(token.END_WHILE, "while loop"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end while"); err != nil {
-		return nil, err
-	}
-
-	return &ast.WhileStmt{
-		Pos:  whileTok.Pos,
-		Cond: cond,
-		Body: body,
-	}, nil
+	return &ast.WhileStmt{Pos: whileTok.Pos, Cond: cond, Body: body}, nil
 }
 
 // SelectStmt ::= "select case" Expr NEWLINE ("case" ExprList NEWLINE Statement*)* ["case else" NEWLINE Statement*] "end select" NEWLINE
@@ -1088,20 +943,10 @@ func (p *Parser) parseSelectStmt() (*ast.SelectStmt, error) {
 		}
 	}
 
-	if _, err := p.expect(token.END_SELECT, "to close select case statement"); err != nil {
+	if err := p.expectEndBlock(token.END_SELECT, "select case statement"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end select"); err != nil {
-		return nil, err
-	}
-
-	return &ast.SelectStmt{
-		Pos:      selTok.Pos,
-		Target:   target,
-		Cases:    cases,
-		ElseBody: elseBody,
-		HasElse:  hasElse,
-	}, nil
+	return &ast.SelectStmt{Pos: selTok.Pos, Target: target, Cases: cases, ElseBody: elseBody, HasElse: hasElse}, nil
 }
 
 // TryCatchStmt ::= "try" NEWLINE Statement* "catch" Identifier NEWLINE Statement* "end try" NEWLINE
@@ -1135,19 +980,10 @@ func (p *Parser) parseTryCatchStmt() (*ast.TryCatchStmt, error) {
 		return nil, err
 	}
 
-	if _, err := p.expect(token.END_TRY, "to close try/catch statement"); err != nil {
+	if err := p.expectEndBlock(token.END_TRY, "try/catch statement"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end try"); err != nil {
-		return nil, err
-	}
-
-	return &ast.TryCatchStmt{
-		Pos:       tryTok.Pos,
-		TryBody:   tryBody,
-		CatchVar:  catchVarTok.Lexeme,
-		CatchBody: catchBody,
-	}, nil
+	return &ast.TryCatchStmt{Pos: tryTok.Pos, TryBody: tryBody, CatchVar: catchVarTok.Lexeme, CatchBody: catchBody}, nil
 }
 
 // DeferStmt ::= "defer" NEWLINE Statement* "end defer" NEWLINE
@@ -1165,17 +1001,10 @@ func (p *Parser) parseDeferStmt() (*ast.DeferStmt, error) {
 		return nil, err
 	}
 
-	if _, err := p.expect(token.END_DEFER, "to close defer statement"); err != nil {
+	if err := p.expectEndBlock(token.END_DEFER, "defer statement"); err != nil {
 		return nil, err
 	}
-	if err := p.expectNewline("end defer"); err != nil {
-		return nil, err
-	}
-
-	return &ast.DeferStmt{
-		Pos:  deferTok.Pos,
-		Body: body,
-	}, nil
+	return &ast.DeferStmt{Pos: deferTok.Pos, Body: body}, nil
 }
 
 // ReturnStmt ::= "return" [Expr] NEWLINE
@@ -1284,15 +1113,9 @@ func (p *Parser) parseUnaryExpr() (ast.Expr, error) {
 		}
 		call, ok := operand.(*ast.CallExpr)
 		if !ok {
-			return nil, &ParseError{
-				Pos:     startTok.Pos,
-				Message: "expected function call after 'start job'",
-			}
+			return nil, errAt(startTok.Pos, "expected function call after 'start job'")
 		}
-		return &ast.StartJobExpr{
-			Pos:  startTok.Pos,
-			Call: call,
-		}, nil
+		return &ast.StartJobExpr{Pos: startTok.Pos, Call: call}, nil
 	}
 	if p.cur().Kind == token.PLUS || p.cur().Kind == token.MINUS {
 		opTok := p.advance()
@@ -1300,11 +1123,7 @@ func (p *Parser) parseUnaryExpr() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ast.UnaryExpr{
-			Pos:     opTok.Pos,
-			Op:      opTok.Kind,
-			Operand: operand,
-		}, nil
+		return &ast.UnaryExpr{Pos: opTok.Pos, Op: opTok.Kind, Operand: operand}, nil
 	}
 	return p.parsePostfixExpr()
 }
@@ -1324,109 +1143,51 @@ func (p *Parser) parsePostfixExpr() (ast.Expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			expr = &ast.FieldAccessExpr{
-				Pos:    dotTok.Pos,
-				Target: expr,
-				Field:  fieldTok.Lexeme,
-			}
+			expr = &ast.FieldAccessExpr{Pos: dotTok.Pos, Target: expr, Field: fieldTok.Lexeme}
 
 		case token.LBRACKET:
 			lbrTok := p.advance()
+			var startExpr, endExpr ast.Expr
+			isSlice := false
 			if p.match(token.COLON) {
-				var endExpr ast.Expr
-				if p.cur().Kind != token.RBRACKET {
-					var err error
-					endExpr, err = p.parseExpr()
-					if err != nil {
-						return nil, err
-					}
-				}
-				if _, err := p.expect(token.RBRACKET, "after slice expression"); err != nil {
+				isSlice = true
+			} else {
+				startExpr, err = p.parseExpr()
+				if err != nil {
 					return nil, err
 				}
-				expr = &ast.SliceExpr{
-					Pos:    lbrTok.Pos,
-					Target: expr,
-					Start:  nil,
-					End:    endExpr,
-				}
-				continue
+				isSlice = p.match(token.COLON)
 			}
-			idxExpr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			if p.match(token.COLON) {
-				var endExpr ast.Expr
-				if p.cur().Kind != token.RBRACKET {
-					endExpr, err = p.parseExpr()
-					if err != nil {
-						return nil, err
-					}
-				}
-				if _, err := p.expect(token.RBRACKET, "after slice expression"); err != nil {
+			if isSlice && p.cur().Kind != token.RBRACKET {
+				endExpr, err = p.parseExpr()
+				if err != nil {
 					return nil, err
 				}
-				expr = &ast.SliceExpr{
-					Pos:    lbrTok.Pos,
-					Target: expr,
-					Start:  idxExpr,
-					End:    endExpr,
-				}
-				continue
 			}
-			if _, err := p.expect(token.RBRACKET, "after index expression"); err != nil {
+			if _, err := p.expect(token.RBRACKET, "after index/slice expression"); err != nil {
 				return nil, err
 			}
-			expr = &ast.IndexExpr{
-				Pos:    lbrTok.Pos,
-				Target: expr,
-				Index:  idxExpr,
+			if isSlice {
+				expr = &ast.SliceExpr{Pos: lbrTok.Pos, Target: expr, Start: startExpr, End: endExpr}
+			} else {
+				expr = &ast.IndexExpr{Pos: lbrTok.Pos, Target: expr, Index: startExpr}
 			}
 
 		case token.LPAREN:
 			lpTok := p.advance()
-			args, err := p.parseCallArgList()
+			args, err := parseDelimited(p, token.RPAREN, (*Parser).parseExpr)
 			if err != nil {
 				return nil, err
 			}
 			if _, err := p.expect(token.RPAREN, "after call arguments"); err != nil {
 				return nil, err
 			}
-			expr = &ast.CallExpr{
-				Pos:    lpTok.Pos,
-				Callee: expr,
-				Args:   args,
-			}
+			expr = &ast.CallExpr{Pos: lpTok.Pos, Callee: expr, Args: args}
 
 		default:
 			return expr, nil
 		}
 	}
-}
-
-// CallArgList ::= CallArg ("," CallArg)* [","]
-// Supports positional arguments as well as named arguments (e.g. error("msg", code=408)).
-func (p *Parser) parseCallArgList() ([]ast.CallArg, error) {
-	return parseDelimited(p, token.RPAREN, func(p *Parser) (ast.CallArg, error) {
-		argPos := p.cur().Pos
-		argName := ""
-		if p.cur().Kind == token.IDENT && p.peek(1).Kind == token.ASSIGN {
-			nameTok := p.advance()
-			p.advance() // consume '='
-			argName = nameTok.Lexeme
-		}
-
-		val, err := p.parseExpr()
-		if err != nil {
-			return ast.CallArg{}, err
-		}
-		return ast.CallArg{
-			Pos:   argPos,
-			Name:  argName,
-			Value: val,
-		}, nil
-	})
 }
 
 // PrimaryExpr ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
@@ -1438,78 +1199,36 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 		p.advance()
 		val, err := strconv.ParseInt(tok.Lexeme, 10, 64)
 		if err != nil {
-			return nil, &ParseError{
-				Pos:     tok.Pos,
-				Message: fmt.Sprintf("invalid integer literal %q: %v", tok.Lexeme, err),
-			}
+			return nil, &ParseError{Pos: tok.Pos, Message: fmt.Sprintf("invalid integer literal %q: %v", tok.Lexeme, err)}
 		}
-		return &ast.IntLitExpr{
-			Pos:   tok.Pos,
-			Raw:   tok.Lexeme,
-			Value: val,
-		}, nil
+		return &ast.IntLitExpr{Pos: tok.Pos, Raw: tok.Lexeme, Value: val}, nil
 
 	case token.FLOAT_LIT:
 		p.advance()
 		val, err := strconv.ParseFloat(tok.Lexeme, 64)
 		if err != nil {
-			return nil, &ParseError{
-				Pos:     tok.Pos,
-				Message: fmt.Sprintf("invalid float literal %q: %v", tok.Lexeme, err),
-			}
+			return nil, &ParseError{Pos: tok.Pos, Message: fmt.Sprintf("invalid float literal %q: %v", tok.Lexeme, err)}
 		}
-		return &ast.FloatLitExpr{
-			Pos:   tok.Pos,
-			Raw:   tok.Lexeme,
-			Value: val,
-		}, nil
+		return &ast.FloatLitExpr{Pos: tok.Pos, Raw: tok.Lexeme, Value: val}, nil
 
 	case token.STRING_LIT:
 		p.advance()
-		return &ast.StringLitExpr{
-			Pos:   tok.Pos,
-			Value: tok.Lexeme,
-		}, nil
+		return &ast.StringLitExpr{Pos: tok.Pos, Value: tok.Lexeme}, nil
 
-	case token.TRUE:
+	case token.TRUE, token.FALSE:
 		p.advance()
-		return &ast.BoolLitExpr{
-			Pos:   tok.Pos,
-			Value: true,
-		}, nil
+		return &ast.BoolLitExpr{Pos: tok.Pos, Value: tok.Kind == token.TRUE}, nil
 
-	case token.FALSE:
+	case token.IDENT, token.STR:
 		p.advance()
-		return &ast.BoolLitExpr{
-			Pos:   tok.Pos,
-			Value: false,
-		}, nil
-
-	case token.IDENT:
-		p.advance()
-		return &ast.IdentExpr{
-			Pos:  tok.Pos,
-			Name: tok.Lexeme,
-		}, nil
-
-	// Built-in prelude module names ("str", "list", "dict") or typed empty constructors:
-	// e.g. str.join(...), list[int](), dict[str, int]()
-	case token.STR:
-		p.advance()
-		return &ast.IdentExpr{
-			Pos:  tok.Pos,
-			Name: tok.Lexeme,
-		}, nil
+		return &ast.IdentExpr{Pos: tok.Pos, Name: tok.Lexeme}, nil
 
 	case token.LIST, token.DICT, token.MAILBOX:
 		if p.peek(1).Kind == token.LBRACKET {
 			return p.parseTypedEmptyCtor()
 		}
 		p.advance()
-		return &ast.IdentExpr{
-			Pos:  tok.Pos,
-			Name: tok.Lexeme,
-		}, nil
+		return &ast.IdentExpr{Pos: tok.Pos, Name: tok.Lexeme}, nil
 
 	case token.LPAREN:
 		p.advance()
@@ -1529,10 +1248,7 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 		return p.parseDictLiteral()
 
 	default:
-		return nil, &ParseError{
-			Pos:     tok.Pos,
-			Message: fmt.Sprintf("unexpected token %s (%q) in expression", tok.Kind, tok.Lexeme),
-		}
+		return nil, &ParseError{Pos: tok.Pos, Message: fmt.Sprintf("unexpected token %s (%q) in expression", tok.Kind, tok.Lexeme)}
 	}
 }
 
@@ -1557,45 +1273,34 @@ func (p *Parser) parseTypedEmptyCtor() (ast.Expr, error) {
 	if _, err := p.expect(token.RPAREN, "to close typed container constructor '()'"); err != nil {
 		return nil, err
 	}
-	return &ast.TypedEmptyCtorExpr{
-		Pos:  startPos,
-		Type: ctorType,
-		Args: args,
-	}, nil
+	return &ast.TypedEmptyCtorExpr{Pos: startPos, Type: ctorType, Args: args}, nil
 }
 
-// ListLiteral ::= "[" [Expr ("," Expr)* [","]] "]"
+// ListLiteral ::= "[" Expr ("," Expr)* [","] "]"
 func (p *Parser) parseListLiteral() (ast.Expr, error) {
 	startTok, err := p.expect(token.LBRACKET, "at start of list literal")
 	if err != nil {
 		return nil, err
 	}
-
-	elems, err := parseDelimited(p, token.RBRACKET, func(p *Parser) (ast.Expr, error) {
-		return p.parseExpr()
-	})
+	elems, err := parseDelimited(p, token.RBRACKET, (*Parser).parseExpr)
 	if err != nil {
 		return nil, err
 	}
-
 	if _, err := p.expect(token.RBRACKET, "to close list literal"); err != nil {
 		return nil, err
 	}
-
-	return &ast.ListLitExpr{
-		Pos:      startTok.Pos,
-		Elements: elems,
-	}, nil
+	if len(elems) == 0 {
+		return nil, &ParseError{Pos: startTok.Pos, Message: "empty list literal '[]' is not allowed; use list[T]() instead"}
+	}
+	return &ast.ListLitExpr{Pos: startTok.Pos, Elements: elems}, nil
 }
 
-// DictLiteral ::= "{" [DictEntry ("," DictEntry)* [","]] "}"
-// DictEntry   ::= Expr ":" Expr
+// DictLiteral ::= "{" DictEntry ("," DictEntry)* [","] "}"
 func (p *Parser) parseDictLiteral() (ast.Expr, error) {
 	startTok, err := p.expect(token.LBRACE, "at start of dict literal")
 	if err != nil {
 		return nil, err
 	}
-
 	entries, err := parseDelimited(p, token.RBRACE, func(p *Parser) (ast.DictEntryExpr, error) {
 		entryPos := p.cur().Pos
 		keyExpr, err := p.parseExpr()
@@ -1609,22 +1314,16 @@ func (p *Parser) parseDictLiteral() (ast.Expr, error) {
 		if err != nil {
 			return ast.DictEntryExpr{}, err
 		}
-		return ast.DictEntryExpr{
-			Pos:   entryPos,
-			Key:   keyExpr,
-			Value: valExpr,
-		}, nil
+		return ast.DictEntryExpr{Pos: entryPos, Key: keyExpr, Value: valExpr}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	if _, err := p.expect(token.RBRACE, "to close dict literal"); err != nil {
 		return nil, err
 	}
-
-	return &ast.DictLitExpr{
-		Pos:     startTok.Pos,
-		Entries: entries,
-	}, nil
+	if len(entries) == 0 {
+		return nil, &ParseError{Pos: startTok.Pos, Message: "empty dict literal '{}' is not allowed; use dict[K, V]() instead"}
+	}
+	return &ast.DictLitExpr{Pos: startTok.Pos, Entries: entries}, nil
 }

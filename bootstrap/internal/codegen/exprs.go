@@ -23,24 +23,24 @@ func init() {
 		"str.join": {
 			Imports: []string{"strings"},
 			Emit: func(e *emitter, ex *ast.CallExpr, _ *sema.CallInfo) string {
-				return fmt.Sprintf("strings.Join(%s, %s)", e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				return fmt.Sprintf("strings.Join(%s, %s)", e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"str.fromCharCode": {
 			Setup: func(e *emitter) { e.usedStrFromCharCode = true },
 			Emit: func(e *emitter, ex *ast.CallExpr, _ *sema.CallInfo) string {
-				return fmt.Sprintf("cbStrFromCharCode(%s)", e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("cbStrFromCharCode(%s)", e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.quote": {
 			Imports: []string{"strconv"},
 			Emit: func(e *emitter, ex *ast.CallExpr, _ *sema.CallInfo) string {
-				return fmt.Sprintf("strconv.Quote(%s)", e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("strconv.Quote(%s)", e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.fromBytes": {
 			Emit: func(e *emitter, ex *ast.CallExpr, _ *sema.CallInfo) string {
-				return fmt.Sprintf("string(%s)", e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("string(%s)", e.emitExpr(ex.Args[0]))
 			},
 		},
 		"list.len": {Emit: emitBuiltinLen},
@@ -49,19 +49,19 @@ func init() {
 		"list.push": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
 				recv := e.emitPlaceExpr(ci.Receiver)
-				return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0]))
 			},
 		},
 		"dict.get": {
 			Setup: func(e *emitter) { e.usedDictGet = true },
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("cbDictGet(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				return fmt.Sprintf("cbDictGet(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"dict.contains": {
 			Setup: func(e *emitter) { e.usedDictContains = true },
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("cbDictContains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("cbDictContains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.trim": {
@@ -101,37 +101,37 @@ func init() {
 		"str.split": {
 			Imports: []string{"strings"},
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("strings.Split(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("strings.Split(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.contains": {
 			Imports: []string{"strings"},
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("strings.Contains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("strings.Contains(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.startsWith": {
 			Imports: []string{"strings"},
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("strings.HasPrefix(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("strings.HasPrefix(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.endsWith": {
 			Imports: []string{"strings"},
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("strings.HasSuffix(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("strings.HasSuffix(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.indexOf": {
 			Imports: []string{"strings"},
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("int64(strings.Index(%s, %s))", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("int64(strings.Index(%s, %s))", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"str.replace": {
 			Imports: []string{"strings"},
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("strings.ReplaceAll(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				return fmt.Sprintf("strings.ReplaceAll(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"int.toByte": {
@@ -146,22 +146,22 @@ func init() {
 		},
 		"mailbox.post": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.post(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				return fmt.Sprintf("%s.post(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
 		"mailbox.postTimeout": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.postTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				return fmt.Sprintf("%s.postTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"mailbox.check": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.check(%s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0].Value, true))
+				return fmt.Sprintf("%s.check(%s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0], true))
 			},
 		},
 		"mailbox.checkTimeout": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.checkTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0].Value, true), e.emitExpr(ex.Args[1].Value))
+				return fmt.Sprintf("%s.checkTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0], true), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"mailbox.get": {
@@ -197,9 +197,9 @@ func init() {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
 				recvType := e.prog.ExprTypes[ci.Receiver]
 				if recvType.ElemType == nil {
-					return fmt.Sprintf("%s.waitTimeoutVoid(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+					return fmt.Sprintf("%s.waitTimeoutVoid(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 				}
-				return fmt.Sprintf("%s.waitTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0].Value, true), e.emitExpr(ex.Args[1].Value))
+				return fmt.Sprintf("%s.waitTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0], true), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"job.isDone": {
@@ -250,11 +250,6 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("(%s%s)", op, e.emitExpr(ex.Operand))
 
 	case *ast.BinaryExpr:
-		if e.liftedExprs != nil {
-			if valVar, ok := e.liftedExprs[ex]; ok {
-				return valVar
-			}
-		}
 		if ex.Op == token.AMP {
 			e.useImport("fmt")
 			return fmt.Sprintf("(fmt.Sprint(%s) + fmt.Sprint(%s))", e.emitExpr(ex.Left), e.emitExpr(ex.Right))
@@ -345,11 +340,6 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("cbSliceList(%s, %s, %s)", e.emitExpr(ex.Target), startStr, endStr)
 
 	case *ast.CallExpr:
-		if e.liftedExprs != nil {
-			if valVar, ok := e.liftedExprs[ex]; ok {
-				return valVar
-			}
-		}
 		return e.emitCallExprRaw(ex)
 
 	default:
@@ -359,17 +349,11 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 func (e *emitter) emitArgExpr(expr ast.Expr, byRef bool) string {
 	if byRef {
-		if argId, ok := expr.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
-			return goIdent(argId.Name)
+		id := expr.(*ast.IdentExpr)
+		if e.byRefVars != nil && e.byRefVars[id.Name] {
+			return goIdent(id.Name)
 		}
-		if fa, ok := expr.(*ast.FieldAccessExpr); ok {
-			if _, boxed := e.isBoxedFieldAccess(fa); boxed {
-				e.usedBoxHelpers = true
-				return fmt.Sprintf("cbEnsureBox(&%s.%s)", e.emitPlaceExpr(fa.Target), goStructFieldName(fa.Field))
-			}
-			return fmt.Sprintf("&%s.%s", e.emitPlaceExpr(fa.Target), goStructFieldName(fa.Field))
-		}
-		return "&" + e.emitExpr(expr)
+		return "&" + goIdent(id.Name)
 	}
 	return e.emitExpr(expr)
 }
@@ -386,14 +370,10 @@ func (e *emitter) fnGoName(fn *sema.FnSymbol) string {
 }
 
 func (e *emitter) effectiveCallArgs(ex *ast.CallExpr, ci *sema.CallInfo) []ast.Expr {
-	args := make([]ast.Expr, 0, len(ex.Args)+1)
 	if ci.Kind == sema.CallUFCS && ci.Receiver != nil {
-		args = append(args, ci.Receiver)
+		return append([]ast.Expr{ci.Receiver}, ex.Args...)
 	}
-	for _, a := range ex.Args {
-		args = append(args, a.Value)
-	}
-	return args
+	return ex.Args
 }
 
 func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
@@ -401,7 +381,7 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 		e.useImport("fmt")
 		var parts []string
 		for _, a := range ex.Args {
-			parts = append(parts, fmt.Sprintf("fmt.Sprint(%s)", e.emitExpr(a.Value)))
+			parts = append(parts, fmt.Sprintf("fmt.Sprint(%s)", e.emitExpr(a)))
 		}
 		if len(parts) == 0 {
 			return "fmt.Println()"
@@ -414,24 +394,13 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 			switch ci.Kind {
 			case sema.CallStructCtor:
 				var fields []string
-				if ci.NamedArgs {
-					for _, a := range ex.Args {
-						valStr := e.emitExpr(a.Value)
-						if fs, ok := ci.Struct.FieldMap[a.Name]; ok && fs.Boxed {
-							e.usedBoxHelpers = true
-							valStr = fmt.Sprintf("cbBox(%s)", valStr)
-						}
-						fields = append(fields, fmt.Sprintf("%s: %s", goStructFieldName(a.Name), valStr))
+				for i, a := range ex.Args {
+					valStr := e.emitExpr(a)
+					if i < len(ci.Struct.Fields) && ci.Struct.Fields[i].Boxed {
+						e.usedBoxHelpers = true
+						valStr = fmt.Sprintf("cbBox(%s)", valStr)
 					}
-				} else {
-					for i, a := range ex.Args {
-						valStr := e.emitExpr(a.Value)
-						if i < len(ci.Struct.Fields) && ci.Struct.Fields[i].Boxed {
-							e.usedBoxHelpers = true
-							valStr = fmt.Sprintf("cbBox(%s)", valStr)
-						}
-						fields = append(fields, valStr)
-					}
+					fields = append(fields, valStr)
 				}
 				structGoName := ci.Struct.Name
 				if ci.Struct.GoName != "" {

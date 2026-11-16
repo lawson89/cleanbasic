@@ -70,10 +70,10 @@ public fn printUsage(p as Parser)
 	if p.flags.len() > 0 or p.options.len() > 0
 		print("Options:")
 		for f in p.flags
-			print($"  -{f.short}, --{f.name}  {f.desc}")
+			print("  -" & f.short & ", --" & f.name & "  " & f.desc)
 		end for
 		for o in p.options
-			print($"  -{o.short}, --{o.name} <val>  {o.desc} (default: {o.defaultVal})")
+			print("  -" & o.short & ", --" & o.name & " <val>  " & o.desc & " (default: " & o.defaultVal & ")")
 		end for
 	end if
 end fn

@@ -241,7 +241,6 @@ type CallInfo struct {
 	Kind       CallKind
 	Fn         *FnSymbol
 	Struct     *StructSymbol
-	NamedArgs  bool
 	MethodName string
 	Receiver   ast.Expr
 	CanError   bool
@@ -338,13 +337,14 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 }
 
 type analyzer struct {
-	prog         *TypedProgram
-	mod          *ModuleInfo
-	currentFn    *FnSymbol
-	loopDepth    int
-	tryDepth     int
-	deferDepth   int
-	startJobCall *ast.CallExpr
+	prog                *TypedProgram
+	mod                 *ModuleInfo
+	currentFn           *FnSymbol
+	loopDepth           int
+	tryDepth            int
+	deferDepth          int
+	startJobCall        *ast.CallExpr
+	allowedFallibleExpr ast.Expr
 }
 
 func (a *analyzer) lookupStruct(t Type) *StructSymbol {
