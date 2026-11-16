@@ -24,17 +24,17 @@ fn main() as int
     for x in [1, 2, 3]
         loopTotal = loopTotal + x
     end for
-    print("containers: sum=" & sum & ", loopTotal=" & loopTotal)
+    print("containers: sum=" + sum.toStr() + ", loopTotal=" + loopTotal.toStr())
 
     dim u = User("Alice", 100)
-    print("interp: User=" & u.name & ", Score=" & u.score)
+    print("interp: User=" + u.name + ", Score=" + u.score.toStr())
 
     dim raw = "  alpha,beta,42  "
     dim trimmed = raw.trim()
     dim parts = trimmed.split(",")
     dim joined = str.join([parts[0], parts[1]], "-")
     if trimmed.contains("beta")
-        print("prelude: " & joined & ":" & parts[2])
+        print("prelude: " + joined + ":" + parts[2])
     end if
 
     return 0

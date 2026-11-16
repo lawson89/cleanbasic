@@ -113,6 +113,8 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 		return a.analyzeTryCatchStmt(s, scope)
 	case *ast.DeferStmt:
 		return a.analyzeDeferStmt(s, scope)
+	case *ast.StartJobStmt:
+		return a.analyzeStartJobStmt(s, scope)
 	case *ast.ReturnStmt:
 		return a.analyzeReturnStmt(s, scope)
 	case *ast.BreakStmt:
@@ -128,6 +130,29 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 	default:
 		return newSemaError(stmt.StmtPos(), "unsupported statement")
 	}
+}
+
+func (a *analyzer) analyzeStartJobStmt(s *ast.StartJobStmt, scope *Scope) error {
+	prevStartJobCall := a.startJobCall
+	a.startJobCall = s.Call
+	_, err := a.inferExpr(s.Call, scope)
+	a.startJobCall = prevStartJobCall
+	if err != nil {
+		return err
+	}
+	ci := a.prog.CallInfos[s.Call]
+	if ci == nil || (ci.Kind != CallFunc && ci.Kind != CallUFCS) || ci.Fn == nil {
+		return newSemaError(s.Pos, "start job target must be a user or module function call")
+	}
+	if ci.Fn.CanError {
+		return newSemaError(s.Pos, "cannot use 'start job' with fallible function %q (handle errors inside the worker function)", ci.Fn.Name)
+	}
+	for _, p := range ci.Fn.Params {
+		if p.ByRef {
+			return newSemaError(s.Pos, "cannot use 'start job' with function %q that takes 'byref' parameters", ci.Fn.Name)
+		}
+	}
+	return nil
 }
 
 func (a *analyzer) inferRootExpr(expr ast.Expr, scope *Scope) (Type, error) {

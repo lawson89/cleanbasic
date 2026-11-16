@@ -9,7 +9,6 @@ const (
 	btElem
 	btKey
 	btVal
-	btJobResult
 )
 
 type builtinTypeRef struct {
@@ -20,12 +19,11 @@ type builtinTypeRef struct {
 func bt(t Type) builtinTypeRef { return builtinTypeRef{kind: btConcrete, concrete: t} }
 
 var (
-	btListStr      = bt(Type{Kind: KindList, SubTypes: []Type{StrType}})
-	btListByte     = bt(Type{Kind: KindList, SubTypes: []Type{ByteType}})
-	btElemRef      = builtinTypeRef{kind: btElem}
-	btKeyRef       = builtinTypeRef{kind: btKey}
-	btValRef       = builtinTypeRef{kind: btVal}
-	btJobResultRef = builtinTypeRef{kind: btJobResult}
+	btListStr  = bt(Type{Kind: KindList, SubTypes: []Type{StrType}})
+	btListByte = bt(Type{Kind: KindList, SubTypes: []Type{ByteType}})
+	btElemRef  = builtinTypeRef{kind: btElem}
+	btKeyRef   = builtinTypeRef{kind: btKey}
+	btValRef   = builtinTypeRef{kind: btVal}
 )
 
 func (r builtinTypeRef) resolve(recv Type) Type {
@@ -36,11 +34,6 @@ func (r builtinTypeRef) resolve(recv Type) Type {
 		return recv.Key()
 	case btVal:
 		return recv.Val()
-	case btJobResult:
-		if len(recv.SubTypes) > 0 {
-			return recv.SubTypes[0]
-		}
-		return VoidType
 	default:
 		return r.concrete
 	}
@@ -89,9 +82,17 @@ var instanceBuiltinMethods = map[TypeKind]map[string]builtinMethodSpec{
 	},
 	KindInt: {
 		"toByte": {MethodName: "int.toByte", Return: bt(ByteType)},
+		"toStr":  {MethodName: "int.toStr", Return: bt(StrType)},
+	},
+	KindFloat: {
+		"toStr": {MethodName: "float.toStr", Return: bt(StrType)},
+	},
+	KindBool: {
+		"toStr": {MethodName: "bool.toStr", Return: bt(StrType)},
 	},
 	KindByte: {
 		"toInt": {MethodName: "byte.toInt", Return: bt(IntType)},
+		"toStr": {MethodName: "byte.toStr", Return: bt(StrType)},
 	},
 	KindMailbox: {
 		"post":  {MethodName: "mailbox.post", Params: []builtinTypeRef{btElemRef}, Return: bt(VoidType), CanError: true},
@@ -99,10 +100,6 @@ var instanceBuiltinMethods = map[TypeKind]map[string]builtinMethodSpec{
 		"get":   {MethodName: "mailbox.get", Return: btElemRef, CanError: true},
 		"close": {MethodName: "mailbox.close", Return: bt(VoidType)},
 		"count": {MethodName: "mailbox.count", Return: bt(IntType)},
-	},
-	KindJob: {
-		"wait":   {MethodName: "job.wait", Return: btJobResultRef, CanError: true},
-		"isDone": {MethodName: "job.isDone", Return: bt(BoolType)},
 	},
 }
 
@@ -131,11 +128,11 @@ func (a *analyzer) applyBuiltinMethod(e *ast.CallExpr, recvExpr ast.Expr, recvTy
 			return VoidType, err
 		}
 	}
-	if spec.CanError {
+	if spec.CanError && e != a.startJobCall {
 		if !a.inFallibleContext() {
 			return VoidType, newSemaError(e.Pos, "call to 'can error' method '%s' must be inside a 'try' block or a 'can error' function", spec.MethodName)
 		}
-		if e != a.allowedFallibleExpr && e != a.startJobCall {
+		if e != a.allowedFallibleExpr {
 			return VoidType, newSemaError(e.Pos, "call to 'can error' method '%s' may only appear as a top-level statement expression", spec.MethodName)
 		}
 	}

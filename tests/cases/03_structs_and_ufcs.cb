@@ -12,16 +12,16 @@ fn heal(byref p as Player, amount as int)
 end fn
 
 fn summary(p as Player) as str
-    return p.name & " | " & p.health & " | " & p.active
+    return p.name + " | " + p.health.toStr() + " | " + p.active.toStr()
 end fn
 
 fn main() as int
     dim blank = Player()
-    print("default: " & blank.summary())
+    print("default: " + blank.summary())
 
     dim hero = Player("Alice", 10, true)
     ' Same-module UFCS mutating via byref
     hero.heal(50)
-    print("hero: " & hero.summary())
+    print("hero: " + hero.summary())
     return 0
 end fn

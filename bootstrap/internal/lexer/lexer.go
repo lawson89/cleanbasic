@@ -381,8 +381,7 @@ func (l *Lexer) scanNextToken() (token.Token, error) {
 		if l.peekNext() == '&' {
 			return token.Token{}, &LexError{Pos: startPos, Message: "C-style logical operator '&&' is forbidden in CleanBasic; use 'and' instead"}
 		}
-		l.advance()
-		return token.Token{Kind: token.AMP, Lexeme: "&", Pos: startPos}, nil
+		return token.Token{}, &LexError{Pos: startPos, Message: fmt.Sprintf("unexpected character %q", ch)}
 	case '|':
 		if l.peekNext() == '|' {
 			return token.Token{}, &LexError{Pos: startPos, Message: "C-style logical operator '||' is forbidden in CleanBasic; use 'or' instead"}

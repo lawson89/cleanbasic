@@ -169,18 +169,28 @@ func init() {
 				return fmt.Sprintf("%s.count()", e.emitExpr(ci.Receiver))
 			},
 		},
-		"job.wait": {
+		"int.toStr": {
+			Imports: []string{"strconv"},
 			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
-				recvType := e.prog.ExprTypes[ci.Receiver]
-				if len(recvType.SubTypes) == 0 {
-					return fmt.Sprintf("%s.waitVoid()", e.emitExpr(ci.Receiver))
-				}
-				return fmt.Sprintf("%s.wait()", e.emitExpr(ci.Receiver))
+				return fmt.Sprintf("strconv.FormatInt(%s, 10)", e.emitExpr(ci.Receiver))
 			},
 		},
-		"job.isDone": {
+		"float.toStr": {
+			Imports: []string{"strconv"},
 			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.isDone()", e.emitExpr(ci.Receiver))
+				return fmt.Sprintf("strconv.FormatFloat(%s, 'g', -1, 64)", e.emitExpr(ci.Receiver))
+			},
+		},
+		"bool.toStr": {
+			Imports: []string{"strconv"},
+			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
+				return fmt.Sprintf("strconv.FormatBool(%s)", e.emitExpr(ci.Receiver))
+			},
+		},
+		"byte.toStr": {
+			Imports: []string{"strconv"},
+			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
+				return fmt.Sprintf("strconv.FormatInt(int64(%s), 10)", e.emitExpr(ci.Receiver))
 			},
 		},
 	}
@@ -226,10 +236,6 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("(%s%s)", op, e.emitExpr(ex.Operand))
 
 	case *ast.BinaryExpr:
-		if ex.Op == token.AMP {
-			e.useImport("fmt")
-			return fmt.Sprintf("(fmt.Sprint(%s) + fmt.Sprint(%s))", e.emitExpr(ex.Left), e.emitExpr(ex.Right))
-		}
 		op := string(ex.Op)
 		if ex.Op == token.AND {
 			op = "&&"
@@ -267,9 +273,6 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 			return fmt.Sprintf("cbNewMailbox[%s](%s)", e.goSemaType(t.Elem()), capStr)
 		}
 		return fmt.Sprintf("%s{}", e.goSemaType(t))
-
-	case *ast.StartJobExpr:
-		return e.emitStartJobExpr(ex)
 
 	case *ast.FieldAccessExpr:
 		if e.prog != nil {
@@ -400,45 +403,4 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 	}
 
 	return ""
-}
-
-func (e *emitter) emitStartJobExpr(ex *ast.StartJobExpr) string {
-	e.usedJob = true
-	ci := e.prog.CallInfos[ex.Call]
-	fnName := e.fnGoName(ci.Fn)
-	rawArgs := e.effectiveCallArgs(ex.Call, ci)
-
-	paramDecls := make([]string, 0, len(rawArgs))
-	callArgs := make([]string, 0, len(rawArgs))
-	passArgs := make([]string, 0, len(rawArgs))
-	for i, argExpr := range rawArgs {
-		pType := e.goSemaType(ci.Fn.Params[i].Type)
-		pName := fmt.Sprintf("_cbJobArg_%d", i)
-		paramDecls = append(paramDecls, fmt.Sprintf("%s %s", pName, pType))
-		callArgs = append(callArgs, e.emitExpr(argExpr))
-		passArgs = append(passArgs, pName)
-	}
-
-	retGoType := "struct{}"
-	if !ci.Fn.ReturnType.IsVoid() {
-		retGoType = e.goSemaType(ci.Fn.ReturnType)
-	}
-
-	var body string
-	if ci.Fn.ReturnType.IsVoid() {
-		if ci.Fn.CanError {
-			body = fmt.Sprintf("return struct{}{}, %s(%s)", fnName, strings.Join(passArgs, ", "))
-		} else {
-			body = fmt.Sprintf("%s(%s); return struct{}{}, nil", fnName, strings.Join(passArgs, ", "))
-		}
-	} else {
-		if ci.Fn.CanError {
-			body = fmt.Sprintf("return %s(%s)", fnName, strings.Join(passArgs, ", "))
-		} else {
-			body = fmt.Sprintf("return %s(%s), nil", fnName, strings.Join(passArgs, ", "))
-		}
-	}
-
-	return fmt.Sprintf("func(%s) *CbJob[%s] { return cbStartJob(func() (%s, error) { %s }) }(%s)",
-		strings.Join(paramDecls, ", "), retGoType, retGoType, body, strings.Join(callArgs, ", "))
 }

@@ -58,7 +58,7 @@ func TestTwoWordKeywords(t *testing.T) {
 		token.START_JOB, token.NEWLINE,
 		token.IDENT, token.NEWLINE,
 		token.MAILBOX, token.NEWLINE,
-		token.JOB, token.NEWLINE,
+		token.IDENT, token.NEWLINE,
 		token.EOF,
 	}
 
@@ -92,6 +92,11 @@ func TestForbiddenCStyleLogicalOperators(t *testing.T) {
 			name:    "logical not !",
 			src:     "dim ok = !a\n",
 			wantSub: "use 'not' instead",
+		},
+		{
+			name:    "removed concat &",
+			src:     "dim s = a & b\n",
+			wantSub: "unexpected character '&'",
 		},
 	}
 

@@ -25,7 +25,8 @@ func TestEmitGoPrimitiveMappingAndLowering(t *testing.T) {
 		"    dim res = add(3, 4)",
 		"    dim ratio = 1.5",
 		"    dim ok = true",
-		fmt.Sprintf("    dim greeting = %q & res", "res="),
+		"    dim b as byte = 7.toByte()",
+		"    dim greeting = \"res=\" + res.toStr() + \":\" + ratio.toStr() + \":\" + b.toStr() + \":\" + \"hi\".toStr()",
 		fmt.Sprintf("    print(greeting, %q, ratio, %q, ok)", " ratio=", " ok="),
 		"    return 0",
 		"end fn",
@@ -49,7 +50,10 @@ func TestEmitGoPrimitiveMappingAndLowering(t *testing.T) {
 		"_ = unusedLocal",
 		"var ratio float64 = float64(1.5)",
 		"var ok bool = true",
-		fmt.Sprintf("fmt.Sprint(%q) + fmt.Sprint(res)", "res="),
+		"strconv.FormatInt(res, 10)",
+		"strconv.FormatFloat(ratio, 'g', -1, 64)",
+		"strconv.FormatInt(int64(b), 10)",
+		fmt.Sprintf("%q", "hi"),
 		fmt.Sprintf("fmt.Println(fmt.Sprint(greeting) + fmt.Sprint(%q) + fmt.Sprint(ratio) + fmt.Sprint(%q) + fmt.Sprint(ok))", " ratio=", " ok="),
 		"func cb_main() int64",
 		"os.Exit(int(code))",
@@ -329,22 +333,22 @@ import "std/regex"
 
 fn main()
 	dim p = fs.join("dir", "hello.cb")
-	print(fs.base(p) & ":" & fs.dir(p) & ":" & fs.ext(p))
+	print(fs.base(p) + ":" + fs.dir(p) + ":" + fs.ext(p))
 	print(fs.isDir("."))
 
 	dim s = "hello_world.cb"
-	print(s.startsWith("hello") & ":" & s.endsWith(".cb") & ":" & s.indexOf("world") & ":" & s.indexOf("nope") & ":" & s.replace("_", "-"))
+	print(s.startsWith("hello").toStr() + ":" + s.endsWith(".cb").toStr() + ":" + s.indexOf("world").toStr() + ":" + s.indexOf("nope").toStr() + ":" + s.replace("_", "-"))
 
 	try
 		dim cwd = os.cwd()
 		print(cwd.len() > 0)
 
 		dim re = regex.compile("[0-9]+")
-		print(re.isMatch("ab12cd") & ":" & re.find("ab12cd34") & ":" & str.join(re.findAll("ab12cd34"), ",") & ":" & re.replaceAll("ab12cd34", "X"))
+		print(re.isMatch("ab12cd").toStr() + ":" + re.find("ab12cd34") + ":" + str.join(re.findAll("ab12cd34"), ",") + ":" + re.replaceAll("ab12cd34", "X"))
 		dim m = regex.match("^foo", "foobar")
 		print(m)
 	catch e
-		print("err:" & e.msg)
+		print("err:" + e.msg)
 	end try
 
 	try
@@ -420,7 +424,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"fn updateByRef(byref x as int)",
 		"    if true",
 		"        dim y = 99",
-		`        print("inner=" & y)`,
+		`        print("inner=" + y.toStr())`,
 		"    end if",
 		"    x = x + 1",
 		"end fn",
@@ -441,7 +445,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"    for i = 1 to countCall(endCalls, 5)",
 		"        sum = sum + i",
 		"    end for",
-		`    print(sum & ":" & endCalls)`,
+		`    print(sum.toStr() + ":" + endCalls.toStr())`,
 		"",
 		`    dim u = User("Ada", 7)`,
 		"    print(json.stringify(u))",
@@ -449,24 +453,24 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		`        dim jv = json.parse("{\"k\":1}")`,
 		"        print(json.stringify(jv))",
 		"    catch e",
-		`        print("json-err:" & e.msg)`,
+		`        print("json-err:" + e.msg)`,
 		"    end try",
 		"",
 		"    dim fmt = 10",
 		"    dim map = 20",
 		"    updateByRef(fmt)",
-		`    print("vars=" & fmt & ":" & map)`,
+		`    print("vars=" + fmt.toStr() + ":" + map.toStr())`,
 		"",
 		"    dim r = regex.Regex()",
-		`    print("re=" & r.isMatch("abc"))`,
+		`    print("re=" + r.isMatch("abc").toStr())`,
 		"    dim p = cli.Parser()",
 		`    p.addFlag("ignore-case", "i", "ignore case")`,
 		`    p.addFlag("line-number", "n", "line numbers")`,
 		"    try",
 		`        dim args = p.parseArgs(["-in", "--", "-v", "file.txt"])`,
-		`        print("cli=" & args.hasFlag("ignore-case") & ":" & args.hasFlag("line-number") & ":" & str.join(args.positionals, ","))`,
+		`        print("cli=" + args.hasFlag("ignore-case").toStr() + ":" + args.hasFlag("line-number").toStr() + ":" + str.join(args.positionals, ","))`,
 		"    catch e",
-		`        print("cli-err:" & e.msg)`,
+		`        print("cli-err:" + e.msg)`,
 		"    end try",
 		"    return 0",
 		"end fn",
@@ -542,11 +546,10 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 		"    child.val = 20",
 		"    n.children.push(child)",
 		"    dim box = mailbox[int](4)",
-		"    dim j = start job worker(box)",
+		"    start job worker(box)",
 		"    try",
 		"        box.post(42)",
-		"        dim res = j.wait()",
-		"        print(res, n.children[0].val)",
+		"        print(n.children[0].val)",
 		"    catch e",
 		"        print(e)",
 		"    end try",
@@ -560,12 +563,12 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	for _, want := range []string{"Cb_children []TreeNode", "cbNewMailbox[int64](int64(4))", "cbStartJob("} {
+	for _, want := range []string{"Cb_children []TreeNode", "cbNewMailbox[int64](int64(4))", "go worker("} {
 		if !strings.Contains(goCode, want) {
 			t.Errorf("expected generated Go code to contain %q, got:\n%s", want, goCode)
 		}
 	}
-	for _, unwanted := range []string{"cbBox", "cbUnbox", "cbEnsureBox", "*TreeNode"} {
+	for _, unwanted := range []string{"cbBox", "cbUnbox", "cbEnsureBox", "*TreeNode", "CbJob", "cbStartJob"} {
 		if strings.Contains(goCode, unwanted) {
 			t.Errorf("did not expect generated Go code to contain %q, got:\n%s", unwanted, goCode)
 		}
@@ -583,9 +586,8 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 		"fn runCase() can error",
 		"    dim cap = getCap()",
 		"    dim box = mailbox[int](cap)",
-		"    dim j = start job worker(cap)",
-		"    dim ok = true and j.isDone()",
-		"    print(box.count(), ok)",
+		"    start job worker(cap)",
+		"    print(box.count())",
 		"end fn",
 		"fn main() as int",
 		"    try",

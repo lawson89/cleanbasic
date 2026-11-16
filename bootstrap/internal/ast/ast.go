@@ -39,7 +39,6 @@ const (
 	TypeList      TypeKind = "list"      // list[ElemType]
 	TypeDict      TypeKind = "dict"      // dict[KeyType, ValType]
 	TypeMailbox   TypeKind = "mailbox"   // mailbox[ElemType]
-	TypeJob       TypeKind = "job"       // job or job[ElemType]
 	TypeQualified TypeKind = "qualified" // Player or mod.Player
 )
 
@@ -66,11 +65,6 @@ func (t TypeExpr) String() string {
 			return fmt.Sprintf("dict[%s, %s]", t.SubTypes[0].String(), t.SubTypes[1].String())
 		}
 		return "dict[]"
-	case TypeJob:
-		if len(t.SubTypes) == 1 {
-			return fmt.Sprintf("job[%s]", t.SubTypes[0].String())
-		}
-		return "job"
 	case TypeQualified:
 		return strings.Join(t.Parts, ".")
 	default:
@@ -469,11 +463,11 @@ type CallExpr struct {
 func (e *CallExpr) ExprPos() token.Position { return e.Pos }
 func (e *CallExpr) exprNode()               {}
 
-// StartJobExpr represents launching a concurrent background job: start job fnCall(...)
-type StartJobExpr struct {
+// StartJobStmt represents launching a concurrent background goroutine: start job fnCall(...)
+type StartJobStmt struct {
 	Pos  token.Position
 	Call *CallExpr
 }
 
-func (e *StartJobExpr) ExprPos() token.Position { return e.Pos }
-func (e *StartJobExpr) exprNode()               {}
+func (s *StartJobStmt) StmtPos() token.Position { return s.Pos }
+func (s *StartJobStmt) stmtNode()               {}

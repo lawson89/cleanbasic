@@ -26,7 +26,6 @@ const (
 	KindList    TypeKind = "list"
 	KindDict    TypeKind = "dict"
 	KindMailbox TypeKind = "mailbox"
-	KindJob     TypeKind = "job"
 	KindErr     TypeKind = "err"
 )
 
@@ -36,7 +35,7 @@ type Type struct {
 	Name     string
 	ModuleID string
 	GoName   string
-	SubTypes []Type // [elem] for list/mailbox/job; [key, val] for dict
+	SubTypes []Type // [elem] for list/mailbox; [key, val] for dict
 }
 
 func (t Type) Elem() Type {
@@ -87,11 +86,6 @@ func (t Type) String() string {
 			return fmt.Sprintf("dict[%s, %s]", t.SubTypes[0].String(), t.SubTypes[1].String())
 		}
 		return "dict[?, ?]"
-	case KindJob:
-		if len(t.SubTypes) == 1 {
-			return fmt.Sprintf("job[%s]", t.SubTypes[0].String())
-		}
-		return "job"
 	default:
 		return string(t.Kind)
 	}
@@ -108,7 +102,7 @@ func (t Type) Equals(other Type) bool {
 	switch t.Kind {
 	case KindStruct, KindEnum:
 		return t.Name == other.Name && t.ModuleID == other.ModuleID
-	case KindList, KindMailbox, KindJob, KindDict:
+	case KindList, KindMailbox, KindDict:
 		if len(t.SubTypes) != len(other.SubTypes) {
 			return false
 		}
@@ -356,8 +350,8 @@ type analyzer struct {
 	loopDepth           int
 	tryDepth            int
 	deferDepth          int
-	startJobCall        *ast.CallExpr
 	allowedFallibleExpr ast.Expr
+	startJobCall        *ast.CallExpr
 }
 
 func (a *analyzer) lookupStruct(t Type) *StructSymbol {

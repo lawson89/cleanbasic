@@ -9,8 +9,8 @@ fn main() as int
     x = x / 6
     x = x % 5
 
-    dim msg = "count=" & x
-    print("arithmetic: " & msg)
+    dim msg = "count=" + x.toStr()
+    print("arithmetic: " + msg)
 
     dim ok = (x == 3) and not (x > 10) or false
     print("logic: ", ok)

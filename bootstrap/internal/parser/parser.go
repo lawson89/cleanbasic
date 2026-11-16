@@ -105,7 +105,7 @@ func (p *Parser) expectIdent(context string) (token.Token, error) {
 
 func (p *Parser) expectFieldOrMethodIdent(context string) (token.Token, error) {
 	tok := p.cur()
-	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.BYTE, token.LIST, token.DICT, token.ERR, token.MAILBOX, token.JOB}, tok.Kind) {
+	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.BYTE, token.LIST, token.DICT, token.ERR, token.MAILBOX}, tok.Kind) {
 		p.advance()
 		return tok, nil
 	}
@@ -563,27 +563,6 @@ func (p *Parser) parseType() (ast.TypeExpr, error) {
 			SubTypes: []ast.TypeExpr{keyType, valType},
 		}, nil
 
-	case token.JOB:
-		p.advance()
-		if p.match(token.LBRACKET) {
-			elemType, err := p.parseType()
-			if err != nil {
-				return ast.TypeExpr{}, err
-			}
-			if _, err := p.expect(token.RBRACKET, "after job return type"); err != nil {
-				return ast.TypeExpr{}, err
-			}
-			return ast.TypeExpr{
-				Pos:      tok.Pos,
-				Kind:     ast.TypeJob,
-				SubTypes: []ast.TypeExpr{elemType},
-			}, nil
-		}
-		return ast.TypeExpr{
-			Pos:  tok.Pos,
-			Kind: ast.TypeJob,
-		}, nil
-
 	case token.IDENT:
 		p.advance()
 		parts := []string{tok.Lexeme}
@@ -629,6 +608,8 @@ func (p *Parser) parseStatement() (ast.Statement, error) {
 		return p.parseTryCatchStmt()
 	case token.DEFER:
 		return p.parseDeferStmt()
+	case token.START_JOB:
+		return p.parseStartJobStmt()
 	case token.RETURN:
 		return p.parseReturnStmt()
 	case token.BREAK:
@@ -998,6 +979,22 @@ func (p *Parser) parseDeferStmt() (*ast.DeferStmt, error) {
 }
 
 // ReturnStmt ::= "return" [Expr] NEWLINE
+func (p *Parser) parseStartJobStmt() (*ast.StartJobStmt, error) {
+	startTok := p.advance()
+	operand, err := p.parsePostfixExpr()
+	if err != nil {
+		return nil, err
+	}
+	call, ok := operand.(*ast.CallExpr)
+	if !ok {
+		return nil, errAt(startTok.Pos, "expected function call after 'start job'")
+	}
+	if err := p.expectNewline("start job statement"); err != nil {
+		return nil, err
+	}
+	return &ast.StartJobStmt{Pos: startTok.Pos, Call: call}, nil
+}
+
 func (p *Parser) parseReturnStmt() (*ast.ReturnStmt, error) {
 	retTok, err := p.expect(token.RETURN, "at start of return statement")
 	if err != nil {
@@ -1083,9 +1080,9 @@ func (p *Parser) parseCmpExpr() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseAddExpr, token.EQ, token.NEQ, token.LT, token.GT, token.LTE, token.GTE)
 }
 
-// AddExpr ::= MulExpr (("+" | "-" | "&") MulExpr)*
+// AddExpr ::= MulExpr (("+" | "-") MulExpr)*
 func (p *Parser) parseAddExpr() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseMulExpr, token.PLUS, token.MINUS, token.AMP)
+	return p.parseBinaryLeft(p.parseMulExpr, token.PLUS, token.MINUS)
 }
 
 // MulExpr ::= UnaryExpr (("*" | "/" | "%") UnaryExpr)*
@@ -1093,20 +1090,8 @@ func (p *Parser) parseMulExpr() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseUnaryExpr, token.STAR, token.SLASH, token.PERCENT)
 }
 
-// UnaryExpr ::= ("+" | "-") UnaryExpr | "start job" CallExpr | PostfixExpr
+// UnaryExpr ::= ("+" | "-") UnaryExpr | PostfixExpr
 func (p *Parser) parseUnaryExpr() (ast.Expr, error) {
-	if p.cur().Kind == token.START_JOB {
-		startTok := p.advance()
-		operand, err := p.parsePostfixExpr()
-		if err != nil {
-			return nil, err
-		}
-		call, ok := operand.(*ast.CallExpr)
-		if !ok {
-			return nil, errAt(startTok.Pos, "expected function call after 'start job'")
-		}
-		return &ast.StartJobExpr{Pos: startTok.Pos, Call: call}, nil
-	}
 	if p.cur().Kind == token.PLUS || p.cur().Kind == token.MINUS {
 		opTok := p.advance()
 		operand, err := p.parseUnaryExpr()

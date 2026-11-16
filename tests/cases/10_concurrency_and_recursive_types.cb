@@ -6,7 +6,6 @@
 ' EXPECT_OUT: post after close err=cannot post to closed mailbox
 ' EXPECT_OUT: get after close err=mailbox is closed and empty
 ' EXPECT_OUT: pool sum=60
-' EXPECT_OUT: job wait err=boom
 ' EXPECT_OUT: drain=100,200,300
 ' EXPECT_OUT: done=true
 
@@ -30,32 +29,37 @@ fn bumpVal(byref n as TreeNode, v as int)
     n.val = v
 end fn
 
-fn worker(id as int, tasks as mailbox[int], results as mailbox[int]) can error
+fn worker(id as int, tasks as mailbox[int], results as mailbox[int], done as mailbox[bool])
     for item in tasks
-        results.post(item * 2)
+        try
+            results.post(item * 2)
+        catch ex
+        end try
     end for
+    try
+        done.post(true)
+    catch ex
+    end try
 end fn
 
-fn failJob() as int can error
-    error("boom")
-end fn
-
-fn quickJob(x as int) as int
-    return x + 1
+fn quickWorker(x as int, outBox as mailbox[int])
+    try
+        outBox.post(x + 1)
+    catch ex
+    end try
 end fn
 
 fn main() as int
     ' 1. Pure value struct zero-initialization, value-copy isolation, nested mutation, byref
-    ' 1. Pure value struct zero-initialization, value-copy isolation, nested mutation, byref
     dim empty = TreeNode()
-    print("leaf zero=" & empty.val & " len=" & empty.children.len())
+    print("leaf zero=" + empty.val.toStr() + " len=" + empty.children.len().toStr())
     dim child = TreeNode()
     child.val = 10
     dim parent = TreeNode()
     parent.val = 1
     parent.children.push(child)
     child.val = 999
-    print("isolation orig=10 copy=" & parent.children[0].val)
+    print("isolation orig=10 copy=" + parent.children[0].val.toStr())
 
     dim grand = TreeNode()
     grand.val = 99
@@ -63,7 +67,7 @@ fn main() as int
     dim firstChild = parent.children[0]
     bumpVal(firstChild, 55)
     parent.children[0] = firstChild
-    print("nested=" & parent.children[0].children[0].val & " byref=" & parent.children[0].val)
+    print("nested=" + parent.children[0].children[0].val.toStr() + " byref=" + parent.children[0].val.toStr())
 
     ' 2. Mutually recursive structs via list[T]
     dim e = Expr()
@@ -73,32 +77,33 @@ fn main() as int
     inner.tag = 77
     blk.exprs.push(inner)
     e.blocks.push(blk)
-    print("mutual=" & e.blocks[0].exprs[0].tag)
+    print("mutual=" + e.blocks[0].exprs[0].tag.toStr())
+
     ' 3. Mailbox check, post, close, error on closed post & empty get
     dim mb = mailbox[int](2)
     dim outVal = 0
     dim ok = mb.check(outVal)
-    print("check empty=" & ok & " val=" & outVal)
+    print("check empty=" + ok.toStr() + " val=" + outVal.toStr())
 
     mb.close()
     try
         mb.post(123)
     catch ex
-        print("post after close err=" & ex.msg)
+        print("post after close err=" + ex.msg)
     end try
     try
         dim v = mb.get()
-        print("unexpected=" & v)
+        print("unexpected=" + v.toStr())
     catch ex
-        print("get after close err=" & ex.msg)
+        print("get after close err=" + ex.msg)
     end try
 
-    ' 4. Worker pool with mailbox[T], list[job], start job
+    ' 4. Worker pool with mailbox[T] and start job statement
     dim tasks = mailbox[int]()
     dim results = mailbox[int](8)
-    dim jobs = list[job]()
+    dim done = mailbox[bool](2)
     for w = 1 to 2
-        jobs.push(start job worker(w, tasks, results))
+        start job worker(w, tasks, results, done)
     end for
 
     try
@@ -107,8 +112,8 @@ fn main() as int
         tasks.post(15)
         tasks.close()
 
-        for j in jobs
-            j.wait()
+        for w = 1 to 2
+            done.get()
         end for
         results.close()
 
@@ -116,21 +121,12 @@ fn main() as int
         for r in results
             sum = sum + r
         end for
-        print("pool sum=" & sum)
+        print("pool sum=" + sum.toStr())
     catch ex
-        print("pool err=" & ex.msg)
+        print("pool err=" + ex.msg)
     end try
 
-    ' 5. Job error propagation
-    dim fj = start job failJob()
-    try
-        dim fv = fj.wait()
-        print("unexpected=" & fv)
-    catch ex
-        print("job wait err=" & ex.msg)
-    end try
-
-    ' 6. Mailbox for-in drain & job wait / isDone
+    ' 5. Mailbox for-in drain & single start job communication
     dim q = mailbox[int](4)
     try
         q.post(100)
@@ -138,20 +134,21 @@ fn main() as int
         q.post(300)
         q.close()
     catch ex
-        print("q err=" & ex.msg)
+        print("q err=" + ex.msg)
     end try
     dim parts = list[str]()
     for msg in q
-        parts.push("" & msg)
+        parts.push(msg.toStr())
     end for
-    print("drain=" & str.join(parts, ","))
+    print("drain=" + str.join(parts, ","))
 
-    dim qj = start job quickJob(41)
+    dim qOutBox = mailbox[int](1)
+    start job quickWorker(41, qOutBox)
     try
-        dim qOut = qj.wait()
-        print("done=" & (qj.isDone() and qOut == 42))
+        dim qOut = qOutBox.get()
+        print("done=" + (qOut == 42).toStr())
     catch ex
-        print("qj err=" & ex.msg)
+        print("qj err=" + ex.msg)
     end try
 
     return 0

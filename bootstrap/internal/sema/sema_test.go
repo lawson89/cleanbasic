@@ -44,7 +44,7 @@ fn compute(a as int, ratio as float) as str
     dim scaled = ratio * 2.5
     dim ok = (sum > 10) and not false
     if ok
-        return "sum=" & sum & ", scaled=" & scaled
+        return "sum=" + sum.toStr() + ", scaled=" + scaled.toStr()
     else
         return "none"
     end if
@@ -116,7 +116,10 @@ func TestSemanticErrors(t *testing.T) {
 		{"mailbox postTimeout removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    ch.postTimeout(1, 10)\n    return 0\nend fn\n", `no method or UFCS function "postTimeout" for receiver type mailbox[int]`},
 		{"mailbox checkTimeout removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    dim v = 0\n    ch.checkTimeout(v, 10)\n    return 0\nend fn\n", `no method or UFCS function "checkTimeout" for receiver type mailbox[int]`},
 		{"mailbox isClosed removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    dim c = ch.isClosed()\n    return 0\nend fn\n", `no method or UFCS function "isClosed" for receiver type mailbox[int]`},
-		{"job waitTimeout removed", "fn work() as int\n    return 1\nend fn\nfn main() as int\n    dim j = start job work()\n    dim v = 0\n    j.waitTimeout(v, 10)\n    return 0\nend fn\n", `no method or UFCS function "waitTimeout" for receiver type job[int]`},
+		{"start job rejects fallible fn inside try", "fn work() can error\n    error(\"boom\")\nend fn\nfn main() as int\n    try\n        start job work()\n    catch e\n    end try\n    return 0\nend fn\n", "cannot use 'start job' with fallible function"},
+		{"start job rejects fallible fn outside try", "fn work() can error\n    error(\"boom\")\nend fn\nfn main() as int\n    start job work()\n    return 0\nend fn\n", "cannot use 'start job' with fallible function"},
+		{"start job rejects fallible argument", "fn failArg() as int can error\n    error(\"arg\")\n    return 1\nend fn\nfn worker(x as int)\nend fn\nfn main() as int\n    try\n        start job worker(failArg())\n    catch e\n    end try\n    return 0\nend fn\n", "may only appear as a top-level statement expression"},
+		{"str plus int rejected", "fn main() as int\n    dim s = \"a\" + 1\n    return 0\nend fn\n", `type mismatch for operator "+": str and int`},
 	}
 
 	for _, tc := range tests {
@@ -538,7 +541,7 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 	t.Run("start_job_rejects_byref", func(t *testing.T) {
 		src := "fn mut(byref x as int)\n    x = x + 1\nend fn\nfn main()\n    dim a = 1\n    start job mut(a)\nend fn\n"
 		_, err := AnalyzeSource(src, "byref_job.cb")
-		if err == nil || !strings.Contains(err.Error(), "cannot pass 'byref' argument to 'start job'") {
+		if err == nil || !strings.Contains(err.Error(), "that takes 'byref' parameters") {
 			t.Fatalf("expected byref start job error, got: %v", err)
 		}
 	})
@@ -628,7 +631,7 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			"    print(x)",
 			"end fn",
 			"fn main()",
-			"    dim j = start job worker(failArg())",
+			"    start job worker(failArg())",
 			"end fn",
 		}, "\n")
 		_, err := AnalyzeSource(src, "fallible_arg_job.cb")

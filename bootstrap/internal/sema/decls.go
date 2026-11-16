@@ -154,7 +154,7 @@ func (a *analyzer) checkRecursiveStructFields() error {
 
 func (a *analyzer) structReaches(t Type, target *StructSymbol, visited map[string]bool) bool {
 	switch t.Kind {
-	case KindList, KindDict, KindMailbox, KindJob:
+	case KindList, KindDict, KindMailbox:
 		return false
 	case KindStruct:
 		s := a.lookupStruct(t)
@@ -335,15 +335,6 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 			return VoidType, err
 		}
 		return Type{Kind: KindMailbox, SubTypes: []Type{elem}}, nil
-	case ast.TypeJob:
-		if len(t.SubTypes) == 0 {
-			return Type{Kind: KindJob}, nil
-		}
-		elem, err := a.resolveTypeExpr(t.SubTypes[0])
-		if err != nil {
-			return VoidType, err
-		}
-		return Type{Kind: KindJob, SubTypes: []Type{elem}}, nil
 	case ast.TypeDict:
 		if len(t.SubTypes) != 2 {
 			return VoidType, newSemaError(t.Pos, "dict type requires key and value types")

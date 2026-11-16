@@ -19,18 +19,18 @@ import "std/regex"
 
 fn main() as int
     dim dir = "/tmp/cb_test_08_dir"
-    dim file = dir & "/hello.txt"
+    dim file = dir + "/hello.txt"
 
     try
         fs.mkdirAll(dir)
         fs.writeFile(file, "hello stdlib")
-        print("exists=" & fs.exists(file))
+        print("exists=" + fs.exists(file).toStr())
         dim text = fs.readFile(file)
-        print("content=" & text)
+        print("content=" + text)
         dim entries = fs.listDir(dir)
-        print("files=" & entries.len())
+        print("files=" + entries.len().toStr())
     catch e
-        print("fs error: " & e.msg)
+        print("fs error: " + e.msg)
         return 1
     end try
 
@@ -40,22 +40,22 @@ fn main() as int
         return 1
     end if
     dim pathEnv = os.getEnv("PATH")
-    print("envNonEmpty=" & (pathEnv.len() > 0))
+    print("envNonEmpty=" + (pathEnv.len() > 0).toStr())
 
     try
         dim res = os.exec("echo", ["hello-exec"])
-        print("exec=" & res.exitCode & ":" & res.stdout.trim())
+        print("exec=" + res.exitCode.toStr() + ":" + res.stdout.trim())
     catch e
-        print("exec error: " & e.msg)
+        print("exec error: " + e.msg)
         return 1
     end try
 
     dim rawJson = json.stringify({"name": "ok", "count": "42"})
     try
         dim jv = json.parse(rawJson)
-        print("json=" & jv.get("name").asStr() & ":" & jv.get("count").asInt() & ":" & jv.has("name"))
+        print("json=" + jv.get("name").asStr() + ":" + jv.get("count").asInt().toStr() + ":" + jv.has("name").toStr())
     catch e
-        print("json error: " & e.msg)
+        print("json error: " + e.msg)
         return 1
     end try
 
@@ -66,35 +66,35 @@ fn main() as int
 
     try
         dim parsed = p.parseArgs(["-i", "--output", "res.txt", "myPat"])
-        print("cli=" & parsed.hasFlag("ignore-case") & ":" & parsed.getOption("output") & ":" & parsed.getArg("pattern") & ":" & parsed.helpRequested)
+        print("cli=" + parsed.hasFlag("ignore-case").toStr() + ":" + parsed.getOption("output") + ":" + parsed.getArg("pattern") + ":" + parsed.helpRequested.toStr())
 
         dim helpParsed = p.parseArgs(["--help"])
-        print("cliHelp=" & helpParsed.helpRequested)
+        print("cliHelp=" + helpParsed.helpRequested.toStr())
     catch e
-        print("cli error: " & e.msg)
+        print("cli error: " + e.msg)
         return 1
     end try
 
     dim joined = fs.join(dir, "hello.txt")
-    print("paths=" & fs.isDir(dir) & ":" & fs.isDir(joined) & ":" & fs.base(joined) & ":" & fs.dir(joined) & ":" & fs.ext(joined))
+    print("paths=" + fs.isDir(dir).toStr() + ":" + fs.isDir(joined).toStr() + ":" + fs.base(joined) + ":" + fs.dir(joined) + ":" + fs.ext(joined))
 
     try
         dim cwd = os.cwd()
-        print("cwdNonEmpty=" & (cwd.len() > 0))
+        print("cwdNonEmpty=" + (cwd.len() > 0).toStr())
     catch e
-        print("cwd error: " & e.msg)
+        print("cwd error: " + e.msg)
         return 1
     end try
 
     dim sample = "hello_stdlib"
-    print("strMethods=" & sample.startsWith("hello") & ":" & sample.endsWith("stdlib") & ":" & sample.indexOf("stdlib") & ":" & sample.indexOf("missing") & ":" & sample.replace("_", "-"))
+    print("strMethods=" + sample.startsWith("hello").toStr() + ":" + sample.endsWith("stdlib").toStr() + ":" + sample.indexOf("stdlib").toStr() + ":" + sample.indexOf("missing").toStr() + ":" + sample.replace("_", "-"))
 
     try
         dim re = regex.compile("[0-9]+")
         dim directMatch = regex.match("^a[0-9]+", "a12b34")
-        print("regex=" & re.isMatch("a12b34") & ":" & re.find("a12b34") & ":" & str.join(re.findAll("a12b34"), ",") & ":" & re.replaceAll("a12b34", "X") & ":" & directMatch)
+        print("regex=" + re.isMatch("a12b34").toStr() + ":" + re.find("a12b34") + ":" + str.join(re.findAll("a12b34"), ",") + ":" + re.replaceAll("a12b34", "X") + ":" + directMatch.toStr())
     catch e
-        print("regex error: " & e.msg)
+        print("regex error: " + e.msg)
         return 1
     end try
 

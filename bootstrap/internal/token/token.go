@@ -71,7 +71,6 @@ const (
 	LIST    Kind = "list"
 	DICT    Kind = "dict"
 	MAILBOX Kind = "mailbox"
-	JOB     Kind = "job"
 
 	// Helper / transitional single words used before two-word coalescing
 	END    Kind = "end"
@@ -109,7 +108,6 @@ const (
 	GTE      Kind = ">="
 	PLUS     Kind = "+"
 	MINUS    Kind = "-"
-	AMP      Kind = "&"
 	STAR     Kind = "*"
 	SLASH    Kind = "/"
 	PERCENT  Kind = "%"
@@ -177,7 +175,6 @@ var singleWordKeywords = map[string]Kind{
 	"list":     LIST,
 	"dict":     DICT,
 	"mailbox":  MAILBOX,
-	"job":      JOB,
 	"end":      END,
 	"select":   SELECT,
 	"can":      CAN,

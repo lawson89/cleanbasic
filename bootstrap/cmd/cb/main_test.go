@@ -90,12 +90,12 @@ func TestCLIRunForwardsArgsAndStdin(t *testing.T) {
 	src := `import "std/os"
 
 fn main() as int
-    print("args=" & str.join(os.args(), ","))
+    print("args=" + str.join(os.args(), ","))
     try
         dim input = os.readStdin()
-        print("stdin=" & input.trim())
+        print("stdin=" + input.trim())
     catch e
-        print("err=" & e.msg)
+        print("err=" + e.msg)
         return 1
     end try
     return 0

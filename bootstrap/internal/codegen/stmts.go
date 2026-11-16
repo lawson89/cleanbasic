@@ -106,6 +106,8 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		}
 		sb.WriteString(fmt.Sprintf("%s%s\n", indent, e.emitExpr(s.Expr)))
 
+	case *ast.StartJobStmt:
+		sb.WriteString(fmt.Sprintf("%sgo %s\n", indent, e.emitCallExprRaw(s.Call)))
 	case *ast.IfStmt:
 		sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, e.emitExpr(s.Cond)))
 		e.emitStmtList(s.ThenBody, indent+"\t", sb)

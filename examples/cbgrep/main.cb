@@ -38,7 +38,7 @@ fn searchText(cfg as GrepConfig, label as str, content as str) as int
     if normalized.len() == 0
         if cfg.countOnly
             if cfg.showFilename
-                print(label & ":0")
+                print(label + ":0")
             else
                 print("0")
             end if
@@ -60,19 +60,19 @@ fn searchText(cfg as GrepConfig, label as str, content as str) as int
             if not cfg.countOnly
                 dim prefix = ""
                 if cfg.showFilename
-                    prefix = prefix & label & ":"
+                    prefix = prefix + label + ":"
                 end if
                 if cfg.lineNumber
-                    prefix = prefix & (idx + 1) & ":"
+                    prefix = prefix + (idx + 1).toStr() + ":"
                 end if
-                print(prefix & line)
+                print(prefix + line)
             end if
         end if
     end for
 
     if cfg.countOnly
         if cfg.showFilename
-            print(label & ":" & matches)
+            print(label + ":" + matches.toStr())
         else
             print(matches)
         end if
@@ -83,7 +83,7 @@ end fn
 fn collectFiles(target as str, recursive as bool, byref outFiles as list[str]) can error
     if fs.isDir(target)
         if not recursive
-            error("cbgrep: " & target & ": is a directory (use -r for recursive search)")
+            error("cbgrep: " + target + ": is a directory (use -r for recursive search)")
         end if
         dim entries = fs.listDir(target)
         for entry in entries
@@ -100,7 +100,7 @@ fn collectFiles(target as str, recursive as bool, byref outFiles as list[str]) c
         return
     end if
     if not fs.exists(target)
-        error("cbgrep: " & target & ": no such file or directory")
+        error("cbgrep: " + target + ": no such file or directory")
     end if
     outFiles.push(target)
 end fn
@@ -119,7 +119,7 @@ fn main() as int
     try
         parsed = p.parseArgs(os.args())
     catch e
-        print("cbgrep: " & e.msg)
+        print("cbgrep: " + e.msg)
         return 2
     end try
 
@@ -155,12 +155,12 @@ fn main() as int
     else
         dim regexPattern = pattern
         if ignoreCase
-            regexPattern = "(?i)" & pattern
+            regexPattern = "(?i)" + pattern
         end if
         try
             cfg.re = regex.compile(regexPattern)
         catch e
-            print("cbgrep: invalid regex: " & e.msg)
+            print("cbgrep: invalid regex: " + e.msg)
             return 2
         end try
     end if
@@ -182,7 +182,7 @@ fn main() as int
             end if
             return 1
         catch e
-            print("cbgrep: failed reading stdin: " & e.msg)
+            print("cbgrep: failed reading stdin: " + e.msg)
             return 2
         end try
     end if
@@ -208,7 +208,7 @@ fn main() as int
             dim fileMatches = searchText(cfg, filePath, content)
             totalMatches = totalMatches + fileMatches
         catch e
-            print("cbgrep: " & filePath & ": " & e.msg)
+            print("cbgrep: " + filePath + ": " + e.msg)
             return 2
         end try
     end for

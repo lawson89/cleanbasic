@@ -34,7 +34,7 @@ fn main() as int
         dim v1 = processNetwork("")
         print("unreachable: ", v1)
     catch e
-        print("caught expected error: " & e.msg)
+        print("caught expected error: " + e.msg)
     end try
 
     try

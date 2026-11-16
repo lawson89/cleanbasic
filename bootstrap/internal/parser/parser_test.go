@@ -227,8 +227,6 @@ func TestParseMailboxAndStartJob(t *testing.T) {
 		"fn main()",
 		"    dim box1 = mailbox[int]()",
 		"    dim box2 = mailbox[str](16)",
-		"    dim j1 as job[int] = start job worker(box1)",
-		"    dim jobs = list[job]()",
 		"    start job worker(box1)",
 		"end fn",
 	}, "\n")
@@ -238,6 +236,25 @@ func TestParseMailboxAndStartJob(t *testing.T) {
 	}
 	if len(prog.Decls) != 2 {
 		t.Fatalf("got %d decls, want 2", len(prog.Decls))
+	}
+	mainFn, ok := prog.Decls[1].(*ast.FnDecl)
+	if !ok {
+		t.Fatalf("expected *ast.FnDecl, got %T", prog.Decls[1])
+	}
+	if len(mainFn.Body) != 3 {
+		t.Fatalf("got %d statements in main, want 3", len(mainFn.Body))
+	}
+	if _, ok := mainFn.Body[2].(*ast.StartJobStmt); !ok {
+		t.Fatalf("expected *ast.StartJobStmt, got %T", mainFn.Body[2])
+	}
+
+	for _, bad := range []string{
+		"fn main()\n    dim j = start job worker(box1)\nend fn\n",
+		"fn main()\n    start job 42\nend fn\n",
+	} {
+		if _, err := Parse(bad, "bad_start_job.cb"); err == nil {
+			t.Errorf("expected parse error for %q, got nil", bad)
+		}
 	}
 }
 

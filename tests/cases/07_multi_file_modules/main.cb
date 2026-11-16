@@ -14,9 +14,9 @@ fn main() as int
     dim res = act.strike(p, 25)
     select case res.kind
         case act.OutcomeKind.Hit
-            print("hit=" & res.dmg & " hp=" & p.stats.hp)
+            print("hit=" + res.dmg.toStr() + " hp=" + p.stats.hp.toStr())
         case act.OutcomeKind.Blocked
-            print("blocked=" & res.reason)
+            print("blocked=" + res.reason)
     end select
 
     hero.heal(p, 15)

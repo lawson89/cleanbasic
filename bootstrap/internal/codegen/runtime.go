@@ -153,56 +153,12 @@ func (m *CbMailbox[T]) count() int64 {
 }
 
 `
-
-	cbJobRuntimeHelper = `type CbJob[T any] struct {
-	done chan struct{}
-	val  T
-	err  error
-}
-
-func cbStartJob[T any](fn func() (T, error)) *CbJob[T] {
-	j := &CbJob[T]{done: make(chan struct{})}
-	go func() {
-		defer close(j.done)
-		defer func() {
-			if r := recover(); r != nil {
-				j.err = fmt.Errorf("%v", r)
-			}
-		}()
-		j.val, j.err = fn()
-	}()
-	return j
-}
-
-func (j *CbJob[T]) wait() (T, error) {
-	<-j.done
-	return j.val, j.err
-}
-
-func (j *CbJob[T]) waitVoid() error {
-	<-j.done
-	return j.err
-}
-
-func (j *CbJob[T]) isDone() bool {
-	select {
-	case <-j.done:
-		return true
-	default:
-		return false
-	}
-}
-
-`
 )
 
 func (e *emitter) emitRuntimeHelpers() string {
 	if e.usedMailbox {
 		e.useImport("errors")
 		e.useImport("sync")
-	}
-	if e.usedJob {
-		e.useImport("fmt")
 	}
 
 	var helpers strings.Builder
@@ -227,9 +183,6 @@ func (e *emitter) emitRuntimeHelpers() string {
 	}
 	if e.usedMailbox {
 		helpers.WriteString(cbMailboxRuntimeHelper)
-	}
-	if e.usedJob {
-		helpers.WriteString(cbJobRuntimeHelper)
 	}
 	return helpers.String()
 }

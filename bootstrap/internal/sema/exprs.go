@@ -39,8 +39,6 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 		resolved, err = a.inferDictLitExpr(e, scope)
 	case *ast.TypedEmptyCtorExpr:
 		resolved, err = a.inferTypedEmptyCtorExpr(e, scope)
-	case *ast.StartJobExpr:
-		resolved, err = a.inferStartJobExpr(e, scope)
 	case *ast.FieldAccessExpr:
 		resolved, err = a.inferFieldAccessExpr(e, scope)
 	case *ast.IndexExpr:
@@ -93,17 +91,17 @@ func (a *analyzer) inferBinaryExpr(e *ast.BinaryExpr, scope *Scope) (Type, error
 	}
 
 	switch e.Op {
-	case token.AMP:
-		if leftType.IsVoid() || rightType.IsVoid() {
-			return VoidType, newSemaError(e.Pos, "string concatenation operator %q cannot operate on void", e.Op)
-		}
-		return StrType, nil
-
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH:
 		if !leftType.Equals(rightType) {
 			return VoidType, newSemaError(e.Pos, "type mismatch for operator %q: %s and %s", e.Op, leftType.String(), rightType.String())
 		}
+		if e.Op == token.PLUS && leftType.Equals(StrType) {
+			return StrType, nil
+		}
 		if !leftType.Equals(IntType) && !leftType.Equals(FloatType) && !leftType.Equals(ByteType) {
+			if e.Op == token.PLUS {
+				return VoidType, newSemaError(e.Pos, "operator %q requires int, float, byte, or str operands, got %s", e.Op, leftType.String())
+			}
 			return VoidType, newSemaError(e.Pos, "operator %q requires int, float, or byte operands, got %s", e.Op, leftType.String())
 		}
 		return leftType, nil
@@ -219,29 +217,6 @@ func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Sco
 	default:
 		return VoidType, newSemaError(e.Pos, "typed container constructor is only supported for list, dict, and mailbox, got %s", t.String())
 	}
-}
-
-func (a *analyzer) inferStartJobExpr(e *ast.StartJobExpr, scope *Scope) (Type, error) {
-	prevStartJobCall := a.startJobCall
-	a.startJobCall = e.Call
-	retType, err := a.inferExpr(e.Call, scope)
-	a.startJobCall = prevStartJobCall
-	if err != nil {
-		return VoidType, err
-	}
-	ci := a.prog.CallInfos[e.Call]
-	if ci == nil || (ci.Kind != CallFunc && ci.Kind != CallUFCS) || ci.Fn == nil {
-		return VoidType, newSemaError(e.Pos, "'start job' requires a function or UFCS call")
-	}
-	for _, p := range ci.Fn.Params {
-		if p.ByRef {
-			return VoidType, newSemaError(e.Pos, "cannot pass 'byref' argument to 'start job'; use a mailbox to communicate")
-		}
-	}
-	if retType.IsVoid() {
-		return Type{Kind: KindJob}, nil
-	}
-	return Type{Kind: KindJob, SubTypes: []Type{retType}}, nil
 }
 
 func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (Type, error) {
@@ -420,11 +395,13 @@ func (a *analyzer) inFallibleContext() bool {
 }
 
 func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
-	if !a.inFallibleContext() {
-		return VoidType, newSemaError(e.Pos, "error() can only be called inside a 'can error' function or a 'try' block")
-	}
-	if e != a.allowedFallibleExpr {
-		return VoidType, newSemaError(e.Pos, "error() may only appear as a top-level statement expression")
+	if e != a.startJobCall {
+		if !a.inFallibleContext() {
+			return VoidType, newSemaError(e.Pos, "error() can only be called inside a 'can error' function or a 'try' block")
+		}
+		if e != a.allowedFallibleExpr {
+			return VoidType, newSemaError(e.Pos, "error() may only appear as a top-level statement expression")
+		}
 	}
 	if len(e.Args) != 1 {
 		return VoidType, newSemaError(e.Pos, "error() expects 1 argument, got %d", len(e.Args))
@@ -490,11 +467,11 @@ func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.Expr, par
 			}
 		}
 	}
-	if canError {
-		if !a.inFallibleContext() && callExpr != a.startJobCall {
+	if canError && callExpr != a.startJobCall {
+		if !a.inFallibleContext() {
 			return newSemaError(callExpr.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
 		}
-		if callExpr != a.allowedFallibleExpr && callExpr != a.startJobCall {
+		if callExpr != a.allowedFallibleExpr {
 			return newSemaError(callExpr.Pos, "call to 'can error' function %q may only appear as a top-level statement expression", fnName)
 		}
 	}

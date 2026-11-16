@@ -84,6 +84,7 @@ SelectStmt      ::= "select case" Expr NEWLINE
                     "end select" NEWLINE
 ExprList        ::= Expr ("," Expr)*
 
+StartJobStmt    ::= "start job" CallExpr NEWLINE
 ReturnStmt      ::= "return" [Expr] NEWLINE
 BreakStmt       ::= "break" NEWLINE
 ContinueStmt    ::= "continue" NEWLINE
@@ -93,7 +94,7 @@ OrExpr          ::= AndExpr ("or" AndExpr)*
 AndExpr         ::= NotExpr ("and" NotExpr)*
 NotExpr         ::= "not" NotExpr | CmpExpr
 CmpExpr         ::= AddExpr (("==" | "!=" | "<" | ">" | "<=" | ">=") AddExpr)*
-AddExpr         ::= MulExpr (("+" | "-" | "&") MulExpr)*
+AddExpr         ::= MulExpr (("+" | "-") MulExpr)*
 MulExpr         ::= UnaryExpr (("*" | "/" | "%") UnaryExpr)*
 UnaryExpr       ::= ("+" | "-") UnaryExpr | PostfixExpr
 
@@ -184,7 +185,7 @@ fn main() as int
 
     ' Same-module function supports UFCS:
     if hero.isAlive()
-        print("Hero " & hero.name & " has " & hero.health & " HP")
+        print("Hero " + hero.name + " has " + hero.health.toStr() + " HP")
     end if
 
     ' Empty collections require typed constructors:
@@ -234,17 +235,17 @@ end fn
 fn startServer()
     try
         dim records = processNetwork()
-        print("Connected and processed " & records & " records.")
+        print("Connected and processed " + records.toStr() + " records.")
     catch e
-        print("Failed to start server: " & e.msg)
+        print("Failed to start server: " + e.msg)
     end try
 end fn
 
 ```
 
-### 4. `byte`, Slicing, 2-Var Loops & `&`
+### 4. `byte`, Slicing, 2-Var Loops & `+` String Concatenation
 
-* **Universal `&` Concatenation:** The `&` operator unconditionally coerces operands to strings (lowering to `fmt.Sprint(a) + fmt.Sprint(b)` in Go).
+* **Unified `+` Concatenation & `.toStr()`:** The `+` operator supports both numeric addition (`int`, `float`, `byte`) and string concatenation (`str + str`). Primitives (`int`, `float`, `bool`, `byte`, `str`) provide `.toStr()` for explicit string conversion.
 
 * **`byte` Primitive Type & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, and `int.toByte()`, `byte.toInt()`, `str.toBytes()`, and `str.fromBytes(b)` convert explicitly. Read-only string indexing `s[i]` returns `byte` directly via Go indexing.
 
@@ -269,7 +270,7 @@ fn demoContainers() as int
     dim aliceScore = scores["alice"]
     select case aliceScore
         case 100
-            print("Perfect score! Total: " & total)
+            print("Perfect score! Total: " + total.toStr())
         case else
             print("Keep trying")
     end select
@@ -308,19 +309,18 @@ end fn
 
 ```
 
-### 6. Structured Concurrency (`mailbox[T]`, `job` / `job[T]`, `start job`)
+### 6. Structured Concurrency (`mailbox[T]`, `start job`)
 
-CleanBasic provides structured, data-race-safe concurrency built around typed message queues and background jobs:
+CleanBasic provides structured, data-race-safe concurrency built around typed message queues and goroutine-backed `start job` statements:
 
 * **Typed Mailboxes (`mailbox[T]`):** Created with `mailbox[T]()` (default buffer capacity 64) or `mailbox[T](cap)` (including `0` for rendezvous).
   * `box.post(msg as T) can error` — sends `msg`, blocking if full and raising an error if closed.
   * `box.check(byref out as T) as bool` — non-blocking atomic receive into `out`.
   * `box.get() as T can error` — blocking receive; raises an error when closed and empty.
   * `box.close()`, `box.count() as int`, and `for msg in box ... end for` (drains until closed and empty).
-* **Background Jobs (`start job`, `job`, `job[T]`):**
-  * `start job fnCall(...)` works both as a standalone statement and as an expression returning `job` (for void functions) or `job[T]`.
-  * Arguments are evaluated eagerly by value before spawning the goroutine, and `byref` parameters are rejected at compile time.
-  * `j.wait() [as T] can error` and `j.isDone() as bool` await completion and propagate errors or recovered panics.
+* **Background Jobs (`start job` Statement):**
+  * `start job fnCall(...)` is a standalone statement that lowers 1:1 to `go fnCall(...)`.
+  * Target must be a user or module function/UFCS call; `can error` functions and `byref` parameters are rejected at compile time. Results and completion signals are communicated via `mailbox[T]`.
 
 ### 7. Pure Value Structs & Recursive Trees (`list[T]`)
 

@@ -32,5 +32,5 @@ public fn heal(byref p as Hero, amount as int)
 end fn
 
 public fn describe(p as Hero) as str
-    return p.name & " hp=" & p.stats.hp
+    return p.name + " hp=" + p.stats.hp.toStr()
 end fn

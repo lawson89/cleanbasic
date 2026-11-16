@@ -89,7 +89,6 @@ type emitter struct {
 	usedStrToInt        bool
 	usedStrFromCharCode bool
 	usedMailbox         bool
-	usedJob             bool
 	byRefVars           map[string]bool
 	currentFn           *ast.FnDecl
 	currentTryID        int
@@ -408,12 +407,6 @@ func (e *emitter) goSemaType(t sema.Type) string {
 			return fmt.Sprintf("*CbMailbox[%s]", e.goSemaType(t.SubTypes[0]))
 		}
 		return "*CbMailbox[any]"
-	case sema.KindJob:
-		e.usedJob = true
-		if len(t.SubTypes) == 1 {
-			return fmt.Sprintf("*CbJob[%s]", e.goSemaType(t.SubTypes[0]))
-		}
-		return "*CbJob[struct{}]"
 	default:
 		return "any"
 	}
@@ -433,7 +426,7 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 		return "byte(0)"
 	case sema.KindErr:
 		return "nil"
-	case sema.KindList, sema.KindDict, sema.KindMailbox, sema.KindJob:
+	case sema.KindList, sema.KindDict, sema.KindMailbox:
 		return "nil"
 	case sema.KindEnum:
 		return e.goSemaType(t) + "(0)"

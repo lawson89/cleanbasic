@@ -16,7 +16,7 @@ public type Outcome
 end type
 
 public fn describe(s as Stats) as str
-    return "hits=" & s.hits
+    return "hits=" + s.hits.toStr()
 end fn
 
 public fn strike(byref target as h.Hero, dmg as int) as Outcome
