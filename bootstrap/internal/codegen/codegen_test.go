@@ -515,3 +515,85 @@ func TestEmitGoLineDirectives(t *testing.T) {
 		t.Errorf("did not expect //line directive when EmitLineDirectives is false:\n%s", withoutLines)
 	}
 }
+
+func TestEmitConcurrencyAndBoxedRecursiveStructs(t *testing.T) {
+	src := strings.Join([]string{
+		"type Node",
+		"    val as int",
+		"    next as Node",
+		"end type",
+		"",
+		"fn worker(box as mailbox[int]) as int",
+		"    try",
+		"        return box.get()",
+		"    catch e",
+		"        return -1",
+		"    end try",
+		"end fn",
+		"",
+		"fn main()",
+		"    dim n = Node(val=10)",
+		"    n.next.val = 20",
+		"    dim box = mailbox[int](4)",
+		"    dim j = start job worker(box)",
+		"    try",
+		"        box.post(42)",
+		"        dim res = j.wait()",
+		"        print(res, n.next.val)",
+		"    catch e",
+		"        print(e)",
+		"    end try",
+		"end fn",
+	}, "\n")
+	prog, err := sema.AnalyzeSource(src, "cg_test.cb")
+	if err != nil {
+		t.Fatalf("sema failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("codegen failed: %v", err)
+	}
+	for _, want := range []string{"Cb_next *Node", "cbEnsureBox(&n.Cb_next).Cb_val = int64(20)", "cbNewMailbox[int64](int64(4))", "cbStartJob("} {
+		if !strings.Contains(goCode, want) {
+			t.Errorf("expected generated Go code to contain %q, got:\n%s", want, goCode)
+		}
+	}
+}
+
+func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
+	src := strings.Join([]string{
+		"fn getCap() as int can error",
+		"    return 4",
+		"end fn",
+		"fn worker(x as int) as int",
+		"    return x",
+		"end fn",
+		"fn runCase() can error",
+		"    dim box = mailbox[int](getCap())",
+		"    dim ok = true and (start job worker(getCap())).isDone()",
+		"    print(box.count(), ok)",
+		"end fn",
+		"fn main() as int",
+		"    try",
+		"        runCase()",
+		"    catch e",
+		"        print(e)",
+		"    end try",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	prog, err := sema.AnalyzeSource(src, "fallible_lift.cb")
+	if err != nil {
+		t.Fatalf("sema failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("codegen failed: %v", err)
+	}
+	if !strings.Contains(goCode, "cbNewMailbox[int64](_val_1)") {
+		t.Errorf("expected lifted cap variable in cbNewMailbox, got:\n%s", goCode)
+	}
+	if !strings.Contains(goCode, "if _cbCond_") {
+		t.Errorf("expected short-circuiting _cbCond_ lift for StartJobExpr in binary expr, got:\n%s", goCode)
+	}
+}

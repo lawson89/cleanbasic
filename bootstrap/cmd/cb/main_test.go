@@ -246,3 +246,82 @@ func TestCBGrepExample(t *testing.T) {
 		t.Errorf("missing file exit code = %v, want 2", err)
 	}
 }
+
+func TestCLIGoModPassthrough(t *testing.T) {
+	tmpDir := t.TempDir()
+	projDir := filepath.Join(tmpDir, "myproj")
+	localPkgDir := filepath.Join(projDir, "localhelper")
+	if err := os.MkdirAll(localPkgDir, 0755); err != nil {
+		t.Fatalf("mkdir localhelper: %v", err)
+	}
+
+	helperGoMod := "module example.com/localhelper\n\ngo 1.22\n"
+	if err := os.WriteFile(filepath.Join(localPkgDir, "go.mod"), []byte(helperGoMod), 0644); err != nil {
+		t.Fatalf("write localhelper go.mod: %v", err)
+	}
+	helperGoSrc := strings.Join([]string{
+		"package localhelper",
+		"",
+		"func Greet(name string) string {",
+		"	return \x22hello-mod:\x22 + name",
+		"}",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(localPkgDir, "helper.go"), []byte(helperGoSrc), 0644); err != nil {
+		t.Fatalf("write helper.go: %v", err)
+	}
+
+	projGoMod := strings.Join([]string{
+		"module example.com/myproj",
+		"",
+		"go 1.22",
+		"",
+		"require example.com/localhelper v0.0.0",
+		"",
+		"replace example.com/localhelper => ./localhelper",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projDir, "go.mod"), []byte(projGoMod), 0644); err != nil {
+		t.Fatalf("write proj go.mod: %v", err)
+	}
+
+	cbSrc := strings.Join([]string{
+		"go import \x22example.com/localhelper\x22",
+		"",
+		"fn greetNative(name as str) as str = go \x22localhelper.Greet\x22",
+		"",
+		"fn main() as int",
+		"    print(greetNative(\x22cleanbasic\x22))",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	cbFile := filepath.Join(projDir, "main.cb")
+	if err := os.WriteFile(cbFile, []byte(cbSrc), 0644); err != nil {
+		t.Fatalf("write main.cb: %v", err)
+	}
+
+	cbBin := filepath.Join(tmpDir, "cb")
+	if out, err := exec.Command("go", "build", "-o", cbBin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("failed to build cb binary: %v\n%s", err, string(out))
+	}
+
+	// Test cb run with go.mod passthrough
+	outRun, err := exec.Command(cbBin, "run", cbFile).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cb run with go.mod failed: %v\n%s", err, string(outRun))
+	}
+	if got := strings.TrimSpace(string(outRun)); got != "hello-mod:cleanbasic" {
+		t.Errorf("cb run output = %q, want %q", got, "hello-mod:cleanbasic")
+	}
+
+	// Test cb build with go.mod passthrough
+	outBin := filepath.Join(tmpDir, "myproj_bin")
+	if outBuild, err := exec.Command(cbBin, "build", cbFile, "-o", outBin).CombinedOutput(); err != nil {
+		t.Fatalf("cb build with go.mod failed: %v\n%s", err, string(outBuild))
+	}
+	outExec, err := exec.Command(outBin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("built binary execution failed: %v\n%s", err, string(outExec))
+	}
+	if got := strings.TrimSpace(string(outExec)); got != "hello-mod:cleanbasic" {
+		t.Errorf("built binary output = %q, want %q", got, "hello-mod:cleanbasic")
+	}
+}

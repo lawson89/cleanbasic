@@ -88,6 +88,21 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 	if e.usedStrFromCharCode {
 		helpers.WriteString("func cbStrFromCharCode(code int64) string {\n\treturn string(rune(code))\n}\n\n")
 	}
+	if e.usedBoxHelpers {
+		helpers.WriteString("func cbBox[T any](v T) *T { return &v }\nfunc cbUnbox[T any](p *T) T {\n\tif p == nil {\n\t\tvar zero T\n\t\treturn zero\n\t}\n\treturn *p\n}\nfunc cbEnsureBox[T any](p **T) *T {\n\tif *p == nil {\n\t\t*p = new(T)\n\t}\n\treturn *p\n}\n\n")
+	}
+	if e.usedMailbox {
+		e.useImport("sync")
+		e.useImport("time")
+		e.usedCbError = true
+		helpers.WriteString(cbMailboxRuntimeHelper)
+	}
+	if e.usedJob {
+		e.useImport("fmt")
+		e.useImport("time")
+		e.usedCbError = true
+		helpers.WriteString(cbJobRuntimeHelper)
+	}
 
 	importLines := e.formatImportLines()
 	var out strings.Builder
@@ -122,6 +137,9 @@ type emitter struct {
 	usedStrToInt        bool
 	usedStrFromCharCode bool
 	usedCbError         bool
+	usedBoxHelpers      bool
+	usedMailbox         bool
+	usedJob             bool
 	byRefVars           map[string]bool
 	currentFn           *ast.FnDecl
 	currentTryID        int
@@ -225,6 +243,9 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
 			for i, f := range d.Fields {
 				fType := e.goSemaType(structSym.Fields[i].Type)
+				if structSym != nil && i < len(structSym.Fields) && structSym.Fields[i].Boxed {
+					fType = "*" + fType
+				}
 				sb.WriteString(fmt.Sprintf("\t%s %s \x60json:%q\x60\n", goStructFieldName(f.Name), fType, f.Name))
 			}
 			sb.WriteString("}\n\n")
@@ -459,6 +480,18 @@ func (e *emitter) goSemaType(t sema.Type) string {
 			return fmt.Sprintf("map[%s]%s", e.goSemaType(*t.KeyType), e.goSemaType(*t.ValType))
 		}
 		return "map[any]any"
+	case sema.KindMailbox:
+		e.usedMailbox = true
+		if t.ElemType != nil {
+			return fmt.Sprintf("*CbMailbox[%s]", e.goSemaType(*t.ElemType))
+		}
+		return "*CbMailbox[any]"
+	case sema.KindJob:
+		e.usedJob = true
+		if t.ElemType != nil {
+			return fmt.Sprintf("*CbJob[%s]", e.goSemaType(*t.ElemType))
+		}
+		return "*CbJob[struct{}]"
 	default:
 		return "any"
 	}
@@ -479,7 +512,7 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 	case sema.KindErr:
 		e.usedCbError = true
 		return "CbError{}"
-	case sema.KindList, sema.KindDict:
+	case sema.KindList, sema.KindDict, sema.KindMailbox, sema.KindJob:
 		return "nil"
 	case sema.KindEnum:
 		return e.goSemaType(t) + "(0)"
@@ -570,6 +603,29 @@ func (e *emitter) liftFallibleCalls(sb *strings.Builder, expr ast.Expr, indent s
 		s := e.liftFallibleCalls(sb, ex.Start, indent)
 		en := e.liftFallibleCalls(sb, ex.End, indent)
 		return t || s || en
+	case *ast.TypedEmptyCtorExpr:
+		any := false
+		for _, a := range ex.Args {
+			if e.liftFallibleCalls(sb, a, indent) {
+				any = true
+			}
+		}
+		return any
+	case *ast.StartJobExpr:
+		any := false
+		if e.prog != nil {
+			if ci, hasCI := e.prog.CallInfos[ex.Call]; hasCI && ci.Receiver != nil {
+				if e.liftFallibleCalls(sb, ci.Receiver, indent) {
+					any = true
+				}
+			}
+		}
+		for _, a := range ex.Call.Args {
+			if e.liftFallibleCalls(sb, a.Value, indent) {
+				any = true
+			}
+		}
+		return any
 	case *ast.CallExpr:
 		if e.prog == nil {
 			return false
@@ -642,7 +698,14 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		if idx, ok := s.Target.(*ast.IndexExpr); ok {
 			e.liftFallibleCalls(sb, idx.Target, indent)
 			e.liftFallibleCalls(sb, idx.Index, indent)
-			sb.WriteString(fmt.Sprintf("%s%s[%s] = %s\n", indent, e.emitExpr(idx.Target), e.emitExpr(idx.Index), e.emitExpr(s.Value)))
+			sb.WriteString(fmt.Sprintf("%s%s[%s] = %s\n", indent, e.emitPlaceExpr(idx.Target), e.emitExpr(idx.Index), e.emitExpr(s.Value)))
+		} else if fa, ok := s.Target.(*ast.FieldAccessExpr); ok {
+			if _, boxed := e.isBoxedFieldAccess(fa); boxed {
+				e.usedBoxHelpers = true
+				sb.WriteString(fmt.Sprintf("%s%s.%s = cbBox(%s)\n", indent, e.emitPlaceExpr(fa.Target), goStructFieldName(fa.Field), e.emitExpr(s.Value)))
+			} else {
+				sb.WriteString(fmt.Sprintf("%s%s = %s\n", indent, e.emitPlaceExpr(s.Target), e.emitExpr(s.Value)))
+			}
 		} else {
 			sb.WriteString(fmt.Sprintf("%s%s = %s\n", indent, e.emitExpr(s.Target), e.emitExpr(s.Value)))
 		}
@@ -771,6 +834,19 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, v0, v1, e.emitExpr(s.Iterable)))
 					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
 				}
+			case sema.KindMailbox:
+				e.loopCounter++
+				lid := e.loopCounter
+				msgTmp := fmt.Sprintf("_cbMsg_%d", lid)
+				errTmp := fmt.Sprintf("_cbErr_%d", lid)
+				boxTmp := fmt.Sprintf("_cbBox_%d", lid)
+				v0 := goIdent(s.Vars[0])
+				sb.WriteString(fmt.Sprintf("%s%s := %s\n", indent, boxTmp, e.emitExpr(s.Iterable)))
+				sb.WriteString(fmt.Sprintf("%sfor {\n", indent))
+				sb.WriteString(fmt.Sprintf("%s\t%s, %s := %s.get()\n", indent, msgTmp, errTmp, boxTmp))
+				sb.WriteString(fmt.Sprintf("%s\tif %s != nil {\n%s\t\tbreak\n%s\t}\n", indent, errTmp, indent, indent))
+				sb.WriteString(fmt.Sprintf("%s\tvar %s = %s\n", indent, v0, msgTmp))
+				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
 			}
 			e.emitStmtList(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
@@ -942,12 +1018,27 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 	case *ast.TypedEmptyCtorExpr:
 		t := e.prog.ExprTypes[ex]
+		if t.Kind == sema.KindMailbox {
+			e.usedMailbox = true
+			capStr := "int64(64)"
+			if len(ex.Args) == 1 {
+				capStr = e.emitExpr(ex.Args[0])
+			}
+			return fmt.Sprintf("cbNewMailbox[%s](%s)", e.goSemaType(*t.ElemType), capStr)
+		}
 		return fmt.Sprintf("%s{}", e.goSemaType(t))
+
+	case *ast.StartJobExpr:
+		return e.emitStartJobExpr(ex)
 
 	case *ast.FieldAccessExpr:
 		if e.prog != nil {
 			if goName, ok := e.prog.IdentGoNames[ex]; ok {
 				return goIdent(goName)
+			}
+			if _, boxed := e.isBoxedFieldAccess(ex); boxed {
+				e.usedBoxHelpers = true
+				return fmt.Sprintf("cbUnbox(%s.%s)", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
 			}
 			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok && targetType.Kind == sema.KindStruct {
 				return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
@@ -1002,6 +1093,13 @@ func (e *emitter) emitArgExpr(expr ast.Expr, byRef bool) string {
 		if argId, ok := expr.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
 			return goIdent(argId.Name)
 		}
+		if fa, ok := expr.(*ast.FieldAccessExpr); ok {
+			if _, boxed := e.isBoxedFieldAccess(fa); boxed {
+				e.usedBoxHelpers = true
+				return fmt.Sprintf("cbEnsureBox(&%s.%s)", e.emitPlaceExpr(fa.Target), goStructFieldName(fa.Field))
+			}
+			return fmt.Sprintf("&%s.%s", e.emitPlaceExpr(fa.Target), goStructFieldName(fa.Field))
+		}
 		return "&" + e.emitExpr(expr)
 	}
 	return e.emitExpr(expr)
@@ -1027,11 +1125,21 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				var fields []string
 				if ci.NamedArgs {
 					for _, a := range ex.Args {
-						fields = append(fields, fmt.Sprintf("%s: %s", goStructFieldName(a.Name), e.emitExpr(a.Value)))
+						valStr := e.emitExpr(a.Value)
+						if fs, ok := ci.Struct.FieldMap[a.Name]; ok && fs.Boxed {
+							e.usedBoxHelpers = true
+							valStr = fmt.Sprintf("cbBox(%s)", valStr)
+						}
+						fields = append(fields, fmt.Sprintf("%s: %s", goStructFieldName(a.Name), valStr))
 					}
 				} else {
-					for _, a := range ex.Args {
-						fields = append(fields, e.emitExpr(a.Value))
+					for i, a := range ex.Args {
+						valStr := e.emitExpr(a.Value)
+						if i < len(ci.Struct.Fields) && ci.Struct.Fields[i].Boxed {
+							e.usedBoxHelpers = true
+							valStr = fmt.Sprintf("cbBox(%s)", valStr)
+						}
+						fields = append(fields, valStr)
 					}
 				}
 				structGoName := ci.Struct.Name
@@ -1059,7 +1167,7 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				case "list.len", "dict.len", "str.len":
 					return fmt.Sprintf("int64(len(%s))", e.emitExpr(ci.Receiver))
 				case "list.push":
-					recv := e.emitExpr(ci.Receiver)
+					recv := e.emitPlaceExpr(ci.Receiver)
 					return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0].Value))
 				case "dict.get":
 					e.usedDictGet = true
@@ -1105,6 +1213,36 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 					return fmt.Sprintf("byte(%s)", e.emitExpr(ci.Receiver))
 				case "byte.toInt":
 					return fmt.Sprintf("int64(%s)", e.emitExpr(ci.Receiver))
+				case "mailbox.post":
+					return fmt.Sprintf("%s.post(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+				case "mailbox.postTimeout":
+					return fmt.Sprintf("%s.postTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				case "mailbox.check":
+					return fmt.Sprintf("%s.check(%s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0].Value, true))
+				case "mailbox.checkTimeout":
+					return fmt.Sprintf("%s.checkTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0].Value, true), e.emitExpr(ex.Args[1].Value))
+				case "mailbox.get":
+					return fmt.Sprintf("%s.get()", e.emitExpr(ci.Receiver))
+				case "mailbox.close":
+					return fmt.Sprintf("%s.close()", e.emitExpr(ci.Receiver))
+				case "mailbox.count":
+					return fmt.Sprintf("%s.count()", e.emitExpr(ci.Receiver))
+				case "mailbox.isClosed":
+					return fmt.Sprintf("%s.isClosed()", e.emitExpr(ci.Receiver))
+				case "job.wait":
+					recvType := e.prog.ExprTypes[ci.Receiver]
+					if recvType.ElemType == nil {
+						return fmt.Sprintf("%s.waitVoid()", e.emitExpr(ci.Receiver))
+					}
+					return fmt.Sprintf("%s.wait()", e.emitExpr(ci.Receiver))
+				case "job.waitTimeout":
+					recvType := e.prog.ExprTypes[ci.Receiver]
+					if recvType.ElemType == nil {
+						return fmt.Sprintf("%s.waitTimeoutVoid(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
+					}
+					return fmt.Sprintf("%s.waitTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0].Value, true), e.emitExpr(ex.Args[1].Value))
+				case "job.isDone":
+					return fmt.Sprintf("%s.isDone()", e.emitExpr(ci.Receiver))
 				}
 
 			case sema.CallFunc:
@@ -1173,6 +1311,23 @@ func (e *emitter) exprHasFallibleCall(expr ast.Expr) bool {
 		return e.exprHasFallibleCall(ex.Target) || e.exprHasFallibleCall(ex.Index)
 	case *ast.SliceExpr:
 		return e.exprHasFallibleCall(ex.Target) || e.exprHasFallibleCall(ex.Start) || e.exprHasFallibleCall(ex.End)
+	case *ast.TypedEmptyCtorExpr:
+		for _, a := range ex.Args {
+			if e.exprHasFallibleCall(a) {
+				return true
+			}
+		}
+	case *ast.StartJobExpr:
+		if ci, ok := e.prog.CallInfos[ex.Call]; ok && ci.Receiver != nil {
+			if e.exprHasFallibleCall(ci.Receiver) {
+				return true
+			}
+		}
+		for _, a := range ex.Call.Args {
+			if e.exprHasFallibleCall(a.Value) {
+				return true
+			}
+		}
 	case *ast.CallExpr:
 		if ci, ok := e.prog.CallInfos[ex]; ok {
 			if ci.Kind == sema.CallError || ci.CanError {
@@ -1190,3 +1345,330 @@ func (e *emitter) exprHasFallibleCall(expr ast.Expr) bool {
 	}
 	return false
 }
+
+func (e *emitter) lookupStructSymbol(t sema.Type) *sema.StructSymbol {
+	if e.prog == nil || t.Kind != sema.KindStruct {
+		return nil
+	}
+	if t.ModuleID != "" {
+		if m, ok := e.prog.ModuleByID[t.ModuleID]; ok {
+			return m.Structs[t.Name]
+		}
+	}
+	if e.currentMod != nil {
+		return e.currentMod.Structs[t.Name]
+	}
+	return nil
+}
+
+func (e *emitter) isBoxedFieldAccess(fa *ast.FieldAccessExpr) (sema.FieldSymbol, bool) {
+	if e.prog == nil || fa == nil {
+		return sema.FieldSymbol{}, false
+	}
+	targetType, ok := e.prog.ExprTypes[fa.Target]
+	if !ok || targetType.Kind != sema.KindStruct {
+		return sema.FieldSymbol{}, false
+	}
+	sym := e.lookupStructSymbol(targetType)
+	if sym == nil {
+		return sema.FieldSymbol{}, false
+	}
+	fs, found := sym.FieldMap[fa.Field]
+	return fs, found && fs.Boxed
+}
+
+func (e *emitter) emitPlaceExpr(expr ast.Expr) string {
+	switch ex := expr.(type) {
+	case *ast.FieldAccessExpr:
+		if _, boxed := e.isBoxedFieldAccess(ex); boxed {
+			e.usedBoxHelpers = true
+			return fmt.Sprintf("cbEnsureBox(&%s.%s)", e.emitPlaceExpr(ex.Target), goStructFieldName(ex.Field))
+		}
+		if e.prog != nil {
+			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok && targetType.Kind == sema.KindStruct {
+				return fmt.Sprintf("%s.%s", e.emitPlaceExpr(ex.Target), goStructFieldName(ex.Field))
+			}
+		}
+		return fmt.Sprintf("%s.%s", e.emitPlaceExpr(ex.Target), ex.Field)
+	default:
+		return e.emitExpr(expr)
+	}
+}
+
+func (e *emitter) emitStartJobExpr(ex *ast.StartJobExpr) string {
+	e.usedJob = true
+	ci := e.prog.CallInfos[ex.Call]
+	fnGoName := ci.Fn.GoName
+	if fnGoName == "" {
+		fnGoName = ci.Fn.Name
+	}
+	if fnGoName == "main" {
+		fnGoName = "cb_main"
+	} else {
+		fnGoName = goIdent(fnGoName)
+	}
+
+	var paramDecls []string
+	var callArgs []string
+	var passArgs []string
+	argIdx := 0
+	if ci.Kind == sema.CallUFCS && ci.Receiver != nil {
+		pType := e.goSemaType(ci.Fn.Params[0].Type)
+		pName := fmt.Sprintf("_cbJobArg_%d", argIdx)
+		paramDecls = append(paramDecls, fmt.Sprintf("%s %s", pName, pType))
+		callArgs = append(callArgs, e.emitExpr(ci.Receiver))
+		passArgs = append(passArgs, pName)
+		argIdx++
+	}
+	for i, a := range ex.Call.Args {
+		paramIdx := i
+		if ci.Kind == sema.CallUFCS {
+			paramIdx = i + 1
+		}
+		pType := e.goSemaType(ci.Fn.Params[paramIdx].Type)
+		pName := fmt.Sprintf("_cbJobArg_%d", argIdx)
+		paramDecls = append(paramDecls, fmt.Sprintf("%s %s", pName, pType))
+		callArgs = append(callArgs, e.emitExpr(a.Value))
+		passArgs = append(passArgs, pName)
+		argIdx++
+	}
+
+	retGoType := "struct{}"
+	if !ci.Fn.ReturnType.IsVoid() {
+		retGoType = e.goSemaType(ci.Fn.ReturnType)
+	}
+
+	var body string
+	if ci.Fn.ReturnType.IsVoid() {
+		if ci.Fn.CanError {
+			body = fmt.Sprintf("return struct{}{}, %s(%s)", fnGoName, strings.Join(passArgs, ", "))
+		} else {
+			body = fmt.Sprintf("%s(%s); return struct{}{}, nil", fnGoName, strings.Join(passArgs, ", "))
+		}
+	} else {
+		if ci.Fn.CanError {
+			body = fmt.Sprintf("return %s(%s)", fnGoName, strings.Join(passArgs, ", "))
+		} else {
+			body = fmt.Sprintf("return %s(%s), nil", fnGoName, strings.Join(passArgs, ", "))
+		}
+	}
+
+	return fmt.Sprintf("func(%s) *CbJob[%s] { return cbStartJob(func() (%s, error) { %s }) }(%s)",
+		strings.Join(paramDecls, ", "), retGoType, retGoType, body, strings.Join(callArgs, ", "))
+}
+
+var cbMailboxRuntimeHelper = strings.Join([]string{
+	"type CbMailbox[T any] struct {",
+	"	ch     chan T",
+	"	mu     sync.Mutex",
+	"	closed bool",
+	"	done   chan struct{}",
+	"}",
+	"",
+	"func cbNewMailbox[T any](cap int64) *CbMailbox[T] {",
+	"	if cap < 0 {",
+	"		cap = 0",
+	"	}",
+	"	return &CbMailbox[T]{",
+	"		ch:   make(chan T, int(cap)),",
+	"		done: make(chan struct{}),",
+	"	}",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) post(v T) error {",
+	"	m.mu.Lock()",
+	"	if m.closed {",
+	"		m.mu.Unlock()",
+	"		return CbError{msg: \x22cannot post to closed mailbox\x22}",
+	"	}",
+	"	done := m.done",
+	"	m.mu.Unlock()",
+	"	select {",
+	"	case m.ch <- v:",
+	"		return nil",
+	"	case <-done:",
+	"		return CbError{msg: \x22cannot post to closed mailbox\x22}",
+	"	}",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) postTimeout(v T, ms int64) (bool, error) {",
+	"	m.mu.Lock()",
+	"	if m.closed {",
+	"		m.mu.Unlock()",
+	"		return false, CbError{msg: \x22cannot post to closed mailbox\x22}",
+	"	}",
+	"	done := m.done",
+	"	m.mu.Unlock()",
+	"	if ms <= 0 {",
+	"		select {",
+	"		case m.ch <- v:",
+	"			return true, nil",
+	"		case <-done:",
+	"			return false, CbError{msg: \x22cannot post to closed mailbox\x22}",
+	"		default:",
+	"			return false, nil",
+	"		}",
+	"	}",
+	"	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)",
+	"	defer timer.Stop()",
+	"	select {",
+	"	case m.ch <- v:",
+	"		return true, nil",
+	"	case <-done:",
+	"		return false, CbError{msg: \x22cannot post to closed mailbox\x22}",
+	"	case <-timer.C:",
+	"		return false, nil",
+	"	}",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) check(out *T) bool {",
+	"	select {",
+	"	case v := <-m.ch:",
+	"		*out = v",
+	"		return true",
+	"	default:",
+	"		return false",
+	"	}",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) checkTimeout(out *T, ms int64) bool {",
+	"	if ms <= 0 {",
+	"		return m.check(out)",
+	"	}",
+	"	select {",
+	"	case v := <-m.ch:",
+	"		*out = v",
+	"		return true",
+	"	default:",
+	"	}",
+	"	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)",
+	"	defer timer.Stop()",
+	"	select {",
+	"	case v := <-m.ch:",
+	"		*out = v",
+	"		return true",
+	"	case <-m.done:",
+	"		return m.check(out)",
+	"	case <-timer.C:",
+	"		return false",
+	"	}",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) get() (T, error) {",
+	"	select {",
+	"	case v := <-m.ch:",
+	"		return v, nil",
+	"	default:",
+	"	}",
+	"	select {",
+	"	case v := <-m.ch:",
+	"		return v, nil",
+	"	case <-m.done:",
+	"		select {",
+	"		case v := <-m.ch:",
+	"			return v, nil",
+	"		default:",
+	"			var zero T",
+	"			return zero, CbError{msg: \x22mailbox is closed and empty\x22}",
+	"		}",
+	"	}",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) close() {",
+	"	m.mu.Lock()",
+	"	if !m.closed {",
+	"		m.closed = true",
+	"		close(m.done)",
+	"	}",
+	"	m.mu.Unlock()",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) count() int64 {",
+	"	return int64(len(m.ch))",
+	"}",
+	"",
+	"func (m *CbMailbox[T]) isClosed() bool {",
+	"	m.mu.Lock()",
+	"	c := m.closed",
+	"	m.mu.Unlock()",
+	"	return c",
+	"}",
+	"",
+}, "\n") + "\n"
+
+var cbJobRuntimeHelper = strings.Join([]string{
+	"type CbJob[T any] struct {",
+	"	done chan struct{}",
+	"	val  T",
+	"	err  error",
+	"}",
+	"",
+	"func cbStartJob[T any](fn func() (T, error)) *CbJob[T] {",
+	"	j := &CbJob[T]{done: make(chan struct{})}",
+	"	go func() {",
+	"		defer close(j.done)",
+	"		defer func() {",
+	"			if r := recover(); r != nil {",
+	"				j.err = CbError{msg: fmt.Sprint(r)}",
+	"			}",
+	"		}()",
+	"		j.val, j.err = fn()",
+	"	}()",
+	"	return j",
+	"}",
+	"",
+	"func (j *CbJob[T]) wait() (T, error) {",
+	"	<-j.done",
+	"	return j.val, j.err",
+	"}",
+	"",
+	"func (j *CbJob[T]) waitVoid() error {",
+	"	<-j.done",
+	"	return j.err",
+	"}",
+	"",
+	"func (j *CbJob[T]) waitTimeout(out *T, ms int64) (bool, error) {",
+	"	if ms <= 0 {",
+	"		select {",
+	"		case <-j.done:",
+	"			if j.err != nil {",
+	"				return false, j.err",
+	"			}",
+	"			if out != nil {",
+	"				*out = j.val",
+	"			}",
+	"			return true, nil",
+	"		default:",
+	"			return false, nil",
+	"		}",
+	"	}",
+	"	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)",
+	"	defer timer.Stop()",
+	"	select {",
+	"	case <-j.done:",
+	"		if j.err != nil {",
+	"			return false, j.err",
+	"		}",
+	"		if out != nil {",
+	"			*out = j.val",
+	"		}",
+	"		return true, nil",
+	"	case <-timer.C:",
+	"		return false, nil",
+	"	}",
+	"}",
+	"",
+	"func (j *CbJob[T]) waitTimeoutVoid(ms int64) (bool, error) {",
+	"	return j.waitTimeout(nil, ms)",
+	"}",
+	"",
+	"func (j *CbJob[T]) isDone() bool {",
+	"	select {",
+	"	case <-j.done:",
+	"		return true",
+	"	default:",
+	"		return false",
+	"	}",
+	"}",
+	"",
+}, "\n") + "\n"

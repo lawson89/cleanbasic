@@ -14,18 +14,20 @@ import (
 type TypeKind string
 
 const (
-	KindVoid   TypeKind = "void"
-	KindInt    TypeKind = "int"
-	KindFloat  TypeKind = "float"
-	KindStr    TypeKind = "str"
-	KindBool   TypeKind = "bool"
-	KindByte   TypeKind = "byte"
-	KindAny    TypeKind = "any"
-	KindStruct TypeKind = "struct"
-	KindEnum   TypeKind = "enum"
-	KindList   TypeKind = "list"
-	KindDict   TypeKind = "dict"
-	KindErr    TypeKind = "err"
+	KindVoid    TypeKind = "void"
+	KindInt     TypeKind = "int"
+	KindFloat   TypeKind = "float"
+	KindStr     TypeKind = "str"
+	KindBool    TypeKind = "bool"
+	KindByte    TypeKind = "byte"
+	KindAny     TypeKind = "any"
+	KindStruct  TypeKind = "struct"
+	KindEnum    TypeKind = "enum"
+	KindList    TypeKind = "list"
+	KindDict    TypeKind = "dict"
+	KindMailbox TypeKind = "mailbox"
+	KindJob     TypeKind = "job"
+	KindErr     TypeKind = "err"
 )
 
 // Type represents a resolved semantic type in CleanBasic.
@@ -66,6 +68,16 @@ func (t Type) String() string {
 			return fmt.Sprintf("dict[%s, %s]", t.KeyType.String(), t.ValType.String())
 		}
 		return "dict[?, ?]"
+	case KindMailbox:
+		if t.ElemType != nil {
+			return fmt.Sprintf("mailbox[%s]", t.ElemType.String())
+		}
+		return "mailbox[?]"
+	case KindJob:
+		if t.ElemType != nil {
+			return fmt.Sprintf("job[%s]", t.ElemType.String())
+		}
+		return "job"
 	default:
 		return string(t.Kind)
 	}
@@ -82,7 +94,7 @@ func (t Type) Equals(other Type) bool {
 	switch t.Kind {
 	case KindStruct, KindEnum:
 		return t.Name == other.Name && t.ModuleID == other.ModuleID
-	case KindList:
+	case KindList, KindMailbox, KindJob:
 		if t.ElemType == nil || other.ElemType == nil {
 			return t.ElemType == other.ElemType
 		}
@@ -182,9 +194,10 @@ func (s *Scope) Lookup(name string) (*VarSymbol, bool) {
 
 // FieldSymbol represents a field in a user-defined struct type.
 type FieldSymbol struct {
-	Name string
-	Type Type
-	Pos  token.Position
+	Name  string
+	Type  Type
+	Pos   token.Position
+	Boxed bool
 }
 
 // StructSymbol represents a user-defined struct type.
@@ -325,12 +338,13 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 }
 
 type analyzer struct {
-	prog       *TypedProgram
-	mod        *ModuleInfo
-	currentFn  *FnSymbol
-	loopDepth  int
-	tryDepth   int
-	deferDepth int
+	prog         *TypedProgram
+	mod          *ModuleInfo
+	currentFn    *FnSymbol
+	loopDepth    int
+	tryDepth     int
+	deferDepth   int
+	startJobCall *ast.CallExpr
 }
 
 func (a *analyzer) lookupStruct(t Type) *StructSymbol {
@@ -395,6 +409,9 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 		}
 	}
 
+	// Pass 0.6: Detect direct and mutually recursive struct fields for auto-boxing.
+	a.markRecursiveStructFields()
+
 	// Pass 1: Register all top-level function declarations so functions can call each other regardless of order.
 	for _, decl := range prog.Decls {
 		fnDecl, ok := decl.(*ast.FnDecl)
@@ -456,6 +473,45 @@ func (a *analyzer) resolveTypeDecl(d *ast.TypeDecl) error {
 		sym.FieldMap[f.Name] = fs
 	}
 	return nil
+}
+
+func (a *analyzer) markRecursiveStructFields() {
+	for _, sym := range a.mod.Structs {
+		if sym.IsGoType {
+			continue
+		}
+		for i := range sym.Fields {
+			f := &sym.Fields[i]
+			if f.Type.Kind == KindStruct && a.structReaches(f.Type, sym, make(map[string]bool)) {
+				f.Boxed = true
+				sym.FieldMap[f.Name] = *f
+			}
+		}
+	}
+}
+
+func (a *analyzer) structReaches(t Type, target *StructSymbol, visited map[string]bool) bool {
+	if t.Kind != KindStruct {
+		return false
+	}
+	s := a.lookupStruct(t)
+	if s == nil || s.IsGoType {
+		return false
+	}
+	if s == target {
+		return true
+	}
+	key := s.ModuleID + "." + s.Name
+	if visited[key] {
+		return false
+	}
+	visited[key] = true
+	for _, f := range s.Fields {
+		if f.Type.Kind == KindStruct && a.structReaches(f.Type, target, visited) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *analyzer) resolveEnumDecl(d *ast.EnumDecl) error {
@@ -992,8 +1048,19 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 					return err
 				}
 			}
+		case KindMailbox:
+			if len(s.Vars) != 1 {
+				return newSemaError(s.Pos, "for-in loop over mailbox supports exactly 1 loop variable")
+			}
+			if err := a.defineLocalVar(loopScope, &VarSymbol{
+				Name: s.Vars[0],
+				Type: *iterType.ElemType,
+				Pos:  s.Pos,
+			}); err != nil {
+				return err
+			}
 		default:
-			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list, dict, or str, got %s", iterType.String())
+			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list, dict, str, or mailbox, got %s", iterType.String())
 		}
 
 		return a.analyzeLoopBody(s.Body, loopScope)
@@ -1206,7 +1273,9 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 	case *ast.DictLitExpr:
 		resolved, err = a.inferDictLitExpr(e, scope)
 	case *ast.TypedEmptyCtorExpr:
-		resolved, err = a.inferTypedEmptyCtorExpr(e)
+		resolved, err = a.inferTypedEmptyCtorExpr(e, scope)
+	case *ast.StartJobExpr:
+		resolved, err = a.inferStartJobExpr(e, scope)
 	case *ast.FieldAccessExpr:
 		resolved, err = a.inferFieldAccessExpr(e, scope)
 	case *ast.IndexExpr:
@@ -1363,15 +1432,58 @@ func (a *analyzer) inferDictLitExpr(e *ast.DictLitExpr, scope *Scope) (Type, err
 	return Type{Kind: KindDict, KeyType: &firstKey, ValType: &firstVal}, nil
 }
 
-func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr) (Type, error) {
+func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Scope) (Type, error) {
 	t, err := a.resolveTypeExpr(e.Type)
 	if err != nil {
 		return VoidType, err
 	}
-	if t.Kind != KindList && t.Kind != KindDict {
-		return VoidType, newSemaError(e.Pos, "typed empty constructor is only supported for list and dict, got %s", t.String())
+	switch t.Kind {
+	case KindList, KindDict:
+		if len(e.Args) > 0 {
+			return VoidType, newSemaError(e.Pos, "%s() takes no arguments", t.String())
+		}
+		return t, nil
+	case KindMailbox:
+		if len(e.Args) > 1 {
+			return VoidType, newSemaError(e.Pos, "mailbox constructor takes at most 1 capacity argument, got %d", len(e.Args))
+		}
+		if len(e.Args) == 1 {
+			capType, err := a.inferExpr(e.Args[0], scope)
+			if err != nil {
+				return VoidType, err
+			}
+			if !capType.Equals(IntType) {
+				return VoidType, newSemaError(e.Args[0].ExprPos(), "mailbox capacity must be int, got %s", capType.String())
+			}
+		}
+		return t, nil
+	default:
+		return VoidType, newSemaError(e.Pos, "typed container constructor is only supported for list, dict, and mailbox, got %s", t.String())
 	}
-	return t, nil
+}
+
+func (a *analyzer) inferStartJobExpr(e *ast.StartJobExpr, scope *Scope) (Type, error) {
+	prevStartJobCall := a.startJobCall
+	a.startJobCall = e.Call
+	retType, err := a.inferExpr(e.Call, scope)
+	a.startJobCall = prevStartJobCall
+	if err != nil {
+		return VoidType, err
+	}
+	ci := a.prog.CallInfos[e.Call]
+	if ci == nil || (ci.Kind != CallFunc && ci.Kind != CallUFCS) || ci.Fn == nil {
+		return VoidType, newSemaError(e.Pos, "'start job' requires a function or UFCS call")
+	}
+	for _, p := range ci.Fn.Params {
+		if p.ByRef {
+			return VoidType, newSemaError(e.Pos, "cannot pass 'byref' argument to 'start job'; use a mailbox to communicate")
+		}
+	}
+	if retType.IsVoid() {
+		return Type{Kind: KindJob}, nil
+	}
+	rt := retType
+	return Type{Kind: KindJob, ElemType: &rt}, nil
 }
 
 func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (Type, error) {
@@ -1539,7 +1651,7 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 		return fnSym.ReturnType, nil
 	}
 
-	if err := a.validateCallArgs(e.Pos, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
+	if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 		return VoidType, err
 	}
 
@@ -1654,9 +1766,24 @@ func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *
 	return retType, nil
 }
 
-func (a *analyzer) validateCallArgs(callPos token.Position, args []ast.CallArg, params []ParamSymbol, fnName string, canError bool, callKindDesc string, scope *Scope) error {
+func (a *analyzer) checkByRefArg(val ast.Expr, argIdx int, paramName, fnName string, scope *Scope) error {
+	switch v := val.(type) {
+	case *ast.IdentExpr:
+		sym, found := scope.Lookup(v.Name)
+		if !found || sym.IsConst {
+			return newSemaError(val.ExprPos(), "cannot pass constant %q to byref parameter %q of %q", v.Name, paramName, fnName)
+		}
+		return nil
+	case *ast.FieldAccessExpr:
+		return a.checkMutableTarget(v, scope)
+	default:
+		return newSemaError(val.ExprPos(), "argument %d (%q) to byref parameter of %q must be a mutable variable or field", argIdx, paramName, fnName)
+	}
+}
+
+func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.CallArg, params []ParamSymbol, fnName string, canError bool, callKindDesc string, scope *Scope) error {
 	if len(args) != len(params) {
-		return newSemaError(callPos, "%s %q expects %d argument(s), got %d", callKindDesc, fnName, len(params), len(args))
+		return newSemaError(callExpr.Pos, "%s %q expects %d argument(s), got %d", callKindDesc, fnName, len(params), len(args))
 	}
 	for i, arg := range args {
 		param := params[i]
@@ -1676,18 +1803,13 @@ func (a *analyzer) validateCallArgs(callPos token.Position, args []ast.CallArg, 
 				i+1, param.Name, fnName, argType.String(), param.Type.String())
 		}
 		if param.ByRef {
-			argIdent, isIdent := arg.Value.(*ast.IdentExpr)
-			if !isIdent {
-				return newSemaError(arg.Pos, "argument %d (%q) to byref parameter of %q must be a mutable variable", i+1, param.Name, fnName)
-			}
-			sym, found := scope.Lookup(argIdent.Name)
-			if !found || sym.IsConst {
-				return newSemaError(arg.Pos, "cannot pass constant %q to byref parameter %q of %q", argIdent.Name, param.Name, fnName)
+			if err := a.checkByRefArg(arg.Value, i+1, param.Name, fnName, scope); err != nil {
+				return err
 			}
 		}
 	}
-	if canError && !a.inFallibleContext() {
-		return newSemaError(callPos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
+	if canError && !a.inFallibleContext() && callExpr != a.startJobCall {
+		return newSemaError(callExpr.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
 	}
 	return nil
 }
@@ -1726,7 +1848,7 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 				if !fnSym.Public {
 					return VoidType, newSemaError(e.Pos, "function %q in module %q is private", fa.Field, objIdent.Name)
 				}
-				if err := a.validateCallArgs(e.Pos, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
+				if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 					return VoidType, err
 				}
 				a.prog.CallInfos[e] = &CallInfo{
@@ -1888,6 +2010,116 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "byte.toInt", Receiver: fa.Target}
 			return IntType, nil
 		}
+
+	case KindMailbox:
+		elemType := *recvType.ElemType
+		switch fa.Field {
+		case "post":
+			if err := a.expectPositionalArgs(e, "mailbox.post", scope, elemType); err != nil {
+				return VoidType, err
+			}
+			if !a.inFallibleContext() {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method 'mailbox.post' must be inside a 'try' block or a 'can error' function")
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.post", Receiver: fa.Target, CanError: true}
+			return VoidType, nil
+		case "postTimeout":
+			if err := a.expectPositionalArgs(e, "mailbox.postTimeout", scope, elemType, IntType); err != nil {
+				return VoidType, err
+			}
+			if !a.inFallibleContext() {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method 'mailbox.postTimeout' must be inside a 'try' block or a 'can error' function")
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.postTimeout", Receiver: fa.Target, CanError: true, HasValue: true}
+			return BoolType, nil
+		case "check":
+			if err := a.expectPositionalArgs(e, "mailbox.check", scope, elemType); err != nil {
+				return VoidType, err
+			}
+			if err := a.checkByRefArg(e.Args[0].Value, 1, "out", "mailbox.check", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.check", Receiver: fa.Target, HasValue: true}
+			return BoolType, nil
+		case "checkTimeout":
+			if err := a.expectPositionalArgs(e, "mailbox.checkTimeout", scope, elemType, IntType); err != nil {
+				return VoidType, err
+			}
+			if err := a.checkByRefArg(e.Args[0].Value, 1, "out", "mailbox.checkTimeout", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.checkTimeout", Receiver: fa.Target, HasValue: true}
+			return BoolType, nil
+		case "get":
+			if err := a.expectPositionalArgs(e, "mailbox.get", scope); err != nil {
+				return VoidType, err
+			}
+			if !a.inFallibleContext() {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method 'mailbox.get' must be inside a 'try' block or a 'can error' function")
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.get", Receiver: fa.Target, CanError: true, HasValue: true}
+			return elemType, nil
+		case "close":
+			if err := a.expectPositionalArgs(e, "mailbox.close", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.close", Receiver: fa.Target}
+			return VoidType, nil
+		case "count":
+			if err := a.expectPositionalArgs(e, "mailbox.count", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.count", Receiver: fa.Target, HasValue: true}
+			return IntType, nil
+		case "isClosed":
+			if err := a.expectPositionalArgs(e, "mailbox.isClosed", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "mailbox.isClosed", Receiver: fa.Target, HasValue: true}
+			return BoolType, nil
+		}
+
+	case KindJob:
+		switch fa.Field {
+		case "wait":
+			if err := a.expectPositionalArgs(e, "job.wait", scope); err != nil {
+				return VoidType, err
+			}
+			if !a.inFallibleContext() {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method 'job.wait' must be inside a 'try' block or a 'can error' function")
+			}
+			ret := VoidType
+			if recvType.ElemType != nil {
+				ret = *recvType.ElemType
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "job.wait", Receiver: fa.Target, CanError: true, HasValue: !ret.IsVoid()}
+			return ret, nil
+		case "waitTimeout":
+			if recvType.ElemType == nil {
+				if err := a.expectPositionalArgs(e, "job.waitTimeout", scope, IntType); err != nil {
+					return VoidType, err
+				}
+			} else {
+				if err := a.expectPositionalArgs(e, "job.waitTimeout", scope, *recvType.ElemType, IntType); err != nil {
+					return VoidType, err
+				}
+				if err := a.checkByRefArg(e.Args[0].Value, 1, "out", "job.waitTimeout", scope); err != nil {
+					return VoidType, err
+				}
+			}
+			if !a.inFallibleContext() {
+				return VoidType, newSemaError(e.Pos, "call to 'can error' method 'job.waitTimeout' must be inside a 'try' block or a 'can error' function")
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "job.waitTimeout", Receiver: fa.Target, CanError: true, HasValue: true}
+			return BoolType, nil
+		case "isDone":
+			if err := a.expectPositionalArgs(e, "job.isDone", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "job.isDone", Receiver: fa.Target, HasValue: true}
+			return BoolType, nil
+		}
+
 	}
 
 	// UFCS fallback: check current module first, then public functions in receiver type's defining module
@@ -1914,7 +2146,7 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		}
 	}
 
-	if err := a.validateCallArgs(e.Pos, e.Args, fnSym.Params[1:], fnSym.Name, fnSym.CanError, "UFCS call", scope); err != nil {
+	if err := a.validateCallArgs(e, e.Args, fnSym.Params[1:], fnSym.Name, fnSym.CanError, "UFCS call", scope); err != nil {
 		return VoidType, err
 	}
 
@@ -1954,6 +2186,24 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 			return VoidType, err
 		}
 		return Type{Kind: KindList, ElemType: &elem}, nil
+	case ast.TypeMailbox:
+		if t.ElemType == nil {
+			return VoidType, newSemaError(t.Pos, "mailbox type requires an element type")
+		}
+		elem, err := a.resolveTypeExpr(*t.ElemType)
+		if err != nil {
+			return VoidType, err
+		}
+		return Type{Kind: KindMailbox, ElemType: &elem}, nil
+	case ast.TypeJob:
+		if t.ElemType == nil {
+			return Type{Kind: KindJob}, nil
+		}
+		elem, err := a.resolveTypeExpr(*t.ElemType)
+		if err != nil {
+			return VoidType, err
+		}
+		return Type{Kind: KindJob, ElemType: &elem}, nil
 	case ast.TypeDict:
 		if t.KeyType == nil || t.ValType == nil {
 			return VoidType, newSemaError(t.Pos, "dict type requires key and value types")
@@ -2035,7 +2285,7 @@ func (a *analyzer) isComparableTypeVisited(t Type, visited map[string]bool) bool
 			return false
 		}
 		for _, f := range sym.Fields {
-			if !a.isComparableTypeVisited(f.Type, visited) {
+			if f.Boxed || !a.isComparableTypeVisited(f.Type, visited) {
 				return false
 			}
 		}

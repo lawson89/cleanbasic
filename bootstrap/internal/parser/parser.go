@@ -119,7 +119,7 @@ func (p *Parser) expectIdent(context string) (token.Token, error) {
 // that may appear after '.' (e.g., str.join, d.get, etc.).
 func (p *Parser) expectFieldOrMethodIdent(context string) (token.Token, error) {
 	tok := p.cur()
-	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.BYTE, token.LIST, token.DICT, token.ERR}, tok.Kind) {
+	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.BYTE, token.LIST, token.DICT, token.ERR, token.MAILBOX, token.JOB}, tok.Kind) {
 		p.advance()
 		return tok, nil
 	}
@@ -653,6 +653,45 @@ func (p *Parser) parseType() (ast.TypeExpr, error) {
 			Kind:    ast.TypeDict,
 			KeyType: &keyType,
 			ValType: &valType,
+		}, nil
+
+	case token.MAILBOX:
+		p.advance()
+		if _, err := p.expect(token.LBRACKET, "after 'mailbox'"); err != nil {
+			return ast.TypeExpr{}, err
+		}
+		elemType, err := p.parseType()
+		if err != nil {
+			return ast.TypeExpr{}, err
+		}
+		if _, err := p.expect(token.RBRACKET, "after mailbox element type"); err != nil {
+			return ast.TypeExpr{}, err
+		}
+		return ast.TypeExpr{
+			Pos:      tok.Pos,
+			Kind:     ast.TypeMailbox,
+			ElemType: &elemType,
+		}, nil
+
+	case token.JOB:
+		p.advance()
+		if p.match(token.LBRACKET) {
+			elemType, err := p.parseType()
+			if err != nil {
+				return ast.TypeExpr{}, err
+			}
+			if _, err := p.expect(token.RBRACKET, "after job return type"); err != nil {
+				return ast.TypeExpr{}, err
+			}
+			return ast.TypeExpr{
+				Pos:      tok.Pos,
+				Kind:     ast.TypeJob,
+				ElemType: &elemType,
+			}, nil
+		}
+		return ast.TypeExpr{
+			Pos:  tok.Pos,
+			Kind: ast.TypeJob,
 		}, nil
 
 	case token.IDENT:
@@ -1235,8 +1274,26 @@ func (p *Parser) parseMulExpr() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseUnaryExpr, token.STAR, token.SLASH, token.PERCENT)
 }
 
-// UnaryExpr ::= ("+" | "-") UnaryExpr | PostfixExpr
+// UnaryExpr ::= ("+" | "-") UnaryExpr | "start job" CallExpr | PostfixExpr
 func (p *Parser) parseUnaryExpr() (ast.Expr, error) {
+	if p.cur().Kind == token.START_JOB {
+		startTok := p.advance()
+		operand, err := p.parsePostfixExpr()
+		if err != nil {
+			return nil, err
+		}
+		call, ok := operand.(*ast.CallExpr)
+		if !ok {
+			return nil, &ParseError{
+				Pos:     startTok.Pos,
+				Message: "expected function call after 'start job'",
+			}
+		}
+		return &ast.StartJobExpr{
+			Pos:  startTok.Pos,
+			Call: call,
+		}, nil
+	}
 	if p.cur().Kind == token.PLUS || p.cur().Kind == token.MINUS {
 		opTok := p.advance()
 		operand, err := p.parseUnaryExpr()
@@ -1444,7 +1501,7 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 			Name: tok.Lexeme,
 		}, nil
 
-	case token.LIST, token.DICT:
+	case token.LIST, token.DICT, token.MAILBOX:
 		if p.peek(1).Kind == token.LBRACKET {
 			return p.parseTypedEmptyCtor()
 		}
@@ -1479,7 +1536,7 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 	}
 }
 
-// TypedEmptyCtor ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
+// TypedEmptyCtor ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]" | "mailbox" "[" Type "]") "(" [Expr] ")"
 func (p *Parser) parseTypedEmptyCtor() (ast.Expr, error) {
 	startPos := p.cur().Pos
 	ctorType, err := p.parseType()
@@ -1489,12 +1546,21 @@ func (p *Parser) parseTypedEmptyCtor() (ast.Expr, error) {
 	if _, err := p.expect(token.LPAREN, "after typed container constructor"); err != nil {
 		return nil, err
 	}
+	var args []ast.Expr
+	if ctorType.Kind == ast.TypeMailbox && p.cur().Kind != token.RPAREN {
+		capExpr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		args = []ast.Expr{capExpr}
+	}
 	if _, err := p.expect(token.RPAREN, "to close typed container constructor '()'"); err != nil {
 		return nil, err
 	}
 	return &ast.TypedEmptyCtorExpr{
 		Pos:  startPos,
 		Type: ctorType,
+		Args: args,
 	}, nil
 }
 

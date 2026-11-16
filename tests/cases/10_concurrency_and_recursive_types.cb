@@ -1,0 +1,151 @@
+' EXPECT_OUT: leaf zero=0 hasNext=false
+' EXPECT_OUT: isolation orig=10 copy=10
+' EXPECT_OUT: nested=99 byref=55
+' EXPECT_OUT: mutual=77
+' EXPECT_OUT: check empty=false val=0
+' EXPECT_OUT: post after close err=cannot post to closed mailbox
+' EXPECT_OUT: get after close err=mailbox is closed and empty
+' EXPECT_OUT: pool sum=60
+' EXPECT_OUT: job wait err=boom
+' EXPECT_OUT: drain=100,200,300
+' EXPECT_OUT: done=true
+
+type TreeNode
+    val as int
+    hasNext as bool
+    left as TreeNode
+    right as TreeNode
+end type
+
+type Expr
+    tag as int
+    blk as Block
+end type
+
+type Block
+    num as int
+    expr as Expr
+end type
+
+fn bumpVal(byref n as TreeNode, v as int)
+    n.val = v
+end fn
+
+fn worker(id as int, tasks as mailbox[int], results as mailbox[int]) can error
+    for item in tasks
+        results.post(item * 2)
+    end for
+end fn
+
+fn failJob() as int can error
+    error("boom")
+end fn
+
+fn quickJob(x as int) as int
+    return x + 1
+end fn
+
+fn main() as int
+    ' 1. Recursive struct zero-nil safety, value-copy isolation, nested mutation, byref
+    dim empty = TreeNode(val=1)
+    print("leaf zero=" & empty.left.val & " hasNext=" & empty.left.hasNext)
+
+    dim child = TreeNode(val=10)
+    dim parent = TreeNode(val=1, left=child)
+    child.val = 999
+    print("isolation orig=10 copy=" & parent.left.val)
+
+    parent.left.right.val = 99
+    bumpVal(parent.left, 55)
+    print("nested=" & parent.left.right.val & " byref=" & parent.left.val)
+
+    ' 2. Mutually recursive structs
+    dim e = Expr(tag=1)
+    e.blk.expr.tag = 77
+    print("mutual=" & e.blk.expr.tag)
+
+    ' 3. Mailbox check, postTimeout, close, error on closed post & empty get
+    dim mb = mailbox[int](2)
+    dim outVal = 0
+    dim ok = mb.check(outVal)
+    print("check empty=" & ok & " val=" & outVal)
+
+    mb.close()
+    try
+        mb.post(123)
+    catch ex
+        print("post after close err=" & ex.msg)
+    end try
+    try
+        dim v = mb.get()
+        print("unexpected=" & v)
+    catch ex
+        print("get after close err=" & ex.msg)
+    end try
+
+    ' 4. Worker pool with mailbox[T], list[job], start job
+    dim tasks = mailbox[int]()
+    dim results = mailbox[int](8)
+    dim jobs = list[job]()
+    for w = 1 to 2
+        jobs.push(start job worker(w, tasks, results))
+    end for
+
+    try
+        tasks.post(5)
+        tasks.post(10)
+        tasks.post(15)
+        tasks.close()
+
+        for j in jobs
+            j.wait()
+        end for
+        results.close()
+
+        dim sum = 0
+        for r in results
+            sum = sum + r
+        end for
+        print("pool sum=" & sum)
+    catch ex
+        print("pool err=" & ex.msg)
+    end try
+
+    ' 5. Job error propagation
+    dim fj = start job failJob()
+    try
+        dim fv = fj.wait()
+        print("unexpected=" & fv)
+    catch ex
+        print("job wait err=" & ex.msg)
+    end try
+
+    ' 6. Mailbox for-in drain & job waitTimeout / isDone
+    dim q = mailbox[int](4)
+    try
+        dim posted = q.postTimeout(100, 50)
+        if posted
+            q.post(200)
+            q.post(300)
+        end if
+        q.close()
+    catch ex
+        print("q err=" & ex.msg)
+    end try
+    dim parts = list[str]()
+    for msg in q
+        parts.push("" & msg)
+    end for
+    print("drain=" & str.join(parts, ","))
+
+    dim qj = start job quickJob(41)
+    dim qOut = 0
+    try
+        dim finished = qj.waitTimeout(qOut, 1000)
+        print("done=" & (finished and qj.isDone() and qOut == 42))
+    catch ex
+        print("qj err=" & ex.msg)
+    end try
+
+    return 0
+end fn

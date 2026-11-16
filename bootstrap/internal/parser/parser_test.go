@@ -173,3 +173,26 @@ end fn
 		}
 	}
 }
+
+func TestParseMailboxAndStartJob(t *testing.T) {
+	src := strings.Join([]string{
+		"fn worker(box as mailbox[int]) as int",
+		"    return 1",
+		"end fn",
+		"",
+		"fn main()",
+		"    dim box1 = mailbox[int]()",
+		"    dim box2 = mailbox[str](16)",
+		"    dim j1 as job[int] = start job worker(box1)",
+		"    dim jobs = list[job]()",
+		"    start job worker(box1)",
+		"end fn",
+	}, "\n")
+	prog, err := Parse(src, "concurrency.cb")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(prog.Decls) != 2 {
+		t.Fatalf("got %d decls, want 2", len(prog.Decls))
+	}
+}

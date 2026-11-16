@@ -310,3 +310,31 @@ public fn runSearch() as int
 end fn
 
 ```
+
+### 6. Structured Concurrency (`mailbox[T]`, `job` / `job[T]`, `start job`)
+
+CleanBasic provides structured, data-race-safe concurrency built around typed message queues and background jobs:
+
+* **Typed Mailboxes (`mailbox[T]`):** Created with `mailbox[T]()` (default buffer capacity 64) or `mailbox[T](cap)` (including `0` for rendezvous).
+  * `box.post(msg as T) can error` — sends `msg`, blocking if full and raising an error if closed.
+  * `box.postTimeout(msg as T, ms as int) as bool can error` — timed send returning `false` on timeout or raising an error if closed.
+  * `box.check(byref out as T) as bool` / `box.checkTimeout(byref out as T, ms as int) as bool` — non-blocking / timed atomic receive into `out`.
+  * `box.get() as T can error` — blocking receive; raises an error when closed and empty.
+  * `box.close()`, `box.count() as int`, `box.isClosed() as bool`, and `for msg in box ... end for` (drains until closed and empty).
+* **Background Jobs (`start job`, `job`, `job[T]`):**
+  * `start job fnCall(...)` works both as a standalone statement and as an expression returning `job` (for void functions) or `job[T]`.
+  * Arguments are evaluated eagerly by value before spawning the goroutine, and `byref` parameters are rejected at compile time.
+  * `j.wait() [as T] can error`, `j.waitTimeout([byref out as T,] ms as int) as bool can error`, and `j.isDone() as bool` await completion and propagate errors or recovered panics.
+
+### 7. Auto-Boxed Recursive Structs (Zero-Nil Value Semantics)
+
+Self-recursive (`Node -> Node`) and mutually recursive (`Expr <-> Block`) struct fields are automatically detected during semantic analysis and lowered to Go pointer fields (`*Struct`) while preserving 100% CleanBasic value semantics and zero-nil safety:
+
+* Reading an unset recursive field safely returns a zero-initialized value copy (`cbUnbox`).
+* Assigning a recursive field or passing it in a struct constructor copies by value (`cbBox`) to prevent unintended aliasing.
+* Nested field mutations (`node.left.right.val = 99`) and `byref` arguments (`bump(node.left)`) automatically lazy-allocate intermediate nodes (`cbEnsureBox`).
+* Recursive structs cannot be compared directly with raw `==` or `!=`.
+
+### 8. `go.mod` Passthrough & Persistent Build Workspace
+
+When running `cb build` or `cb run`, the CLI searches upward from the entry `.cb` file (and imported local modules, ignoring `bootstrap/go.mod` outside `bootstrap/`) for a project `go.mod` and `go.sum`. It syncs them into a persistent per-project workspace under the user cache directory (rewriting relative `replace` paths to absolute project paths) so CleanBasic projects can depend on external or local Go modules seamlessly.

@@ -30,6 +30,10 @@ func TestTwoWordKeywords(t *testing.T) {
 		"select case",
 		"case else",
 		"can error",
+		"start job",
+		"start",
+		"mailbox",
+		"job",
 	}, "\n")
 
 	toks, err := Tokenize(src, "keywords.cb")
@@ -51,6 +55,10 @@ func TestTwoWordKeywords(t *testing.T) {
 		token.SELECT_CASE, token.NEWLINE,
 		token.CASE_ELSE, token.NEWLINE,
 		token.CAN_ERROR, token.NEWLINE,
+		token.START_JOB, token.NEWLINE,
+		token.IDENT, token.NEWLINE,
+		token.MAILBOX, token.NEWLINE,
+		token.JOB, token.NEWLINE,
 		token.EOF,
 	}
 

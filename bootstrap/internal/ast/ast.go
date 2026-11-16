@@ -38,6 +38,8 @@ const (
 	TypeBasic     TypeKind = "basic"     // int, float, str, bool, byte, err
 	TypeList      TypeKind = "list"      // list[ElemType]
 	TypeDict      TypeKind = "dict"      // dict[KeyType, ValType]
+	TypeMailbox   TypeKind = "mailbox"   // mailbox[ElemType]
+	TypeJob       TypeKind = "job"       // job or job[ElemType]
 	TypeQualified TypeKind = "qualified" // Player or mod.Player
 )
 
@@ -66,6 +68,16 @@ func (t TypeExpr) String() string {
 			return fmt.Sprintf("dict[%s, %s]", t.KeyType.String(), t.ValType.String())
 		}
 		return "dict[]"
+	case TypeMailbox:
+		if t.ElemType != nil {
+			return fmt.Sprintf("mailbox[%s]", t.ElemType.String())
+		}
+		return "mailbox[]"
+	case TypeJob:
+		if t.ElemType != nil {
+			return fmt.Sprintf("job[%s]", t.ElemType.String())
+		}
+		return "job"
 	case TypeQualified:
 		return strings.Join(t.Parts, ".")
 	default:
@@ -392,11 +404,12 @@ type DictLitExpr struct {
 func (e *DictLitExpr) ExprPos() token.Position { return e.Pos }
 func (e *DictLitExpr) exprNode()               {}
 
-// TypedEmptyCtorExpr represents a typed empty container constructor:
-// list[T]() or dict[K, V]()
+// TypedEmptyCtorExpr represents a typed container constructor:
+// list[T](), dict[K, V](), mailbox[T](), or mailbox[T](cap)
 type TypedEmptyCtorExpr struct {
 	Pos  token.Position
 	Type TypeExpr
+	Args []Expr
 }
 
 func (e *TypedEmptyCtorExpr) ExprPos() token.Position { return e.Pos }
@@ -471,6 +484,15 @@ type CallExpr struct {
 
 func (e *CallExpr) ExprPos() token.Position { return e.Pos }
 func (e *CallExpr) exprNode()               {}
+
+// StartJobExpr represents launching a concurrent background job: start job fnCall(...)
+type StartJobExpr struct {
+	Pos  token.Position
+	Call *CallExpr
+}
+
+func (e *StartJobExpr) ExprPos() token.Position { return e.Pos }
+func (e *StartJobExpr) exprNode()               {}
 
 // --- Pretty Printer / AST Dump ---
 
@@ -706,7 +728,13 @@ func FormatExpr(expr Expr) string {
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	case *TypedEmptyCtorExpr:
-		return e.Type.String() + "()"
+		var args []string
+		for _, a := range e.Args {
+			args = append(args, FormatExpr(a))
+		}
+		return fmt.Sprintf("%s(%s)", e.Type.String(), strings.Join(args, ", "))
+	case *StartJobExpr:
+		return fmt.Sprintf("start job %s", FormatExpr(e.Call))
 	case *UnaryExpr:
 		return fmt.Sprintf("(%s %s)", e.Op, FormatExpr(e.Operand))
 	case *BinaryExpr:

@@ -831,3 +831,72 @@ end fn
 		})
 	}
 }
+func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
+	t.Run("start_job_rejects_byref", func(t *testing.T) {
+		src := "fn mut(byref x as int)\n    x = x + 1\nend fn\nfn main()\n    dim a = 1\n    start job mut(a)\nend fn\n"
+		_, err := AnalyzeSource(src, "byref_job.cb")
+		if err == nil || !strings.Contains(err.Error(), "cannot pass 'byref' argument to 'start job'") {
+			t.Fatalf("expected byref start job error, got: %v", err)
+		}
+	})
+
+	t.Run("recursive_struct_marks_boxed_and_disallows_eq", func(t *testing.T) {
+		src := strings.Join([]string{
+			"type Node",
+			"    val as int",
+			"    next as Node",
+			"end type",
+			"fn main()",
+			"    dim a = Node(val=1)",
+			"    dim b = Node(val=2)",
+			"    dim eq = (a == b)",
+			"end fn",
+		}, "\n")
+		_, err := AnalyzeSource(src, "rec_eq.cb")
+		if err == nil || !strings.Contains(err.Error(), "cannot be compared with") {
+			t.Fatalf("expected non-comparable error for recursive struct, got: %v", err)
+		}
+	})
+
+	t.Run("mutual_recursion_marks_boxed", func(t *testing.T) {
+		src := strings.Join([]string{
+			"type Expr",
+			"    val as int",
+			"    blk as Block",
+			"end type",
+			"type Block",
+			"    expr as Expr",
+			"end type",
+			"fn main()",
+			"    dim e = Expr(val=1)",
+			"end fn",
+		}, "\n")
+		prog, err := AnalyzeSource(src, "mutual.cb")
+		if err != nil {
+			t.Fatalf("unexpected sema error: %v", err)
+		}
+		exprSym := prog.EntryModule.Structs["Expr"]
+		blkSym := prog.EntryModule.Structs["Block"]
+		if !exprSym.FieldMap["blk"].Boxed || !blkSym.FieldMap["expr"].Boxed {
+			t.Fatalf("expected mutually recursive fields to be marked Boxed")
+		}
+	})
+
+	t.Run("start_job_rejects_fallible_arg_outside_try", func(t *testing.T) {
+		src := strings.Join([]string{
+			"fn failArg() as int can error",
+			"    return 1",
+			"end fn",
+			"fn worker(x as int)",
+			"    print(x)",
+			"end fn",
+			"fn main()",
+			"    dim j = start job worker(failArg())",
+			"end fn",
+		}, "\n")
+		_, err := AnalyzeSource(src, "fallible_arg_job.cb")
+		if err == nil || !strings.Contains(err.Error(), "must be inside a 'try' block or a 'can error' function") {
+			t.Fatalf("expected fallible argument error in start job, got: %v", err)
+		}
+	})
+}
