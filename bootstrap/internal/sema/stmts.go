@@ -140,7 +140,7 @@ func (a *analyzer) analyzeStartJobStmt(s *ast.StartJobStmt, scope *Scope) error 
 	if err != nil {
 		return err
 	}
-	ci := a.prog.CallInfos[s.Call]
+	ci := s.Call.CallInfo
 	if ci == nil || (ci.Kind != CallFunc && ci.Kind != CallUFCS) || ci.Fn == nil {
 		return newSemaError(s.Pos, "start job target must be a user or module function call")
 	}
@@ -191,7 +191,7 @@ func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
 	if err := a.defineLocalVar(scope, sym); err != nil {
 		return err
 	}
-	a.prog.VarTypes[s] = finalType
+	s.SemaType = finalType
 	return nil
 }
 
@@ -241,7 +241,7 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		if sym.IsConst {
 			return newSemaError(s.Pos, "cannot reassign constant %q (declared at %s)", target.Name, sym.Pos.String())
 		}
-		a.prog.ExprTypes[target] = sym.Type
+		target.SetExprType(sym.Type)
 		if !sym.Type.Equals(valType) {
 			return newSemaError(s.Pos, "type mismatch in assignment to %q: expected %s, got %s", target.Name, sym.Type.String(), valType.String())
 		}
@@ -271,7 +271,7 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		if err != nil {
 			return err
 		}
-		if targetObjType, ok := a.prog.ExprTypes[target.Target]; ok && targetObjType.Kind == KindStr {
+		if targetObjType := target.Target.ExprType(); targetObjType.Kind == KindStr {
 			return newSemaError(s.Pos, "cannot assign to string index (strings are immutable)")
 		}
 		if !elemType.Equals(valType) {

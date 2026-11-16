@@ -26,7 +26,7 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 			return VoidType, newSemaError(e.Pos, "undefined identifier %q", e.Name)
 		}
 		if sym.GoName != "" {
-			a.prog.IdentGoNames[e] = sym.GoName
+			e.GoName = sym.GoName
 		}
 		resolved = sym.Type
 	case *ast.UnaryExpr:
@@ -54,7 +54,7 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 	if err != nil {
 		return VoidType, err
 	}
-	a.prog.ExprTypes[expr] = resolved
+	expr.SetExprType(resolved)
 	return resolved, nil
 }
 
@@ -225,7 +225,7 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 			if !enumSym.VariantSet[e.Field] {
 				return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
 			}
-			a.prog.IdentGoNames[e] = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
+			e.GoName = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
 			return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
 		}
 		if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
@@ -236,7 +236,7 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 			if !sym.Public {
 				return VoidType, newSemaError(e.Pos, "constant %q in module %q is private", e.Field, objIdent.Name)
 			}
-			a.prog.IdentGoNames[e] = sym.GoName
+			e.GoName = sym.GoName
 			return sym.Type, nil
 		}
 	}
@@ -250,7 +250,7 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 					if !enumSym.VariantSet[e.Field] {
 						return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
 					}
-					a.prog.IdentGoNames[e] = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
+					e.GoName = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
 					return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
 				}
 				if _, isGlobal := impMod.GlobalVars.Lookup(innerFA.Field); !isGlobal {
@@ -381,7 +381,7 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 		return VoidType, err
 	}
 
-	a.prog.CallInfos[e] = &CallInfo{
+	e.CallInfo = &CallInfo{
 		Kind:     CallFunc,
 		Fn:       fnSym,
 		CanError: fnSym.CanError,
@@ -413,7 +413,7 @@ func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
 	if !msgType.Equals(StrType) {
 		return VoidType, newSemaError(e.Args[0].ExprPos(), "error() message must be str, got %s", msgType.String())
 	}
-	a.prog.CallInfos[e] = &CallInfo{Kind: CallError}
+	e.CallInfo = &CallInfo{Kind: CallError}
 	return VoidType, nil
 }
 
@@ -431,7 +431,7 @@ func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *
 			return VoidType, newSemaError(arg.ExprPos(), "argument %d (%q) to %q constructor expects %s, got %s", i+1, s.Fields[i].Name, s.Name, s.Fields[i].Type.String(), argType.String())
 		}
 	}
-	a.prog.CallInfos[e] = &CallInfo{Kind: CallStructCtor, Struct: s}
+	e.CallInfo = &CallInfo{Kind: CallStructCtor, Struct: s}
 	return retType, nil
 }
 
@@ -507,7 +507,7 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 				if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 					return VoidType, err
 				}
-				a.prog.CallInfos[e] = &CallInfo{
+				e.CallInfo = &CallInfo{
 					Kind:     CallFunc,
 					Fn:       fnSym,
 					CanError: fnSym.CanError,
@@ -564,7 +564,7 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		return VoidType, err
 	}
 
-	a.prog.CallInfos[e] = &CallInfo{
+	e.CallInfo = &CallInfo{
 		Kind:     CallUFCS,
 		Fn:       fnSym,
 		Receiver: fa.Target,

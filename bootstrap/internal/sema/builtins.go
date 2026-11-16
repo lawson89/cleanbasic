@@ -19,11 +19,10 @@ type builtinTypeRef struct {
 func bt(t Type) builtinTypeRef { return builtinTypeRef{kind: btConcrete, concrete: t} }
 
 var (
-	btListStr  = bt(Type{Kind: KindList, SubTypes: []Type{StrType}})
-	btListByte = bt(Type{Kind: KindList, SubTypes: []Type{ByteType}})
-	btElemRef  = builtinTypeRef{kind: btElem}
-	btKeyRef   = builtinTypeRef{kind: btKey}
-	btValRef   = builtinTypeRef{kind: btVal}
+	btListStr = bt(Type{Kind: KindList, SubTypes: []Type{StrType}})
+	btElemRef = builtinTypeRef{kind: btElem}
+	btKeyRef  = builtinTypeRef{kind: btKey}
+	btValRef  = builtinTypeRef{kind: btVal}
 )
 
 func (r builtinTypeRef) resolve(recv Type) Type {
@@ -50,7 +49,6 @@ var staticStrMethods = map[string]builtinMethodSpec{
 	"join":         {MethodName: "str.join", Params: []builtinTypeRef{btListStr, bt(StrType)}, Return: bt(StrType)},
 	"fromCharCode": {MethodName: "str.fromCharCode", Params: []builtinTypeRef{bt(IntType)}, Return: bt(StrType)},
 	"quote":        {MethodName: "str.quote", Params: []builtinTypeRef{bt(StrType)}, Return: bt(StrType)},
-	"fromBytes":    {MethodName: "str.fromBytes", Params: []builtinTypeRef{btListByte}, Return: bt(StrType)},
 }
 
 var instanceBuiltinMethods = map[TypeKind]map[string]builtinMethodSpec{
@@ -77,7 +75,6 @@ var instanceBuiltinMethods = map[TypeKind]map[string]builtinMethodSpec{
 		"endsWith":   {MethodName: "str.endsWith", Params: []builtinTypeRef{bt(StrType)}, Return: bt(BoolType)},
 		"indexOf":    {MethodName: "str.indexOf", Params: []builtinTypeRef{bt(StrType)}, Return: bt(IntType)},
 		"replace":    {MethodName: "str.replace", Params: []builtinTypeRef{bt(StrType), bt(StrType)}, Return: bt(StrType)},
-		"toBytes":    {MethodName: "str.toBytes", Return: btListByte},
 	},
 	KindInt: {
 		"toByte": {MethodName: "int.toByte", Return: bt(ByteType)},
@@ -121,7 +118,7 @@ func (a *analyzer) applyBuiltinMethod(e *ast.CallExpr, recvExpr ast.Expr, recvTy
 		return VoidType, err
 	}
 
-	a.prog.CallInfos[e] = &CallInfo{
+	e.CallInfo = &CallInfo{
 		Kind:       CallMethod,
 		MethodName: spec.MethodName,
 		Receiver:   recvExpr,

@@ -447,61 +447,52 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 }
 
 // ParamList ::= Param ("," Param)* [","]
-func parseDelimited[T any](p *Parser, endKind token.Kind, parseElem func(*Parser) (T, error)) ([]T, error) {
-	var items []T
+func (p *Parser) hasMoreDelimited(endKind token.Kind) bool {
 	p.skipNewlines()
-	if p.cur().Kind == endKind {
-		return items, nil
-	}
-
-	for {
+	if p.match(token.COMMA) {
 		p.skipNewlines()
-		if p.cur().Kind == endKind {
-			break
-		}
-
-		elem, err := parseElem(p)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, elem)
-
-		p.skipNewlines()
-		if p.match(token.COMMA) {
-			p.skipNewlines()
-			if p.cur().Kind == endKind {
-				break
-			}
-			continue
-		}
-		break
+		return p.cur().Kind != endKind
 	}
-
-	return items, nil
+	return false
 }
 
 // Param ::= ["byref"] Identifier "as" Type
 func (p *Parser) parseParamList() ([]ast.Param, error) {
-	return parseDelimited(p, token.RPAREN, func(p *Parser) (ast.Param, error) {
+	var params []ast.Param
+	p.skipNewlines()
+	if p.cur().Kind == token.RPAREN {
+		return params, nil
+	}
+	for {
+		p.skipNewlines()
+		if p.cur().Kind == token.RPAREN {
+			break
+		}
+
 		paramPos := p.cur().Pos
 		byRef := p.match(token.BYREF)
 
 		nameTok, err := p.expectIdent("for parameter name")
 		if err != nil {
-			return ast.Param{}, err
+			return nil, err
 		}
 
 		if _, err := p.expect(token.AS, "after parameter name"); err != nil {
-			return ast.Param{}, err
+			return nil, err
 		}
 
 		paramType, err := p.parseType()
 		if err != nil {
-			return ast.Param{}, err
+			return nil, err
 		}
 
-		return ast.Param{Pos: paramPos, ByRef: byRef, Name: nameTok.Lexeme, Type: paramType}, nil
-	})
+		params = append(params, ast.Param{Pos: paramPos, ByRef: byRef, Name: nameTok.Lexeme, Type: paramType})
+
+		if !p.hasMoreDelimited(token.RPAREN) {
+			break
+		}
+	}
+	return params, nil
 }
 
 // Type ::= "int" | "float" | "str" | "bool" | "err"
@@ -1024,17 +1015,45 @@ func (p *Parser) parseReturnStmt() (*ast.ReturnStmt, error) {
 
 // Expr ::= OrExpr
 func (p *Parser) parseExpr() (ast.Expr, error) {
-	return p.parseOrExpr()
+	return p.parseBinaryExpr(1)
 }
 
-func (p *Parser) parseBinaryLeft(next func() (ast.Expr, error), ops ...token.Kind) (ast.Expr, error) {
-	left, err := next()
+func binaryOpPrecedence(kind token.Kind) int {
+	switch kind {
+	case token.OR:
+		return 1
+	case token.AND:
+		return 2
+	case token.EQ, token.NEQ, token.LT, token.GT, token.LTE, token.GTE:
+		return 4
+	case token.PLUS, token.MINUS:
+		return 5
+	case token.STAR, token.SLASH, token.PERCENT:
+		return 6
+	default:
+		return 0
+	}
+}
+
+func (p *Parser) parseBinaryExpr(minPrec int) (ast.Expr, error) {
+	var left ast.Expr
+	var err error
+	if minPrec <= 3 {
+		left, err = p.parseNotExpr()
+	} else {
+		left, err = p.parseUnaryExpr()
+	}
 	if err != nil {
 		return nil, err
 	}
-	for slices.Contains(ops, p.cur().Kind) {
+
+	for {
+		prec := binaryOpPrecedence(p.cur().Kind)
+		if prec == 0 || prec < minPrec {
+			break
+		}
 		opTok := p.advance()
-		right, err := next()
+		right, err := p.parseBinaryExpr(prec + 1)
 		if err != nil {
 			return nil, err
 		}
@@ -1046,16 +1065,6 @@ func (p *Parser) parseBinaryLeft(next func() (ast.Expr, error), ops ...token.Kin
 		}
 	}
 	return left, nil
-}
-
-// OrExpr ::= AndExpr ("or" AndExpr)*
-func (p *Parser) parseOrExpr() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseAndExpr, token.OR)
-}
-
-// AndExpr ::= NotExpr ("and" NotExpr)*
-func (p *Parser) parseAndExpr() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseNotExpr, token.AND)
 }
 
 // NotExpr ::= "not" NotExpr | CmpExpr
@@ -1072,22 +1081,7 @@ func (p *Parser) parseNotExpr() (ast.Expr, error) {
 			Operand: operand,
 		}, nil
 	}
-	return p.parseCmpExpr()
-}
-
-// CmpExpr ::= AddExpr (("==" | "!=" | "<" | ">" | "<=" | ">=") AddExpr)*
-func (p *Parser) parseCmpExpr() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseAddExpr, token.EQ, token.NEQ, token.LT, token.GT, token.LTE, token.GTE)
-}
-
-// AddExpr ::= MulExpr (("+" | "-") MulExpr)*
-func (p *Parser) parseAddExpr() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseMulExpr, token.PLUS, token.MINUS)
-}
-
-// MulExpr ::= UnaryExpr (("*" | "/" | "%") UnaryExpr)*
-func (p *Parser) parseMulExpr() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseUnaryExpr, token.STAR, token.SLASH, token.PERCENT)
+	return p.parseBinaryExpr(4)
 }
 
 // UnaryExpr ::= ("+" | "-") UnaryExpr | PostfixExpr
@@ -1150,9 +1144,23 @@ func (p *Parser) parsePostfixExpr() (ast.Expr, error) {
 
 		case token.LPAREN:
 			lpTok := p.advance()
-			args, err := parseDelimited(p, token.RPAREN, (*Parser).parseExpr)
-			if err != nil {
-				return nil, err
+			var args []ast.Expr
+			p.skipNewlines()
+			if p.cur().Kind != token.RPAREN {
+				for {
+					p.skipNewlines()
+					if p.cur().Kind == token.RPAREN {
+						break
+					}
+					arg, err := p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, arg)
+					if !p.hasMoreDelimited(token.RPAREN) {
+						break
+					}
+				}
 			}
 			if _, err := p.expect(token.RPAREN, "after call arguments"); err != nil {
 				return nil, err
@@ -1172,19 +1180,17 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 	switch tok.Kind {
 	case token.INT_LIT:
 		p.advance()
-		val, err := strconv.ParseInt(tok.Lexeme, 10, 64)
-		if err != nil {
+		if _, err := strconv.ParseInt(tok.Lexeme, 10, 64); err != nil {
 			return nil, &ParseError{Pos: tok.Pos, Message: fmt.Sprintf("invalid integer literal %q: %v", tok.Lexeme, err)}
 		}
-		return &ast.IntLitExpr{Pos: tok.Pos, Raw: tok.Lexeme, Value: val}, nil
+		return &ast.IntLitExpr{Pos: tok.Pos, Raw: tok.Lexeme}, nil
 
 	case token.FLOAT_LIT:
 		p.advance()
-		val, err := strconv.ParseFloat(tok.Lexeme, 64)
-		if err != nil {
+		if _, err := strconv.ParseFloat(tok.Lexeme, 64); err != nil {
 			return nil, &ParseError{Pos: tok.Pos, Message: fmt.Sprintf("invalid float literal %q: %v", tok.Lexeme, err)}
 		}
-		return &ast.FloatLitExpr{Pos: tok.Pos, Raw: tok.Lexeme, Value: val}, nil
+		return &ast.FloatLitExpr{Pos: tok.Pos, Raw: tok.Lexeme}, nil
 
 	case token.STRING_LIT:
 		p.advance()
@@ -1257,9 +1263,23 @@ func (p *Parser) parseListLiteral() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	elems, err := parseDelimited(p, token.RBRACKET, (*Parser).parseExpr)
-	if err != nil {
-		return nil, err
+	var elems []ast.Expr
+	p.skipNewlines()
+	if p.cur().Kind != token.RBRACKET {
+		for {
+			p.skipNewlines()
+			if p.cur().Kind == token.RBRACKET {
+				break
+			}
+			elem, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, elem)
+			if !p.hasMoreDelimited(token.RBRACKET) {
+				break
+			}
+		}
 	}
 	if _, err := p.expect(token.RBRACKET, "to close list literal"); err != nil {
 		return nil, err
@@ -1276,23 +1296,31 @@ func (p *Parser) parseDictLiteral() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	entries, err := parseDelimited(p, token.RBRACE, func(p *Parser) (ast.DictEntryExpr, error) {
-		entryPos := p.cur().Pos
-		keyExpr, err := p.parseExpr()
-		if err != nil {
-			return ast.DictEntryExpr{}, err
+	var entries []ast.DictEntryExpr
+	p.skipNewlines()
+	if p.cur().Kind != token.RBRACE {
+		for {
+			p.skipNewlines()
+			if p.cur().Kind == token.RBRACE {
+				break
+			}
+			entryPos := p.cur().Pos
+			keyExpr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(token.COLON, "after dictionary key"); err != nil {
+				return nil, err
+			}
+			valExpr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, ast.DictEntryExpr{Pos: entryPos, Key: keyExpr, Value: valExpr})
+			if !p.hasMoreDelimited(token.RBRACE) {
+				break
+			}
 		}
-		if _, err := p.expect(token.COLON, "after dictionary key"); err != nil {
-			return ast.DictEntryExpr{}, err
-		}
-		valExpr, err := p.parseExpr()
-		if err != nil {
-			return ast.DictEntryExpr{}, err
-		}
-		return ast.DictEntryExpr{Pos: entryPos, Key: keyExpr, Value: valExpr}, nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	if _, err := p.expect(token.RBRACE, "to close dict literal"); err != nil {
 		return nil, err

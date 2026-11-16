@@ -34,11 +34,11 @@ func (e *emitter) emitErrorJumpOrReturn(sb *strings.Builder, indent, errExpr str
 
 func (e *emitter) emitFallibleCallExpr(sb *strings.Builder, expr ast.Expr, indent string) (string, bool) {
 	call, ok := expr.(*ast.CallExpr)
-	if !ok || e.prog == nil {
+	if !ok {
 		return "", false
 	}
-	ci, hasCI := e.prog.CallInfos[call]
-	if !hasCI {
+	ci := call.CallInfo
+	if ci == nil {
 		return "", false
 	}
 	if ci.Kind == sema.CallError {
@@ -82,8 +82,8 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 	case *ast.VarDecl:
 		valStr := e.emitRhs(sb, s.Value, indent)
 		typeStr := ""
-		if vType, ok := e.prog.VarTypes[s]; ok && !vType.IsVoid() {
-			typeStr = " " + e.goSemaType(vType)
+		if !s.SemaType.IsVoid() {
+			typeStr = " " + e.goSemaType(s.SemaType)
 		}
 		varGo := goIdent(s.Name)
 		sb.WriteString(fmt.Sprintf("%svar %s%s = %s\n", indent, varGo, typeStr, valStr))
@@ -134,7 +134,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			e.emitStmtList(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		} else {
-			iterType := e.prog.ExprTypes[s.Iterable]
+			iterType := s.Iterable.ExprType()
 			iterExpr := e.emitExpr(s.Iterable)
 			v0 := goIdent(s.Vars[0])
 			switch iterType.Kind {

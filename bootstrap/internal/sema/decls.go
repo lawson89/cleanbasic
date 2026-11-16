@@ -290,7 +290,7 @@ func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
 	if err := a.mod.GlobalVars.Define(sym); err != nil {
 		return err
 	}
-	a.prog.ConstTypes[d] = finalType
+	d.SemaType = finalType
 	return nil
 }
 

@@ -1,7 +1,7 @@
 ' EXPECT_OUT: goInterop=14:HELLO
 ' EXPECT_OUT: sliceStr=ell:he:lo:hello
 ' EXPECT_OUT: sliceList=2,3:1,2:4,5:5
-' EXPECT_OUT: bytes=65:66:ABC:65,66,67
+' EXPECT_OUT: bytes=65:66:65,66,67
 ' EXPECT_OUT: loopList=0=10,1=20,2=30
 ' EXPECT_OUT: loopStr=a,b,é|0:a,1:b,2:é
 ' EXPECT_OUT: interp=sum=7,q="hi",len=5
@@ -37,9 +37,7 @@ fn main() as int
 	dim b = 65.toByte()
 	dim b2 = b + 1.toByte()
 	dim bs = [b, b2, 67.toByte()]
-	dim word = str.fromBytes(bs)
-	dim raw = word.toBytes()
-	print("bytes=" + b.toInt().toStr() + ":" + b2.toInt().toStr() + ":" + word + ":" + raw[0].toInt().toStr() + "," + raw[1].toInt().toStr() + "," + raw[2].toInt().toStr())
+	print("bytes=" + b.toInt().toStr() + ":" + b2.toInt().toStr() + ":" + bs[0].toInt().toStr() + "," + bs[1].toInt().toStr() + "," + bs[2].toInt().toStr())
 
 	dim listParts = list[str]()
 	for i, v in [10, 20, 30]

@@ -247,7 +247,7 @@ end fn
 
 * **Unified `+` Concatenation & `.toStr()`:** The `+` operator supports both numeric addition (`int`, `float`, `byte`) and string concatenation (`str + str`). Primitives (`int`, `float`, `bool`, `byte`, `str`) provide `.toStr()` for explicit string conversion.
 
-* **`byte` Primitive Type & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, and `int.toByte()`, `byte.toInt()`, `str.toBytes()`, and `str.fromBytes(b)` convert explicitly. Read-only string indexing `s[i]` returns `byte` directly via Go indexing.
+* **`byte` Primitive Type & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, and `int.toByte()` and `byte.toInt()` convert explicitly. Read-only string indexing `s[i]` returns `byte` directly via Go indexing.
 
 * **Bounds-Safe Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` clamp out-of-bounds or negative indices without panicking and evaluate as r-values.
 

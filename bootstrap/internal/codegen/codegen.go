@@ -28,7 +28,6 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 	}
 
 	e := &emitter{
-		prog:               prog,
 		emitLineDirectives: opts.EmitLineDirectives,
 	}
 	var bodyBuf strings.Builder
@@ -76,7 +75,6 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 }
 
 type emitter struct {
-	prog               *sema.TypedProgram
 	emitLineDirectives bool
 	currentMod         *sema.ModuleInfo
 	currentFnSym       *sema.FnSymbol
@@ -213,8 +211,8 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			}
 			goName = goIdent(goName)
 			typeStr := ""
-			if cType, ok := e.prog.ConstTypes[d]; ok && !cType.IsVoid() {
-				typeStr = " " + e.goSemaType(cType)
+			if !d.SemaType.IsVoid() {
+				typeStr = " " + e.goSemaType(d.SemaType)
 			}
 			sb.WriteString(fmt.Sprintf("var %s%s = %s\n\n", goName, typeStr, e.emitExpr(d.Value)))
 

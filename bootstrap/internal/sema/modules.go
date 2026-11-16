@@ -23,7 +23,6 @@ type ModuleInfo struct {
 	IsStdlib    bool
 	Program     *ast.Program
 	Imports     map[string]*ModuleInfo
-	GoImports   []ast.GoImportDecl
 	Functions   map[string]*FnSymbol
 	Structs     map[string]*StructSymbol
 	Enums       map[string]*EnumSymbol
@@ -156,10 +155,6 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 	}
 
 	for _, decl := range prog.Decls {
-		if gi, ok := decl.(*ast.GoImportDecl); ok {
-			mod.GoImports = append(mod.GoImports, *gi)
-			continue
-		}
 		imp, ok := decl.(*ast.ImportDecl)
 		if !ok {
 			continue

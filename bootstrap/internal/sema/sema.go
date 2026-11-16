@@ -11,109 +11,53 @@ import (
 )
 
 // TypeKind distinguishes primitive, container, user-defined, and void semantic types.
-type TypeKind string
+type TypeKind = ast.SemaTypeKind
 
 const (
-	KindVoid    TypeKind = "void"
-	KindInt     TypeKind = "int"
-	KindFloat   TypeKind = "float"
-	KindStr     TypeKind = "str"
-	KindBool    TypeKind = "bool"
-	KindByte    TypeKind = "byte"
-	KindStruct  TypeKind = "struct"
-	KindEnum    TypeKind = "enum"
-	KindList    TypeKind = "list"
-	KindDict    TypeKind = "dict"
-	KindMailbox TypeKind = "mailbox"
-	KindErr     TypeKind = "err"
+	KindVoid    = ast.KindVoid
+	KindInt     = ast.KindInt
+	KindFloat   = ast.KindFloat
+	KindStr     = ast.KindStr
+	KindBool    = ast.KindBool
+	KindByte    = ast.KindByte
+	KindStruct  = ast.KindStruct
+	KindEnum    = ast.KindEnum
+	KindList    = ast.KindList
+	KindDict    = ast.KindDict
+	KindMailbox = ast.KindMailbox
+	KindErr     = ast.KindErr
 )
 
 // Type represents a resolved semantic type in CleanBasic.
-type Type struct {
-	Kind     TypeKind
-	Name     string
-	ModuleID string
-	GoName   string
-	SubTypes []Type // [elem] for list/mailbox; [key, val] for dict
-}
-
-func (t Type) Elem() Type {
-	if len(t.SubTypes) > 0 {
-		return t.SubTypes[0]
-	}
-	return VoidType
-}
-
-func (t Type) Key() Type {
-	if len(t.SubTypes) > 0 {
-		return t.SubTypes[0]
-	}
-	return VoidType
-}
-
-func (t Type) Val() Type {
-	if len(t.SubTypes) > 1 {
-		return t.SubTypes[1]
-	}
-	return VoidType
-}
+type Type = ast.SemaType
 
 var (
-	VoidType  = Type{Kind: KindVoid}
-	IntType   = Type{Kind: KindInt}
-	FloatType = Type{Kind: KindFloat}
-	StrType   = Type{Kind: KindStr}
-	BoolType  = Type{Kind: KindBool}
-	ByteType  = Type{Kind: KindByte}
-	ErrType   = Type{Kind: KindErr}
+	VoidType  = ast.VoidType
+	IntType   = ast.IntType
+	FloatType = ast.FloatType
+	StrType   = ast.StrType
+	BoolType  = ast.BoolType
+	ByteType  = ast.ByteType
+	ErrType   = ast.ErrType
 )
 
-func (t Type) String() string {
-	switch t.Kind {
-	case "":
-		return "void"
-	case KindStruct, KindEnum:
-		return t.Name
-	case KindList, KindMailbox:
-		if len(t.SubTypes) == 1 {
-			return fmt.Sprintf("%s[%s]", t.Kind, t.SubTypes[0].String())
-		}
-		return fmt.Sprintf("%s[?]", t.Kind)
-	case KindDict:
-		if len(t.SubTypes) == 2 {
-			return fmt.Sprintf("dict[%s, %s]", t.SubTypes[0].String(), t.SubTypes[1].String())
-		}
-		return "dict[?, ?]"
-	default:
-		return string(t.Kind)
-	}
-}
+// ParamSymbol, FnSymbol, FieldSymbol, StructSymbol, EnumSymbol, CallKind, and CallInfo
+// are defined in package ast so AST nodes can store resolved metadata directly.
+type ParamSymbol = ast.ParamSymbol
+type FnSymbol = ast.FnSymbol
+type FieldSymbol = ast.FieldSymbol
+type StructSymbol = ast.StructSymbol
+type EnumSymbol = ast.EnumSymbol
+type CallKind = ast.CallKind
+type CallInfo = ast.CallInfo
 
-func (t Type) IsVoid() bool {
-	return t.Kind == "" || t.Kind == KindVoid
-}
-
-func (t Type) Equals(other Type) bool {
-	if t.Kind != other.Kind {
-		return false
-	}
-	switch t.Kind {
-	case KindStruct, KindEnum:
-		return t.Name == other.Name && t.ModuleID == other.ModuleID
-	case KindList, KindMailbox, KindDict:
-		if len(t.SubTypes) != len(other.SubTypes) {
-			return false
-		}
-		for i := range t.SubTypes {
-			if !t.SubTypes[i].Equals(other.SubTypes[i]) {
-				return false
-			}
-		}
-		return true
-	default:
-		return true
-	}
-}
+const (
+	CallFunc       = ast.CallFunc
+	CallStructCtor = ast.CallStructCtor
+	CallMethod     = ast.CallMethod
+	CallUFCS       = ast.CallUFCS
+	CallError      = ast.CallError
+)
 
 // SemaError represents a semantic analysis error with File:Line:Column location.
 type SemaError struct {
@@ -141,28 +85,6 @@ type VarSymbol struct {
 	Public  bool
 	ByRef   bool
 	Pos     token.Position
-}
-
-// ParamSymbol represents a typed function parameter.
-type ParamSymbol struct {
-	Name  string
-	Type  Type
-	ByRef bool
-	Pos   token.Position
-}
-
-// FnSymbol represents a declared or built-in function signature.
-type FnSymbol struct {
-	Name       string
-	GoName     string
-	Params     []ParamSymbol
-	ReturnType Type
-	CanError   bool
-	Public     bool
-	GoTarget   string
-	IsVariadic bool
-	Decl       *ast.FnDecl
-	Pos        token.Position
 }
 
 // Scope represents a lexical variable scope with an optional parent scope.
@@ -198,73 +120,13 @@ func (s *Scope) Lookup(name string) (*VarSymbol, bool) {
 	return nil, false
 }
 
-// FieldSymbol represents a field in a user-defined struct type.
-type FieldSymbol struct {
-	Name string
-	Type Type
-	Pos  token.Position
-}
-
-// StructSymbol represents a user-defined struct type.
-type StructSymbol struct {
-	Name     string
-	GoName   string
-	ModuleID string
-	Fields   []FieldSymbol
-	FieldMap map[string]FieldSymbol
-	Public   bool
-	IsGoType bool
-	Decl     *ast.TypeDecl
-	Pos      token.Position
-}
-
-// EnumSymbol represents a user-defined enum type.
-type EnumSymbol struct {
-	Name       string
-	GoName     string
-	ModuleID   string
-	Variants   []string
-	VariantSet map[string]bool
-	Public     bool
-	Decl       *ast.EnumDecl
-	Pos        token.Position
-}
-
-// CallKind identifies how a CallExpr was resolved during semantic analysis.
-type CallKind int
-
-const (
-	CallFunc CallKind = iota
-	CallStructCtor
-	CallMethod
-	CallUFCS
-	CallError
-)
-
-// CallInfo records the resolved target of a CallExpr for code generation.
-type CallInfo struct {
-	Kind       CallKind
-	Fn         *FnSymbol
-	Struct     *StructSymbol
-	MethodName string
-	Receiver   ast.Expr
-	CanError   bool
-	HasValue   bool
-}
-
-// TypedProgram holds the AST and semantic type information for an analyzed CleanBasic program.
+// TypedProgram holds the AST and module symbol tables for an analyzed CleanBasic program.
 type TypedProgram struct {
-	EntryFile    string
-	Main         *ast.Program
-	Modules      []*ModuleInfo
-	EntryModule  *ModuleInfo
-	ModuleByID   map[string]*ModuleInfo
-	ExprTypes    map[ast.Expr]Type
-	VarTypes     map[*ast.VarDecl]Type
-	ConstTypes   map[*ast.ConstDecl]Type
-	IdentGoNames map[ast.Expr]string
-	Functions    map[string]*FnSymbol
-	CallInfos    map[*ast.CallExpr]*CallInfo
+	EntryFile   string
+	Main        *ast.Program
+	Modules     []*ModuleInfo
+	EntryModule *ModuleInfo
+	ModuleByID  map[string]*ModuleInfo
 }
 
 // LoadAndAnalyze reads, parses, and semantically analyzes the CleanBasic file at entryPath.
@@ -304,17 +166,11 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 	}
 
 	tp := &TypedProgram{
-		EntryFile:    prog.File,
-		Main:         prog,
-		Modules:      topoOrder,
-		EntryModule:  entryMod,
-		ModuleByID:   byID,
-		ExprTypes:    make(map[ast.Expr]Type),
-		VarTypes:     make(map[*ast.VarDecl]Type),
-		ConstTypes:   make(map[*ast.ConstDecl]Type),
-		IdentGoNames: make(map[ast.Expr]string),
-		Functions:    entryMod.Functions,
-		CallInfos:    make(map[*ast.CallExpr]*CallInfo),
+		EntryFile:   prog.File,
+		Main:        prog,
+		Modules:     topoOrder,
+		EntryModule: entryMod,
+		ModuleByID:  byID,
 	}
 
 	a := &analyzer{

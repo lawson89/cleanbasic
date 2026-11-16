@@ -28,7 +28,7 @@ func TestAnalyzeCase01AndCase02(t *testing.T) {
 			if prog == nil || prog.Main == nil {
 				t.Fatalf("LoadAndAnalyze(%s) returned nil program", tc)
 			}
-			if _, ok := prog.Functions["main"]; !ok {
+			if _, ok := prog.EntryModule.Functions["main"]; !ok {
 				t.Errorf("expected main function in Functions table for %s", tc)
 			}
 		})
@@ -62,7 +62,7 @@ end fn
 	}
 
 	// Verify inferred types for local VarDecls inside compute
-	fnDecl := prog.Functions["compute"].Decl
+	fnDecl := prog.EntryModule.Functions["compute"].Decl
 	expectedVars := map[string]Type{
 		"sum":    IntType,
 		"scaled": FloatType,
@@ -71,8 +71,8 @@ end fn
 
 	for _, st := range fnDecl.Body {
 		if vd, ok := st.(*ast.VarDecl); ok {
-			gotType, exists := prog.VarTypes[vd]
-			if !exists {
+			gotType := vd.SemaType
+			if gotType.IsVoid() {
 				t.Errorf("missing inferred type for variable %q", vd.Name)
 				continue
 			}
