@@ -1,7 +1,7 @@
-' EXPECT_OUT: status: Active
-' EXPECT_OUT: circle area: 75
-' EXPECT_OUT: rect area: 24
-' EXPECT_OUT: empty area: 0
+// EXPECT_OUT: status: Active
+// EXPECT_OUT: circle area: 75
+// EXPECT_OUT: rect area: 24
+// EXPECT_OUT: empty area: 0
 
 enum Status
     Pending

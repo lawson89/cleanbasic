@@ -9,12 +9,6 @@ import (
 	"cleanbasic/bootstrap/internal/token"
 )
 
-func TestRemovedCptrIsIdent(t *testing.T) {
-	if got := token.LookupIdent("cptr"); got != token.IDENT {
-		t.Fatalf("LookupIdent(\"cptr\") = %s, want IDENT", got)
-	}
-}
-
 func TestTwoWordKeywords(t *testing.T) {
 	src := strings.Join([]string{
 		"else if",
@@ -114,7 +108,7 @@ func TestForbiddenCStyleLogicalOperators(t *testing.T) {
 }
 
 func TestCommentsAndNewlineCoalescing(t *testing.T) {
-	src := "' leading comment\n# another comment\n\nconst x = 10 ' inline comment\n\n\n# middle comment\ndim y = 20\n"
+	src := "// leading comment\n/// doc comment\n\nconst x = 10 // inline comment\n\n\n/// middle doc comment\ndim y = 20\n"
 	toks, err := Tokenize(src, "comments.cb")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -138,6 +132,44 @@ func TestCommentsAndNewlineCoalescing(t *testing.T) {
 	}
 }
 
+func TestByteLiterals(t *testing.T) {
+	src := "'a' '0' '\\n' '\\r' '\\t' '\\\\' '\\'' '\\\"' '\\0'\n"
+	toks, err := Tokenize(src, "bytes.cb")
+	if err != nil {
+		t.Fatalf("unexpected lex error: %v", err)
+	}
+	wantBytes := []byte{'a', '0', '\n', '\r', '\t', '\\', '\'', '"', 0}
+	for i, want := range wantBytes {
+		if toks[i].Kind != token.BYTE_LIT {
+			t.Fatalf("tok[%d] kind = %s, want BYTE_LIT", i, toks[i].Kind)
+		}
+		if len(toks[i].Lexeme) != 1 || toks[i].Lexeme[0] != want {
+			t.Fatalf("tok[%d] lexeme = %q, want %q", i, toks[i].Lexeme, string([]byte{want}))
+		}
+	}
+
+	badCases := []struct {
+		name    string
+		src     string
+		wantSub string
+	}{
+		{"empty", "''\n", "empty byte literal"},
+		{"multi-char", "'ab'\n", "single character"},
+		{"unterminated", "'a\n", "unterminated byte literal"},
+		{"hash-comment-removed", "# old comment\n", "unexpected character '#'"},
+	}
+	for _, tc := range badCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Tokenize(tc.src, "bad_byte.cb")
+			if err == nil {
+				t.Fatalf("expected lex error for %q, got nil", tc.src)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error %q did not contain %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
 func TestGoBlocks(t *testing.T) {
 	goSrc := `go import "os"
 go

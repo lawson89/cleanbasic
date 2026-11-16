@@ -672,3 +672,32 @@ func TestAddressableByRefSema(t *testing.T) {
 		t.Fatalf("AnalyzeSource failed for addressable byref args: %v", err)
 	}
 }
+
+func TestByteLiteralSema(t *testing.T) {
+	src := strings.Join([]string{
+		"/// Byte constant doc comment",
+		"const LETTER_A = 'A'",
+		"fn classify(b as byte) as int",
+		"    select case b",
+		"        case 'A'",
+		"            return 1",
+		"        case '\\n'",
+		"            return 2",
+		"        case else",
+		"            return 0",
+		"    end select",
+		"end fn",
+		"fn main() as int",
+		"    dim b = 'a'",
+		"    return classify(b) + classify(LETTER_A)",
+		"end fn",
+	}, "\n")
+	if _, err := AnalyzeSource(src, "byte_sema.cb"); err != nil {
+		t.Fatalf("AnalyzeSource failed for byte literals: %v", err)
+	}
+
+	badSrc := "fn main() as int\n    dim x as int = 'a'\n    return x\nend fn\n"
+	if _, err := AnalyzeSource(badSrc, "bad_byte_sema.cb"); err == nil {
+		t.Fatalf("expected type mismatch error assigning byte literal to int")
+	}
+}

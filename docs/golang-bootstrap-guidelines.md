@@ -26,7 +26,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
 - `cmd/cb/main.go` — CLI entrypoint (`cb run <file.cb>`, `cb build <file.cb> [-o out]`, `cb check <file.cb>`)
 - `internal/token/` — Token definitions, keyword lookup, and two-word keyword coalescing (`else if`, `end fn`, `go import`, `end go`, `select case`, etc.)
 - `internal/ast/` — AST node definitions for declarations, statements, expressions, and types
-- `internal/lexer/` — Scanner with line/col tracking, `'` and `#` comments, and `go ... end go` raw blocks
+- `internal/lexer/` — Scanner with line/col tracking, `//` comments, single-quoted `byte` literals, and `go ... end go` raw blocks
 - `internal/parser/` — Recursive-descent parser matching the EBNF grammar
 - `internal/sema/` — Symbol tables, module import graph (including `std/*.cb` discovery), type checking, mutability, `byref` shadowing checks, and fallibility verification
 - `internal/codegen/` — Single-file procedural Go code emitter with `//line` directives

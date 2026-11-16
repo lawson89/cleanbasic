@@ -1195,6 +1195,10 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 		p.advance()
 		return &ast.StringLitExpr{Pos: tok.Pos, Value: tok.Lexeme}, nil
 
+	case token.BYTE_LIT:
+		p.advance()
+		return &ast.ByteLitExpr{Pos: tok.Pos, Value: tok.Lexeme[0]}, nil
+
 	case token.TRUE, token.FALSE:
 		p.advance()
 		return &ast.BoolLitExpr{Pos: tok.Pos, Value: tok.Kind == token.TRUE}, nil

@@ -30,6 +30,7 @@ const (
 	INT_LIT    Kind = "INT_LIT"
 	FLOAT_LIT  Kind = "FLOAT_LIT"
 	STRING_LIT Kind = "STRING_LIT"
+	BYTE_LIT   Kind = "BYTE_LIT"
 	TRUE       Kind = "true"
 	FALSE      Kind = "false"
 

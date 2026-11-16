@@ -122,8 +122,8 @@ func (l *Lexer) scanAll() ([]token.Token, error) {
 			continue
 		}
 
-		// Handle comments starting with ' or #
-		if ch == 39 || ch == '#' {
+		// Handle comments starting with //
+		if ch == '/' && l.peekNext() == '/' {
 			for l.pos < len(l.src) && l.peek() != '\n' {
 				l.advance()
 			}
@@ -258,7 +258,7 @@ func (l *Lexer) scanEscapeSequence() (byte, error) {
 	if l.pos >= len(l.src) {
 		return 0, &LexError{
 			Pos:     escPos,
-			Message: "unterminated escape sequence in string literal",
+			Message: "unterminated escape sequence",
 		}
 	}
 	ch := l.advance()
@@ -271,6 +271,8 @@ func (l *Lexer) scanEscapeSequence() (byte, error) {
 		return '\t', nil
 	case '\\':
 		return '\\', nil
+	case '\'':
+		return '\'', nil
 	case '"':
 		return '"', nil
 	case '0':
@@ -299,7 +301,7 @@ func (l *Lexer) isRestOfLineEmptyOrComment() bool {
 		return true
 	}
 	ch := l.peek()
-	return ch == '\n' || ch == '\r' || ch == 39 || ch == '#'
+	return ch == '\n' || ch == '\r' || (ch == '/' && l.peekNext() == '/')
 }
 
 func (l *Lexer) scanGoBlock(startPos token.Position) (token.Token, error) {
@@ -355,17 +357,70 @@ func isEndGoDirective(trimmed string) bool {
 	if len(afterGo) == 0 {
 		return true
 	}
-	if afterGo[0] != ' ' && afterGo[0] != '\t' && afterGo[0] != 39 && afterGo[0] != '#' {
+	if afterGo[0] != ' ' && afterGo[0] != '\t' && !strings.HasPrefix(afterGo, "//") {
 		return false
 	}
 	afterGo = strings.TrimLeft(afterGo, " \t")
-	return len(afterGo) == 0 || afterGo[0] == 39 || afterGo[0] == '#'
+	return len(afterGo) == 0 || strings.HasPrefix(afterGo, "//")
+}
+
+func (l *Lexer) scanByteLiteral() (token.Token, error) {
+	startPos := l.currentPos()
+	l.advance() // consume opening single quote
+	if l.pos >= len(l.src) || l.peek() == '\n' || l.peek() == '\r' {
+		return token.Token{}, &LexError{
+			Pos:     startPos,
+			Message: "unterminated byte literal",
+		}
+	}
+	if l.peek() == '\'' {
+		return token.Token{}, &LexError{
+			Pos:     startPos,
+			Message: "empty byte literal",
+		}
+	}
+
+	var b byte
+	if l.peek() == '\\' {
+		esc, err := l.scanEscapeSequence()
+		if err != nil {
+			return token.Token{}, err
+		}
+		b = esc
+	} else {
+		ch := l.advance()
+		if ch >= 0x80 {
+			return token.Token{}, &LexError{
+				Pos:     startPos,
+				Message: "byte literal must be a single ASCII character",
+			}
+		}
+		b = ch
+	}
+
+	if l.pos >= len(l.src) || l.peek() == '\n' || l.peek() == '\r' {
+		return token.Token{}, &LexError{
+			Pos:     startPos,
+			Message: "unterminated byte literal",
+		}
+	}
+	if l.peek() != '\'' {
+		return token.Token{}, &LexError{
+			Pos:     startPos,
+			Message: "byte literal may only contain a single character",
+		}
+	}
+	l.advance() // consume closing single quote
+	return token.Token{Kind: token.BYTE_LIT, Lexeme: string([]byte{b}), Pos: startPos}, nil
 }
 
 func (l *Lexer) scanNextToken() (token.Token, error) {
 	ch := l.peek()
 	if ch == '"' {
 		return l.scanString()
+	}
+	if ch == '\'' {
+		return l.scanByteLiteral()
 	}
 	if isDigit(ch) {
 		return l.scanNumber()

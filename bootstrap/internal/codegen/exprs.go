@@ -112,6 +112,9 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 	case *ast.StringLitExpr:
 		return strconv.Quote(ex.Value)
 
+	case *ast.ByteLitExpr:
+		return fmt.Sprintf("byte(%d)", ex.Value)
+
 	case *ast.BoolLitExpr:
 		if ex.Value {
 			return "true"

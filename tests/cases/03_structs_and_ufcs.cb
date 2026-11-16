@@ -1,6 +1,6 @@
-' EXPECT_OUT: default:  | 0 | false
-' EXPECT_OUT: hero: Alice | 60 | true
-' EXPECT_OUT: party[1]: Bob | 35 | true
+// EXPECT_OUT: default:  | 0 | false
+// EXPECT_OUT: hero: Alice | 60 | true
+// EXPECT_OUT: party[1]: Bob | 35 | true
 
 type Player
     name as str
@@ -25,7 +25,7 @@ fn main() as int
     print("default: " + blank.summary())
 
     dim hero = Player("Alice", 10, true)
-    ' Same-module UFCS mutating via byref
+    // Same-module UFCS mutating via byref
     hero.heal(50)
     print("hero: " + hero.summary())
 

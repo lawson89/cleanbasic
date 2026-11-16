@@ -511,6 +511,18 @@ func (e *StringLitExpr) ExprType() Type          { return e.SemaType }
 func (e *StringLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *StringLitExpr) exprNode()               {}
 
+// ByteLitExpr represents a single-quoted ASCII byte literal.
+type ByteLitExpr struct {
+	Pos      token.Position
+	Value    byte
+	SemaType Type
+}
+
+func (e *ByteLitExpr) ExprPos() token.Position { return e.Pos }
+func (e *ByteLitExpr) ExprType() Type          { return e.SemaType }
+func (e *ByteLitExpr) SetExprType(t Type)      { e.SemaType = t }
+func (e *ByteLitExpr) exprNode()               {}
+
 // BoolLitExpr represents a boolean literal (true or false).
 type BoolLitExpr struct {
 	Pos      token.Position

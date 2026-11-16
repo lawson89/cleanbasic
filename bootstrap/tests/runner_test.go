@@ -27,11 +27,11 @@ func parseTestDirectives(src string) testExpectations {
 	var exp testExpectations
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "' SKIP_GO") {
+		if strings.HasPrefix(trimmed, "// SKIP_GO") {
 			exp.skip = true
-		} else if after, ok := strings.CutPrefix(trimmed, "' EXPECT_OUT:"); ok {
+		} else if after, ok := strings.CutPrefix(trimmed, "// EXPECT_OUT:"); ok {
 			exp.expectedOut = append(exp.expectedOut, strings.TrimSpace(after))
-		} else if after, ok := strings.CutPrefix(trimmed, "' EXPECT_ERR:"); ok {
+		} else if after, ok := strings.CutPrefix(trimmed, "// EXPECT_ERR:"); ok {
 			exp.expectedErr = append(exp.expectedErr, strings.TrimSpace(after))
 		}
 	}

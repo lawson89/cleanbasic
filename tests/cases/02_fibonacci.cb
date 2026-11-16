@@ -1,6 +1,6 @@
-' EXPECT_OUT: Iterative Fib(10) = 55
-' EXPECT_OUT: Recursive Fib(10) = 55
-' EXPECT_OUT: While sum = 15
+// EXPECT_OUT: Iterative Fib(10) = 55
+// EXPECT_OUT: Recursive Fib(10) = 55
+// EXPECT_OUT: While sum = 15
 
 public fn fibIterative(n as int) as int
     if n <= 0

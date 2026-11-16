@@ -383,6 +383,45 @@ end fn
 	})
 }
 
+func TestEmitGoByteLiterals(t *testing.T) {
+	src := strings.Join([]string{
+		"/// Top-level byte constant",
+		"const LETTER_A = 'A'",
+		"fn classify(ch as byte) as str",
+		"    select case ch",
+		"        case LETTER_A",
+		"            return \"upper-a\"",
+		"        case '\\n'",
+		"            return \"newline\"",
+		"        case '\\''",
+		"            return \"quote\"",
+		"        case '\\0'",
+		"            return \"nul\"",
+		"        case else",
+		"            return \"other\"",
+		"    end select",
+		"end fn",
+		"fn main() as int",
+		"    // Test byte literals",
+		"    dim b as byte = 'A'",
+		"    print(classify(b) + \",\" + classify('\\n') + \",\" + classify('\\'') + \",\" + classify('\\0') + \",\" + classify('z'))",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	prog, err := sema.AnalyzeSource(src, "byte_codegen.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGo(prog)
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	got := runGeneratedGo(t, goCode)
+	want := "upper-a,newline,quote,nul,other"
+	if got != want {
+		t.Errorf("byte literal output = %q, want %q\ngo:\n%s", got, want, goCode)
+	}
+}
 func runGeneratedGo(t *testing.T, goCode string) string {
 	t.Helper()
 	tmpDir := t.TempDir()

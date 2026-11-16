@@ -1,6 +1,6 @@
-' EXPECT_OUT: containers: sum=162, loopTotal=6, hasPresent=false, dictLen=0
-' EXPECT_OUT: interp: User=Alice, Score=100
-' EXPECT_OUT: prelude: alpha-beta:42
+// EXPECT_OUT: containers: sum=162, loopTotal=6, hasPresent=false, dictLen=0
+// EXPECT_OUT: interp: User=Alice, Score=100
+// EXPECT_OUT: prelude: alpha-beta:42
 
 type User
     name as str
@@ -17,7 +17,7 @@ fn main() as int
     dim d as dict[str, int] = {"present": 7}
     mutateContainers(nums, d)
 
-    ' d.get falls back to 10
+    // d.get falls back to 10
     dim sum = nums[0] + nums[1] + d["present"] + d.get("missing", 10)
 
     dim loopTotal = 0

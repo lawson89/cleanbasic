@@ -109,7 +109,7 @@ PrimaryExpr     ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
 TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
 CallArgList     ::= Expr ("," Expr)* [","]
 
-Literal         ::= NumberLiteral | StringLiteral
+Literal         ::= NumberLiteral | StringLiteral | ByteLiteral
                   | "true" | "false"
                   | NonEmptyListLiteral | NonEmptyDictLiteral
 NonEmptyListLiteral ::= "[" Expr ("," Expr)* [","] "]"
@@ -171,7 +171,7 @@ CleanBasic enforces strict bottom-up type inference:
 ```
 import "player.cb"
 
-' Local helper in the same module CAN be called via UFCS
+// Local helper in the same module CAN be called via UFCS
 fn isAlive(p as player.Player) as bool
     return p.health > 0
 end fn
@@ -180,15 +180,15 @@ fn main() as int
     dim maxPotion = 50
     dim hero = player.Player("Alice", 10)
 
-    ' Cross-module function uses explicit module prefix:
+    // Cross-module function uses explicit module prefix:
     player.heal(hero, maxPotion)
 
-    ' Same-module function supports UFCS:
+    // Same-module function supports UFCS:
     if hero.isAlive()
         print("Hero " + hero.name + " has " + hero.health.toStr() + " HP")
     end if
 
-    ' Empty collections require typed constructors:
+    // Empty collections require typed constructors:
     dim emptyItems = list[str]()
     dim lookup = dict[str, int]()
     return 0
@@ -221,7 +221,7 @@ public fn connect(ip as str) as Connection can error
 end fn
 
 public fn closeConnection(conn as Connection)
-    ' Cleanup logic
+    // Cleanup logic
 end fn
 
 public fn processNetwork() as int can error
@@ -247,7 +247,7 @@ end fn
 
 * **Unified `+` Concatenation & `.toStr()`:** The `+` operator supports both numeric addition (`int`, `float`, `byte`) and string concatenation (`str + str`). Primitives (`int`, `float`, `bool`, `byte`, `str`) provide `.toStr()` for explicit string conversion.
 
-* **`byte` Primitive Type & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, and `int.toByte()` and `byte.toInt()` convert explicitly. Read-only string indexing `s[i]` returns `byte` directly via Go indexing.
+* **`byte` Primitive Type, Byte Literals & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, single-quoted ASCII byte literals (`'a'`, `'\n'`, `'\0'`) produce `byte`, and `int.toByte()` and `byte.toInt()` convert explicitly. Read-only string indexing `s[i]` returns `byte` directly via Go indexing.
 
 * **Bounds-Safe Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` clamp out-of-bounds or negative indices without panicking and evaluate as r-values.
 
@@ -279,14 +279,14 @@ end fn
 
 ```
 
-### 5. Declarative CLI Parsing (`std/cli`) and `''` Doc-Comments
+### 5. Declarative CLI Parsing (`std/cli`) and `///` Doc-Comments
 
-CleanBasic includes a pure-CleanBasic command-line parser (`import "std/cli"`) and `''` doc-comments for documentation extraction (`tools/cbdoc.cb`) and formatting (`tools/cbfmt.cb`).
+CleanBasic includes a pure-CleanBasic command-line parser (`import "std/cli"`), `//` line comments, and `///` doc-comments for documentation extraction (`tools/cbdoc.cb`) and formatting (`tools/cbfmt.cb`).
 
 ```
 import "std/cli"
 
-'' Searches files for a matching pattern.
+/// Searches files for a matching pattern.
 public fn runSearch() as int
     dim p = cli.newParser("cbgrep", "1.0", "Search for pattern in files")
     p.addFlag("ignore-case", "i", "Case-insensitive search")

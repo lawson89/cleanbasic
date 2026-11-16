@@ -1,11 +1,12 @@
-' EXPECT_OUT: goInterop=14:HELLO
-' EXPECT_OUT: sliceStr=ell:he:lo:hello
-' EXPECT_OUT: sliceList=2,3:1,2:4,5:5
-' EXPECT_OUT: bytes=65:66:65,66,67
-' EXPECT_OUT: loopList=0=10,1=20,2=30
-' EXPECT_OUT: loopStr=a,b,é|0:a,1:b,2:é
-' EXPECT_OUT: interp=sum=7,q="hi",len=5
-' EXPECT_OUT: fsExtra=a/b:true:true:false
+// EXPECT_OUT: goInterop=14:HELLO
+// EXPECT_OUT: sliceStr=ell:he:lo:hello
+// EXPECT_OUT: sliceList=2,3:1,2:4,5:5
+// EXPECT_OUT: bytes=65:66:65,66,67
+// EXPECT_OUT: byteLit=65:10:39:0:upperA
+// EXPECT_OUT: loopList=0=10,1=20,2=30
+// EXPECT_OUT: loopStr=a,b,é|0:a,1:b,2:é
+// EXPECT_OUT: interp=sum=7,q="hi",len=5
+// EXPECT_OUT: fsExtra=a/b:true:true:false
 
 import "std/fs"
 import "std/os"
@@ -17,6 +18,18 @@ func cbTestAddTen(v int64) int64 {
 	return v + 10
 }
 end go
+
+/// Byte literal top-level constant
+const BYTE_A = 'A'
+
+fn classifyByte(ch as byte) as str
+	select case ch
+		case BYTE_A
+			return "upperA"
+		case else
+			return "other"
+	end select
+end fn
 
 fn addTen(v as int) as int = go "cbTestAddTen"
 fn upperGo(s as str) as str = go "gostrings.ToUpper"
@@ -38,6 +51,12 @@ fn main() as int
 	dim b2 = b + 1.toByte()
 	dim bs = [b, b2, 67.toByte()]
 	print("bytes=" + b.toInt().toStr() + ":" + b2.toInt().toStr() + ":" + bs[0].toInt().toStr() + "," + bs[1].toInt().toStr() + "," + bs[2].toInt().toStr())
+
+	dim litA = 'A'
+	dim litNl = '\n'
+	dim litSq = '\''
+	dim litNul = '\0'
+	print("byteLit=" + litA.toInt().toStr() + ":" + litNl.toInt().toStr() + ":" + litSq.toInt().toStr() + ":" + litNul.toInt().toStr() + ":" + classifyByte(litA))
 
 	dim listParts = list[str]()
 	for i, v in [10, 20, 30]

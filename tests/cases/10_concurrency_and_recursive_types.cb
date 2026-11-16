@@ -1,11 +1,11 @@
-' EXPECT_OUT: leaf zero=0 len=0
-' EXPECT_OUT: isolation orig=10 copy=10
-' EXPECT_OUT: nested=99 byref=55
-' EXPECT_OUT: mutual=77
-' EXPECT_OUT: count=2 val=10
-' EXPECT_OUT: pool sum=60
-' EXPECT_OUT: drain=100,200,300
-' EXPECT_OUT: done=true
+// EXPECT_OUT: leaf zero=0 len=0
+// EXPECT_OUT: isolation orig=10 copy=10
+// EXPECT_OUT: nested=99 byref=55
+// EXPECT_OUT: mutual=77
+// EXPECT_OUT: count=2 val=10
+// EXPECT_OUT: pool sum=60
+// EXPECT_OUT: drain=100,200,300
+// EXPECT_OUT: done=true
 
 type TreeNode
     val as int
@@ -39,7 +39,7 @@ fn quickWorker(x as int, outBox as mailbox[int])
 end fn
 
 fn main() as int
-    ' 1. Pure value struct zero-initialization, value-copy isolation, nested mutation, byref
+    // 1. Pure value struct zero-initialization, value-copy isolation, nested mutation, byref
     dim empty = TreeNode()
     print("leaf zero=" + empty.val.toStr() + " len=" + empty.children.len().toStr())
     dim child = TreeNode()
@@ -58,7 +58,7 @@ fn main() as int
     parent.children[0] = firstChild
     print("nested=" + parent.children[0].children[0].val.toStr() + " byref=" + parent.children[0].val.toStr())
 
-    ' 2. Mutually recursive structs via list[T]
+    // 2. Mutually recursive structs via list[T]
     dim e = Expr()
     e.tag = 1
     dim blk = Block()
@@ -68,7 +68,7 @@ fn main() as int
     e.blocks.push(blk)
     print("mutual=" + e.blocks[0].exprs[0].tag.toStr())
 
-    ' 3. Buffered mailbox post, count, get, close
+    // 3. Buffered mailbox post, count, get, close
     dim mb = mailbox[int](2)
     mb.post(10)
     mb.post(20)
@@ -76,7 +76,7 @@ fn main() as int
     mb.get()
     mb.close()
 
-    ' 4. Worker pool with mailbox[T] and start job statement
+    // 4. Worker pool with mailbox[T] and start job statement
     dim tasks = mailbox[int]()
     dim results = mailbox[int](8)
     dim done = mailbox[bool](2)
@@ -100,7 +100,7 @@ fn main() as int
     end for
     print("pool sum=" + sum.toStr())
 
-    ' 5. Mailbox for-in drain & single start job communication
+    // 5. Mailbox for-in drain & single start job communication
     dim q = mailbox[int](4)
     q.post(100)
     q.post(200)

@@ -275,3 +275,22 @@ func formatTestExpr(expr ast.Expr) string {
 		return "<expr>"
 	}
 }
+
+func TestParseByteLiterals(t *testing.T) {
+	src := "const CR = '\\r'\nfn main() as int\n    dim ch = 'a'\n    dim esc = '\\''\n    return 0\nend fn\n"
+	prog, err := Parse(src, "byte_lit.cb")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(prog.Decls) != 2 {
+		t.Fatalf("got %d decls, want 2", len(prog.Decls))
+	}
+	cDecl, ok := prog.Decls[0].(*ast.ConstDecl)
+	if !ok {
+		t.Fatalf("expected ConstDecl, got %T", prog.Decls[0])
+	}
+	bl, ok := cDecl.Value.(*ast.ByteLitExpr)
+	if !ok || bl.Value != '\r' {
+		t.Fatalf("expected ByteLitExpr('\\r'), got %#v", cDecl.Value)
+	}
+}

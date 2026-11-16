@@ -1,14 +1,14 @@
-' EXPECT_OUT: exists=true
-' EXPECT_OUT: content=hello stdlib
-' EXPECT_OUT: files=1
-' EXPECT_OUT: envNonEmpty=true
-' EXPECT_OUT: exec=0:hello-exec
-' EXPECT_OUT: cli=true:res.txt:myPat:false
-' EXPECT_OUT: cliHelp=true
-' EXPECT_OUT: paths=true:false:hello.txt:/tmp/cb_test_08_dir:.txt
-' EXPECT_OUT: cwdNonEmpty=true
-' EXPECT_OUT: strMethods=true:true:6:-1:hello-stdlib
-' EXPECT_OUT: regex=true:12:12,34:aXbX:true
+// EXPECT_OUT: exists=true
+// EXPECT_OUT: content=hello stdlib
+// EXPECT_OUT: files=1
+// EXPECT_OUT: envNonEmpty=true
+// EXPECT_OUT: exec=0:hello-exec
+// EXPECT_OUT: cli=true:res.txt:myPat:false
+// EXPECT_OUT: cliHelp=true
+// EXPECT_OUT: paths=true:false:hello.txt:/tmp/cb_test_08_dir:.txt
+// EXPECT_OUT: cwdNonEmpty=true
+// EXPECT_OUT: strMethods=true:true:6:-1:hello-stdlib
+// EXPECT_OUT: regex=true:12:12,34:aXbX:true
 
 import "std/fs"
 import "std/os"

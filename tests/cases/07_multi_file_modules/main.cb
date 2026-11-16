@@ -1,7 +1,7 @@
-' EXPECT_OUT: Arya hp=100
-' EXPECT_OUT: hit=25 hp=75
-' EXPECT_OUT: Arya hp=90
-' EXPECT_OUT: hits=1
+// EXPECT_OUT: Arya hp=100
+// EXPECT_OUT: hit=25 hp=75
+// EXPECT_OUT: Arya hp=90
+// EXPECT_OUT: hits=1
 
 import "entities/hero.cb"
 import "combat/actions.cb" as act

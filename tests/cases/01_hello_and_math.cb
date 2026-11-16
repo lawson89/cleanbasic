@@ -1,5 +1,5 @@
-' EXPECT_OUT: arithmetic: count=3
-' EXPECT_OUT: logic: true
+// EXPECT_OUT: arithmetic: count=3
+// EXPECT_OUT: logic: true
 
 fn main() as int
     dim base = 10

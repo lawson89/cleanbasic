@@ -18,6 +18,8 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 		resolved = FloatType
 	case *ast.StringLitExpr:
 		resolved = StrType
+	case *ast.ByteLitExpr:
+		resolved = ByteType
 	case *ast.BoolLitExpr:
 		resolved = BoolType
 	case *ast.IdentExpr:
