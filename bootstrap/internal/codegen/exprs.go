@@ -200,11 +200,13 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 func (e *emitter) emitArgExpr(expr ast.Expr, byRef bool) string {
 	if byRef {
-		id := expr.(*ast.IdentExpr)
-		if e.byRefVars != nil && e.byRefVars[id.Name] {
-			return goIdent(id.Name)
+		if id, ok := expr.(*ast.IdentExpr); ok {
+			if e.byRefVars != nil && e.byRefVars[id.Name] {
+				return goIdent(id.Name)
+			}
+			return "&" + goIdent(id.Name)
 		}
-		return "&" + goIdent(id.Name)
+		return "&" + e.emitExpr(expr)
 	}
 	return e.emitExpr(expr)
 }

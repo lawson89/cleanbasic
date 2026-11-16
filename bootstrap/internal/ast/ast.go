@@ -2,7 +2,6 @@ package ast
 
 import (
 	"fmt"
-	"strings"
 
 	"cleanbasic/bootstrap/internal/token"
 )
@@ -28,53 +27,54 @@ type Statement interface {
 // Expr is implemented by all expressions in CleanBasic.
 type Expr interface {
 	ExprPos() token.Position
-	ExprType() SemaType
-	SetExprType(SemaType)
+	ExprType() Type
+	SetExprType(Type)
 	exprNode()
 }
 
-// SemaTypeKind distinguishes primitive, container, user-defined, and void semantic types.
-type SemaTypeKind string
+// TypeKind distinguishes primitive, container, user-defined, and void types.
+type TypeKind string
 
 const (
-	KindVoid    SemaTypeKind = "void"
-	KindInt     SemaTypeKind = "int"
-	KindFloat   SemaTypeKind = "float"
-	KindStr     SemaTypeKind = "str"
-	KindBool    SemaTypeKind = "bool"
-	KindByte    SemaTypeKind = "byte"
-	KindStruct  SemaTypeKind = "struct"
-	KindEnum    SemaTypeKind = "enum"
-	KindList    SemaTypeKind = "list"
-	KindDict    SemaTypeKind = "dict"
-	KindMailbox SemaTypeKind = "mailbox"
-	KindErr     SemaTypeKind = "err"
+	KindVoid    TypeKind = "void"
+	KindInt     TypeKind = "int"
+	KindFloat   TypeKind = "float"
+	KindStr     TypeKind = "str"
+	KindBool    TypeKind = "bool"
+	KindByte    TypeKind = "byte"
+	KindStruct  TypeKind = "struct"
+	KindEnum    TypeKind = "enum"
+	KindList    TypeKind = "list"
+	KindDict    TypeKind = "dict"
+	KindMailbox TypeKind = "mailbox"
+	KindErr     TypeKind = "err"
 )
 
-// SemaType represents a resolved semantic type in CleanBasic.
-type SemaType struct {
-	Kind     SemaTypeKind
+// Type represents a syntactic or resolved semantic type in CleanBasic.
+type Type struct {
+	Pos      token.Position
+	Kind     TypeKind
 	Name     string
 	ModuleID string
 	GoName   string
-	SubTypes []SemaType // [elem] for list/mailbox; [key, val] for dict
+	SubTypes []Type // [elem] for list/mailbox; [key, val] for dict
 }
 
-func (t SemaType) Elem() SemaType {
+func (t Type) Elem() Type {
 	if len(t.SubTypes) > 0 {
 		return t.SubTypes[0]
 	}
 	return VoidType
 }
 
-func (t SemaType) Key() SemaType {
+func (t Type) Key() Type {
 	if len(t.SubTypes) > 0 {
 		return t.SubTypes[0]
 	}
 	return VoidType
 }
 
-func (t SemaType) Val() SemaType {
+func (t Type) Val() Type {
 	if len(t.SubTypes) > 1 {
 		return t.SubTypes[1]
 	}
@@ -82,18 +82,21 @@ func (t SemaType) Val() SemaType {
 }
 
 var (
-	VoidType  = SemaType{Kind: KindVoid}
-	IntType   = SemaType{Kind: KindInt}
-	FloatType = SemaType{Kind: KindFloat}
-	StrType   = SemaType{Kind: KindStr}
-	BoolType  = SemaType{Kind: KindBool}
-	ByteType  = SemaType{Kind: KindByte}
-	ErrType   = SemaType{Kind: KindErr}
+	VoidType  = Type{Kind: KindVoid}
+	IntType   = Type{Kind: KindInt}
+	FloatType = Type{Kind: KindFloat}
+	StrType   = Type{Kind: KindStr}
+	BoolType  = Type{Kind: KindBool}
+	ByteType  = Type{Kind: KindByte}
+	ErrType   = Type{Kind: KindErr}
 )
 
-func (t SemaType) String() string {
+func (t Type) String() string {
 	switch t.Kind {
 	case "":
+		if t.Name != "" {
+			return t.Name
+		}
 		return "void"
 	case KindStruct, KindEnum:
 		return t.Name
@@ -112,11 +115,11 @@ func (t SemaType) String() string {
 	}
 }
 
-func (t SemaType) IsVoid() bool {
+func (t Type) IsVoid() bool {
 	return t.Kind == "" || t.Kind == KindVoid
 }
 
-func (t SemaType) Equals(other SemaType) bool {
+func (t Type) Equals(other Type) bool {
 	if t.Kind != other.Kind {
 		return false
 	}
@@ -141,7 +144,7 @@ func (t SemaType) Equals(other SemaType) bool {
 // ParamSymbol represents a typed function parameter.
 type ParamSymbol struct {
 	Name  string
-	Type  SemaType
+	Type  Type
 	ByRef bool
 	Pos   token.Position
 }
@@ -151,7 +154,7 @@ type FnSymbol struct {
 	Name       string
 	GoName     string
 	Params     []ParamSymbol
-	ReturnType SemaType
+	ReturnType Type
 	CanError   bool
 	Public     bool
 	GoTarget   string
@@ -163,7 +166,7 @@ type FnSymbol struct {
 // FieldSymbol represents a field in a user-defined struct type.
 type FieldSymbol struct {
 	Name string
-	Type SemaType
+	Type Type
 	Pos  token.Position
 }
 
@@ -214,47 +217,6 @@ type CallInfo struct {
 	HasValue   bool
 }
 
-// TypeKind distinguishes the category of a TypeExpr.
-type TypeKind string
-
-const (
-	TypeBasic     TypeKind = "basic"     // int, float, str, bool, byte, err
-	TypeList      TypeKind = "list"      // list[ElemType]
-	TypeDict      TypeKind = "dict"      // dict[KeyType, ValType]
-	TypeMailbox   TypeKind = "mailbox"   // mailbox[ElemType]
-	TypeQualified TypeKind = "qualified" // Player or mod.Player
-)
-
-// TypeExpr represents a static type annotation in CleanBasic.
-type TypeExpr struct {
-	Pos      token.Position
-	Kind     TypeKind
-	Name     string     // For TypeBasic ("int", "str", ...)
-	Parts    []string   // For TypeQualified (e.g., ["Player"] or ["player", "Player"])
-	SubTypes []TypeExpr // [elem] for list/mailbox/job; [key, val] for dict
-}
-
-func (t TypeExpr) String() string {
-	switch t.Kind {
-	case TypeBasic:
-		return t.Name
-	case TypeList, TypeMailbox:
-		if len(t.SubTypes) == 1 {
-			return fmt.Sprintf("%s[%s]", t.Kind, t.SubTypes[0].String())
-		}
-		return string(t.Kind) + "[]"
-	case TypeDict:
-		if len(t.SubTypes) == 2 {
-			return fmt.Sprintf("dict[%s, %s]", t.SubTypes[0].String(), t.SubTypes[1].String())
-		}
-		return "dict[]"
-	case TypeQualified:
-		return strings.Join(t.Parts, ".")
-	default:
-		return "<unknown-type>"
-	}
-}
-
 // --- Top-Level Declarations ---
 
 // ImportDecl represents: import "path.cb" [as alias]
@@ -288,12 +250,11 @@ func (d *GoBlockDecl) declNode()               {}
 
 // ConstDecl represents: [public] const Name [as Type] = Value
 type ConstDecl struct {
-	Pos      token.Position
-	Public   bool
-	Name     string
-	Type     *TypeExpr // Optional explicit type
-	SemaType SemaType
-	Value    Expr
+	Pos    token.Position
+	Public bool
+	Name   string
+	Type   *Type // Optional explicit type; resolved in place by sema
+	Value  Expr
 }
 
 func (d *ConstDecl) DeclPos() token.Position { return d.Pos }
@@ -303,7 +264,7 @@ func (d *ConstDecl) declNode()               {}
 type FieldDecl struct {
 	Pos  token.Position
 	Name string
-	Type TypeExpr
+	Type Type
 }
 
 // TypeDecl represents: [public] type Name ... end type or [public] type Name = go "GoType"
@@ -334,7 +295,7 @@ type Param struct {
 	Pos   token.Position
 	ByRef bool
 	Name  string
-	Type  TypeExpr
+	Type  Type
 }
 
 // FnDecl represents a function or Go-bound function declaration.
@@ -343,7 +304,7 @@ type FnDecl struct {
 	Public     bool
 	Name       string
 	Params     []Param
-	ReturnType *TypeExpr // nil if void
+	ReturnType *Type // nil if void
 	CanError   bool
 	GoTarget   string
 	Body       []Statement
@@ -356,11 +317,10 @@ func (d *FnDecl) declNode()               {}
 
 // VarDecl represents: dim Name [as Type] = Value
 type VarDecl struct {
-	Pos      token.Position
-	Name     string
-	Type     *TypeExpr // nil if inferred
-	SemaType SemaType
-	Value    Expr
+	Pos   token.Position
+	Name  string
+	Type  *Type // nil if inferred; resolved in place by sema
+	Value Expr
 }
 
 func (s *VarDecl) StmtPos() token.Position { return s.Pos }
@@ -507,72 +467,72 @@ type IdentExpr struct {
 	Pos      token.Position
 	Name     string
 	GoName   string
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *IdentExpr) ExprPos() token.Position { return e.Pos }
-func (e *IdentExpr) ExprType() SemaType      { return e.SemaType }
-func (e *IdentExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *IdentExpr) ExprType() Type          { return e.SemaType }
+func (e *IdentExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *IdentExpr) exprNode()               {}
 
 // IntLitExpr represents an integer literal.
 type IntLitExpr struct {
 	Pos      token.Position
 	Raw      string
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *IntLitExpr) ExprPos() token.Position { return e.Pos }
-func (e *IntLitExpr) ExprType() SemaType      { return e.SemaType }
-func (e *IntLitExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *IntLitExpr) ExprType() Type          { return e.SemaType }
+func (e *IntLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *IntLitExpr) exprNode()               {}
 
 // FloatLitExpr represents a floating-point literal.
 type FloatLitExpr struct {
 	Pos      token.Position
 	Raw      string
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *FloatLitExpr) ExprPos() token.Position { return e.Pos }
-func (e *FloatLitExpr) ExprType() SemaType      { return e.SemaType }
-func (e *FloatLitExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *FloatLitExpr) ExprType() Type          { return e.SemaType }
+func (e *FloatLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *FloatLitExpr) exprNode()               {}
 
 // StringLitExpr represents a string literal.
 type StringLitExpr struct {
 	Pos      token.Position
 	Value    string
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *StringLitExpr) ExprPos() token.Position { return e.Pos }
-func (e *StringLitExpr) ExprType() SemaType      { return e.SemaType }
-func (e *StringLitExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *StringLitExpr) ExprType() Type          { return e.SemaType }
+func (e *StringLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *StringLitExpr) exprNode()               {}
 
 // BoolLitExpr represents a boolean literal (true or false).
 type BoolLitExpr struct {
 	Pos      token.Position
 	Value    bool
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *BoolLitExpr) ExprPos() token.Position { return e.Pos }
-func (e *BoolLitExpr) ExprType() SemaType      { return e.SemaType }
-func (e *BoolLitExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *BoolLitExpr) ExprType() Type          { return e.SemaType }
+func (e *BoolLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *BoolLitExpr) exprNode()               {}
 
 // ListLitExpr represents a list literal: [e1, e2, ...] (or [] in explicitly typed contexts).
 type ListLitExpr struct {
 	Pos      token.Position
 	Elements []Expr
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *ListLitExpr) ExprPos() token.Position { return e.Pos }
-func (e *ListLitExpr) ExprType() SemaType      { return e.SemaType }
-func (e *ListLitExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *ListLitExpr) ExprType() Type          { return e.SemaType }
+func (e *ListLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *ListLitExpr) exprNode()               {}
 
 // DictEntryExpr represents a key: value pair inside a DictLitExpr.
@@ -586,26 +546,25 @@ type DictEntryExpr struct {
 type DictLitExpr struct {
 	Pos      token.Position
 	Entries  []DictEntryExpr
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *DictLitExpr) ExprPos() token.Position { return e.Pos }
-func (e *DictLitExpr) ExprType() SemaType      { return e.SemaType }
-func (e *DictLitExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *DictLitExpr) ExprType() Type          { return e.SemaType }
+func (e *DictLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *DictLitExpr) exprNode()               {}
 
 // TypedEmptyCtorExpr represents a typed container constructor:
 // list[T](), dict[K, V](), mailbox[T](), or mailbox[T](cap)
 type TypedEmptyCtorExpr struct {
-	Pos      token.Position
-	Type     TypeExpr
-	Args     []Expr
-	SemaType SemaType
+	Pos  token.Position
+	Type Type
+	Args []Expr
 }
 
 func (e *TypedEmptyCtorExpr) ExprPos() token.Position { return e.Pos }
-func (e *TypedEmptyCtorExpr) ExprType() SemaType      { return e.SemaType }
-func (e *TypedEmptyCtorExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *TypedEmptyCtorExpr) ExprType() Type          { return e.Type }
+func (e *TypedEmptyCtorExpr) SetExprType(t Type)      { e.Type = t }
 func (e *TypedEmptyCtorExpr) exprNode()               {}
 
 // UnaryExpr represents a prefix unary operation: not, +, or -
@@ -613,12 +572,12 @@ type UnaryExpr struct {
 	Pos      token.Position
 	Op       token.Kind
 	Operand  Expr
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *UnaryExpr) ExprPos() token.Position { return e.Pos }
-func (e *UnaryExpr) ExprType() SemaType      { return e.SemaType }
-func (e *UnaryExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *UnaryExpr) ExprType() Type          { return e.SemaType }
+func (e *UnaryExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *UnaryExpr) exprNode()               {}
 
 // BinaryExpr represents an infix binary operation:
@@ -628,12 +587,12 @@ type BinaryExpr struct {
 	Left     Expr
 	Op       token.Kind
 	Right    Expr
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *BinaryExpr) ExprPos() token.Position { return e.Pos }
-func (e *BinaryExpr) ExprType() SemaType      { return e.SemaType }
-func (e *BinaryExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *BinaryExpr) ExprType() Type          { return e.SemaType }
+func (e *BinaryExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *BinaryExpr) exprNode()               {}
 
 // FieldAccessExpr represents postfix dot access: Target.Field
@@ -642,12 +601,12 @@ type FieldAccessExpr struct {
 	Target   Expr
 	Field    string
 	GoName   string
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *FieldAccessExpr) ExprPos() token.Position { return e.Pos }
-func (e *FieldAccessExpr) ExprType() SemaType      { return e.SemaType }
-func (e *FieldAccessExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *FieldAccessExpr) ExprType() Type          { return e.SemaType }
+func (e *FieldAccessExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *FieldAccessExpr) exprNode()               {}
 
 // IndexExpr represents postfix indexing: Target[Index]
@@ -655,12 +614,12 @@ type IndexExpr struct {
 	Pos      token.Position
 	Target   Expr
 	Index    Expr
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *IndexExpr) ExprPos() token.Position { return e.Pos }
-func (e *IndexExpr) ExprType() SemaType      { return e.SemaType }
-func (e *IndexExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *IndexExpr) ExprType() Type          { return e.SemaType }
+func (e *IndexExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *IndexExpr) exprNode()               {}
 
 // SliceExpr represents postfix slicing: Target[Start:End]
@@ -669,12 +628,12 @@ type SliceExpr struct {
 	Target   Expr
 	Start    Expr // nil if omitted (e.g. x[:end])
 	End      Expr // nil if omitted (e.g. x[start:])
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *SliceExpr) ExprPos() token.Position { return e.Pos }
-func (e *SliceExpr) ExprType() SemaType      { return e.SemaType }
-func (e *SliceExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *SliceExpr) ExprType() Type          { return e.SemaType }
+func (e *SliceExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *SliceExpr) exprNode()               {}
 
 // CallExpr represents a function, constructor, or UFCS method call: Callee(Args...)
@@ -683,12 +642,12 @@ type CallExpr struct {
 	Callee   Expr
 	Args     []Expr
 	CallInfo *CallInfo
-	SemaType SemaType
+	SemaType Type
 }
 
 func (e *CallExpr) ExprPos() token.Position { return e.Pos }
-func (e *CallExpr) ExprType() SemaType      { return e.SemaType }
-func (e *CallExpr) SetExprType(t SemaType)  { e.SemaType = t }
+func (e *CallExpr) ExprType() Type          { return e.SemaType }
+func (e *CallExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *CallExpr) exprNode()               {}
 
 // StartJobStmt represents launching a concurrent background goroutine: start job fnCall(...)

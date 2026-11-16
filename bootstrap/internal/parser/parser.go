@@ -137,7 +137,7 @@ func (p *Parser) expectEndBlock(endKind token.Kind, label string) error {
 	return p.expectNewline(string(endKind))
 }
 
-func (p *Parser) parseOptionalAsType() (*ast.TypeExpr, error) {
+func (p *Parser) parseOptionalAsType() (*ast.Type, error) {
 	if !p.match(token.AS) {
 		return nil, nil
 	}
@@ -500,78 +500,77 @@ func (p *Parser) parseParamList() ([]ast.Param, error) {
 //	| "list" "[" Type "]"
 //	| "dict" "[" Type "," Type "]"
 //	| QualifiedIdent
-func (p *Parser) parseType() (ast.TypeExpr, error) {
+func (p *Parser) parseType() (ast.Type, error) {
 	tok := p.cur()
 	switch tok.Kind {
 	case token.INT, token.FLOAT, token.STR, token.BOOL, token.BYTE, token.ERR:
 		p.advance()
-		return ast.TypeExpr{
+		return ast.Type{
 			Pos:  tok.Pos,
-			Kind: ast.TypeBasic,
+			Kind: ast.TypeKind(tok.Kind),
 			Name: tok.Lexeme,
 		}, nil
 
 	case token.LIST, token.MAILBOX:
 		p.advance()
 		if _, err := p.expect(token.LBRACKET, "after '"+tok.Lexeme+"'"); err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
 		elemType, err := p.parseType()
 		if err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
 		if _, err := p.expect(token.RBRACKET, "after "+tok.Lexeme+" element type"); err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
-		kind := ast.TypeList
+		kind := ast.KindList
 		if tok.Kind == token.MAILBOX {
-			kind = ast.TypeMailbox
+			kind = ast.KindMailbox
 		}
-		return ast.TypeExpr{Pos: tok.Pos, Kind: kind, SubTypes: []ast.TypeExpr{elemType}}, nil
+		return ast.Type{Pos: tok.Pos, Kind: kind, SubTypes: []ast.Type{elemType}}, nil
 
 	case token.DICT:
 		p.advance()
 		if _, err := p.expect(token.LBRACKET, "after 'dict'"); err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
 		keyType, err := p.parseType()
 		if err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
 		if _, err := p.expect(token.COMMA, "between dict key and value types"); err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
 		valType, err := p.parseType()
 		if err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
 		if _, err := p.expect(token.RBRACKET, "after dict value type"); err != nil {
-			return ast.TypeExpr{}, err
+			return ast.Type{}, err
 		}
-		return ast.TypeExpr{
+		return ast.Type{
 			Pos:      tok.Pos,
-			Kind:     ast.TypeDict,
-			SubTypes: []ast.TypeExpr{keyType, valType},
+			Kind:     ast.KindDict,
+			SubTypes: []ast.Type{keyType, valType},
 		}, nil
 
 	case token.IDENT:
 		p.advance()
-		parts := []string{tok.Lexeme}
+		name := tok.Lexeme
 		for p.match(token.DOT) {
 			partTok, err := p.expectIdent("after '.' in qualified type")
 			if err != nil {
-				return ast.TypeExpr{}, err
+				return ast.Type{}, err
 			}
-			parts = append(parts, partTok.Lexeme)
+			name += "." + partTok.Lexeme
 		}
-		return ast.TypeExpr{
-			Pos:   tok.Pos,
-			Kind:  ast.TypeQualified,
-			Parts: parts,
+		return ast.Type{
+			Pos:  tok.Pos,
+			Name: name,
 		}, nil
 
 	default:
-		return ast.TypeExpr{}, &ParseError{
+		return ast.Type{}, &ParseError{
 			Pos:     tok.Pos,
 			Message: fmt.Sprintf("expected type name, got %s (%q)", tok.Kind, tok.Lexeme),
 		}
@@ -1244,7 +1243,7 @@ func (p *Parser) parseTypedEmptyCtor() (ast.Expr, error) {
 		return nil, err
 	}
 	var args []ast.Expr
-	if ctorType.Kind == ast.TypeMailbox && p.cur().Kind != token.RPAREN {
+	if ctorType.Kind == ast.KindMailbox && p.cur().Kind != token.RPAREN {
 		capExpr, err := p.parseExpr()
 		if err != nil {
 			return nil, err

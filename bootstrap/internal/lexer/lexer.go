@@ -3,7 +3,6 @@ package lexer
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
 	"cleanbasic/bootstrap/internal/token"
 )
@@ -21,7 +20,7 @@ func (e *LexError) Error() string {
 // Lexer scans CleanBasic source text into a stream of tokens.
 type Lexer struct {
 	file string
-	src  []rune
+	src  string
 	pos  int
 	line int
 	col  int
@@ -31,7 +30,7 @@ type Lexer struct {
 func New(src string, filename string) *Lexer {
 	return &Lexer{
 		file: filename,
-		src:  []rune(src),
+		src:  src,
 		pos:  0,
 		line: 1,
 		col:  1,
@@ -59,21 +58,21 @@ func (l *Lexer) currentPos() token.Position {
 	}
 }
 
-func (l *Lexer) peek() rune {
+func (l *Lexer) peek() byte {
 	if l.pos >= len(l.src) {
 		return 0
 	}
 	return l.src[l.pos]
 }
 
-func (l *Lexer) peekNext() rune {
+func (l *Lexer) peekNext() byte {
 	if l.pos+1 >= len(l.src) {
 		return 0
 	}
 	return l.src[l.pos+1]
 }
 
-func (l *Lexer) advance() rune {
+func (l *Lexer) advance() byte {
 	if l.pos >= len(l.src) {
 		return 0
 	}
@@ -176,7 +175,7 @@ func (l *Lexer) scanIdentifier() token.Token {
 	startPos := l.currentPos()
 	var sb strings.Builder
 	for l.pos < len(l.src) && isIdentPart(l.peek()) {
-		sb.WriteRune(l.advance())
+		sb.WriteByte(l.advance())
 	}
 	word := sb.String()
 	kind := token.LookupIdent(word)
@@ -193,14 +192,14 @@ func (l *Lexer) scanNumber() (token.Token, error) {
 	isFloat := false
 
 	for l.pos < len(l.src) && isDigit(l.peek()) {
-		sb.WriteRune(l.advance())
+		sb.WriteByte(l.advance())
 	}
 
 	if l.pos < len(l.src) && l.peek() == '.' && isDigit(l.peekNext()) {
 		isFloat = true
-		sb.WriteRune(l.advance()) // consume '.'
+		sb.WriteByte(l.advance()) // consume '.'
 		for l.pos < len(l.src) && isDigit(l.peek()) {
-			sb.WriteRune(l.advance())
+			sb.WriteByte(l.advance())
 		}
 	}
 
@@ -241,10 +240,10 @@ func (l *Lexer) scanString() (token.Token, error) {
 			if err != nil {
 				return token.Token{}, err
 			}
-			sb.WriteRune(esc)
+			sb.WriteByte(esc)
 			continue
 		}
-		sb.WriteRune(l.advance())
+		sb.WriteByte(l.advance())
 	}
 
 	return token.Token{}, &LexError{
@@ -253,7 +252,7 @@ func (l *Lexer) scanString() (token.Token, error) {
 	}
 }
 
-func (l *Lexer) scanEscapeSequence() (rune, error) {
+func (l *Lexer) scanEscapeSequence() (byte, error) {
 	escPos := l.currentPos()
 	l.advance() // consume '\'
 	if l.pos >= len(l.src) {
@@ -317,7 +316,7 @@ func (l *Lexer) scanGoBlock(startPos token.Position) (token.Token, error) {
 		for l.pos < len(l.src) && l.peek() != '\n' {
 			l.advance()
 		}
-		lineText := string(l.src[lineStart:l.pos])
+		lineText := l.src[lineStart:l.pos]
 		if l.pos < len(l.src) && l.peek() == '\n' {
 			l.advance()
 		}
@@ -417,7 +416,7 @@ func (l *Lexer) scanNextToken() (token.Token, error) {
 		return token.Token{Kind: token.GT, Lexeme: ">", Pos: startPos}, nil
 	case '+', '-', '*', '/', '%', '.', ',', ':', '(', ')', '[', ']', '{', '}':
 		l.advance()
-		kinds := map[rune]token.Kind{
+		kinds := map[byte]token.Kind{
 			'+': token.PLUS, '-': token.MINUS, '*': token.STAR, '/': token.SLASH,
 			'%': token.PERCENT, '.': token.DOT, ',': token.COMMA, ':': token.COLON,
 			'(': token.LPAREN, ')': token.RPAREN, '[': token.LBRACKET, ']': token.RBRACKET,
@@ -460,14 +459,14 @@ func coalesceKeywords(raw []token.Token) []token.Token {
 	return out
 }
 
-func isDigit(ch rune) bool {
+func isDigit(ch byte) bool {
 	return ch >= '0' && ch <= '9'
 }
 
-func isIdentStart(ch rune) bool {
-	return ch == '_' || unicode.IsLetter(ch)
+func isIdentStart(ch byte) bool {
+	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
-func isIdentPart(ch rune) bool {
-	return ch == '_' || unicode.IsLetter(ch) || isDigit(ch)
+func isIdentPart(ch byte) bool {
+	return isIdentStart(ch) || isDigit(ch)
 }

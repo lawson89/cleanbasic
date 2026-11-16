@@ -172,7 +172,7 @@ func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
 	}
 	finalType := valType
 	if s.Type != nil {
-		declaredType, err := a.resolveTypeExpr(*s.Type)
+		declaredType, err := a.resolveType(*s.Type)
 		if err != nil {
 			return err
 		}
@@ -191,7 +191,7 @@ func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
 	if err := a.defineLocalVar(scope, sym); err != nil {
 		return err
 	}
-	s.SemaType = finalType
+	s.Type = &finalType
 	return nil
 }
 

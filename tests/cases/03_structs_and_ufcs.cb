@@ -1,5 +1,6 @@
 ' EXPECT_OUT: default:  | 0 | false
 ' EXPECT_OUT: hero: Alice | 60 | true
+' EXPECT_OUT: party[1]: Bob | 35 | true
 
 type Player
     name as str
@@ -9,6 +10,10 @@ end type
 
 fn heal(byref p as Player, amount as int)
     p.health = p.health + amount
+end fn
+
+fn boost(byref h as int, delta as int)
+    h = h + delta
 end fn
 
 fn summary(p as Player) as str
@@ -23,5 +28,10 @@ fn main() as int
     ' Same-module UFCS mutating via byref
     hero.heal(50)
     print("hero: " + hero.summary())
+
+    dim party = [Player("Ada", 20, true), Player("Bob", 25, true)]
+    party[1].heal(5)
+    boost(party[1].health, 5)
+    print("party[1]: " + party[1].summary())
     return 0
 end fn

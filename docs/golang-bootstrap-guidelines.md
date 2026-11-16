@@ -13,7 +13,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
 3. **Permanent Language Simplifications:**
    - **One-Way Bottom-Up Inference:** Expressions compute their own types bottom-up. Empty collection literals (`[]`, `{}`) are rejected; use typed constructors `list[T]()` / `dict[K, V]()`.
    - **Defining-Module & Local UFCS:** `obj.method(args)` resolves to methods in the built-in prelude (`str`, `int`, `byte`, `list`, `dict`), functions declared in the *same* `.cb` module, or `public fn`s declared in the defining module of `obj`'s `type`/`enum`.
-   - **No `byref` Shadowing:** Local `dim`/`const`, `for` loop variables, and `catch` variables may not shadow an enclosing function's `byref` parameter.
+   - **Addressable `byref` Arguments & No Shadowing:** Mutable variables, struct fields (`s.field`), and list elements (`list[i]`) may be passed to `byref` parameters; `dict` and `str` index expressions are rejected. Local `dim`/`const`, `for` loop variables, and `catch` variables may not shadow an enclosing function's `byref` parameter.
 4. **Go Target Emitter Hygiene & Stdlib Modules:**
    - CleanBasic `int` maps to `int64`; `float` maps to `float64`; `str` maps to `string`; `bool` maps to `bool`; `byte` maps to `byte` (`uint8`); `list[byte]` maps to `[]byte`.
    - Standard library modules (`std/fs`, `std/os`, `std/cli`, `std/regex`) live as real `.cb` files in `std/` using CleanBasic Go interop (`go import`, `go ... end go`, `type ... = go "..."`, `fn ... = go "..."`) or pure CleanBasic (`std/cli.cb`).

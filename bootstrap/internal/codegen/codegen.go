@@ -89,7 +89,6 @@ type emitter struct {
 	tryCounter         int
 	errCounter         int
 	loopCounter        int
-	tryUsedCatch       map[int]bool
 }
 
 var goReservedIdents = map[string]bool{
@@ -211,8 +210,8 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			}
 			goName = goIdent(goName)
 			typeStr := ""
-			if !d.SemaType.IsVoid() {
-				typeStr = " " + e.goSemaType(d.SemaType)
+			if d.Type != nil && !d.Type.IsVoid() {
+				typeStr = " " + e.goSemaType(*d.Type)
 			}
 			sb.WriteString(fmt.Sprintf("var %s%s = %s\n\n", goName, typeStr, e.emitExpr(d.Value)))
 

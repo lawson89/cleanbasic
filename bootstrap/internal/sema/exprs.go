@@ -190,7 +190,7 @@ func (a *analyzer) inferDictLitExpr(e *ast.DictLitExpr, scope *Scope) (Type, err
 }
 
 func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Scope) (Type, error) {
-	t, err := a.resolveTypeExpr(e.Type)
+	t, err := a.resolveType(e.Type)
 	if err != nil {
 		return VoidType, err
 	}
@@ -435,12 +435,30 @@ func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *
 	return retType, nil
 }
 
-func (a *analyzer) checkByRefArg(val ast.Expr, argIdx int, paramName, fnName string, scope *Scope) error {
-	id, ok := val.(*ast.IdentExpr)
-	if !ok {
-		return newSemaError(val.ExprPos(), "argument %d (%q) to byref parameter of %q must be a mutable variable", argIdx, paramName, fnName)
+func (a *analyzer) checkAddressableLValue(expr ast.Expr, scope *Scope) error {
+	switch t := expr.(type) {
+	case *ast.IdentExpr:
+		return a.checkMutableTarget(t, scope)
+	case *ast.FieldAccessExpr:
+		if t.Target.ExprType().Kind != KindStruct {
+			return newSemaError(t.Pos, "field access target is not an addressable struct")
+		}
+		return a.checkAddressableLValue(t.Target, scope)
+	case *ast.IndexExpr:
+		if t.Target.ExprType().Kind != KindList {
+			return newSemaError(t.Pos, "cannot pass %s index expression byref (only list elements are addressable)", t.Target.ExprType().String())
+		}
+		return a.checkAddressableLValue(t.Target, scope)
+	default:
+		return newSemaError(expr.ExprPos(), "expression is not an addressable mutable variable, struct field, or list element")
 	}
-	return a.checkMutableTarget(id, scope)
+}
+
+func (a *analyzer) checkByRefArg(val ast.Expr, argIdx int, paramName, fnName string, scope *Scope) error {
+	if err := a.checkAddressableLValue(val, scope); err != nil {
+		return newSemaError(val.ExprPos(), "argument %d (%q) to byref parameter of %q: %v", argIdx, paramName, fnName, err)
+	}
+	return nil
 }
 
 func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.Expr, params []ParamSymbol, fnName string, canError bool, callKindDesc string, scope *Scope) error {
@@ -519,8 +537,8 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		}
 
 		if objIdent.Name == "str" {
-			if spec, ok := staticStrMethods[fa.Field]; ok {
-				return a.applyBuiltinMethod(e, nil, VoidType, spec, scope)
+			if retType, handled, err := a.inferStaticStrCall(e, fa.Field, scope); handled || err != nil {
+				return retType, err
 			}
 		}
 	}
@@ -530,10 +548,8 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		return VoidType, err
 	}
 
-	if methods, ok := instanceBuiltinMethods[recvType.Kind]; ok {
-		if spec, ok := methods[fa.Field]; ok {
-			return a.applyBuiltinMethod(e, fa.Target, recvType, spec, scope)
-		}
+	if retType, handled, err := a.inferBuiltinMethodCall(e, fa.Target, recvType, fa.Field, scope); handled || err != nil {
+		return retType, err
 	}
 
 	// UFCS fallback: check current module first, then public functions in receiver type's defining module
@@ -552,11 +568,8 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	}
 
 	if fnSym.Params[0].ByRef {
-		if err := a.checkMutableTarget(fa.Target, scope); err != nil {
-			return VoidType, err
-		}
-		if _, isIdent := fa.Target.(*ast.IdentExpr); !isIdent {
-			return VoidType, newSemaError(fa.Target.ExprPos(), "receiver for byref UFCS function %q must be a mutable variable", fnSym.Name)
+		if err := a.checkAddressableLValue(fa.Target, scope); err != nil {
+			return VoidType, newSemaError(fa.Target.ExprPos(), "receiver for byref UFCS function %q: %v", fnSym.Name, err)
 		}
 	}
 

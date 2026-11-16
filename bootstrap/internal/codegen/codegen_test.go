@@ -594,3 +594,44 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 		t.Errorf("expected cap variable in make(chan int64, ...), got:\n%s", goCode)
 	}
 }
+
+func TestEmitAddressableByRefArgs(t *testing.T) {
+	src := strings.Join([]string{
+		"type Node",
+		"    val as int",
+		"    children as list[Node]",
+		"end type",
+		"",
+		"fn inc(byref x as int)",
+		"    x = x + 1",
+		"end fn",
+		"",
+		"fn bumpChild(byref n as Node)",
+		"    inc(n.val)",
+		"    inc(n.children[0].val)",
+		"end fn",
+		"",
+		"fn main() as int",
+		"    dim items = [10, 20]",
+		"    inc(items[1])",
+		"    dim root = Node(1, [Node(5, [Node(9, list[Node]())])])",
+		"    inc(root.val)",
+		"    bumpChild(root.children[0])",
+		"    print(items[1].toStr() + \":\" + root.val.toStr() + \":\" + root.children[0].val.toStr() + \":\" + root.children[0].children[0].val.toStr())",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	prog, err := sema.AnalyzeSource(src, "byref_addr.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	got := runGeneratedGo(t, goCode)
+	want := "21:2:6:10"
+	if got != want {
+		t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
+	}
+}

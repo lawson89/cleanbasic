@@ -1,6 +1,8 @@
 package sema
 
 import (
+	"strings"
+
 	"cleanbasic/bootstrap/internal/ast"
 	"cleanbasic/bootstrap/internal/token"
 )
@@ -111,14 +113,15 @@ func (a *analyzer) predeclareType(name string, pos token.Position) error {
 
 func (a *analyzer) resolveTypeDecl(d *ast.TypeDecl) error {
 	sym := a.mod.Structs[d.Name]
-	for _, f := range d.Fields {
+	for i, f := range d.Fields {
 		if _, dup := sym.FieldMap[f.Name]; dup {
 			return newSemaError(f.Pos, "duplicate field %q in type %q", f.Name, d.Name)
 		}
-		fType, err := a.resolveTypeExpr(f.Type)
+		fType, err := a.resolveType(f.Type)
 		if err != nil {
 			return err
 		}
+		d.Fields[i].Type = fType
 		fs := FieldSymbol{Name: f.Name, Type: fType, Pos: f.Pos}
 		sym.Fields = append(sym.Fields, fs)
 		sym.FieldMap[f.Name] = fs
@@ -202,15 +205,16 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 
 	var params []ParamSymbol
 	seenParams := make(map[string]token.Position)
-	for _, p := range fn.Params {
+	for i, p := range fn.Params {
 		if prevPos, dup := seenParams[p.Name]; dup {
 			return newSemaError(p.Pos, "duplicate parameter %q in function %q (previous at %s)", p.Name, fn.Name, prevPos.String())
 		}
 		seenParams[p.Name] = p.Pos
-		pType, err := a.resolveTypeExpr(p.Type)
+		pType, err := a.resolveType(p.Type)
 		if err != nil {
 			return err
 		}
+		fn.Params[i].Type = pType
 		params = append(params, ParamSymbol{
 			Name:  p.Name,
 			Type:  pType,
@@ -221,10 +225,11 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 
 	retType := VoidType
 	if fn.ReturnType != nil {
-		resolvedRet, err := a.resolveTypeExpr(*fn.ReturnType)
+		resolvedRet, err := a.resolveType(*fn.ReturnType)
 		if err != nil {
 			return err
 		}
+		*fn.ReturnType = resolvedRet
 		retType = resolvedRet
 	}
 
@@ -269,7 +274,7 @@ func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
 
 	finalType := valType
 	if d.Type != nil {
-		declaredType, err := a.resolveTypeExpr(*d.Type)
+		declaredType, err := a.resolveType(*d.Type)
 		if err != nil {
 			return err
 		}
@@ -290,72 +295,51 @@ func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
 	if err := a.mod.GlobalVars.Define(sym); err != nil {
 		return err
 	}
-	d.SemaType = finalType
+	d.Type = &finalType
 	return nil
 }
 
-func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
+func (a *analyzer) resolveType(t Type) (Type, error) {
 	switch t.Kind {
-	case ast.TypeBasic:
-		switch t.Name {
-		case "int":
-			return IntType, nil
-		case "float":
-			return FloatType, nil
-		case "str":
-			return StrType, nil
-		case "bool":
-			return BoolType, nil
-		case "byte":
-			return ByteType, nil
-		case "err":
-			return ErrType, nil
-		}
-	case ast.TypeList:
+	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindStruct, KindEnum:
+		return t, nil
+	case KindList, KindMailbox:
 		if len(t.SubTypes) != 1 {
-			return VoidType, newSemaError(t.Pos, "list type requires an element type")
+			return VoidType, newSemaError(t.Pos, "%s type requires an element type", t.Kind)
 		}
-		elem, err := a.resolveTypeExpr(t.SubTypes[0])
+		elem, err := a.resolveType(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
-		return Type{Kind: KindList, SubTypes: []Type{elem}}, nil
-	case ast.TypeMailbox:
-		if len(t.SubTypes) != 1 {
-			return VoidType, newSemaError(t.Pos, "mailbox type requires an element type")
-		}
-		elem, err := a.resolveTypeExpr(t.SubTypes[0])
-		if err != nil {
-			return VoidType, err
-		}
-		return Type{Kind: KindMailbox, SubTypes: []Type{elem}}, nil
-	case ast.TypeDict:
+		return Type{Pos: t.Pos, Kind: t.Kind, SubTypes: []Type{elem}}, nil
+	case KindDict:
 		if len(t.SubTypes) != 2 {
 			return VoidType, newSemaError(t.Pos, "dict type requires key and value types")
 		}
-		kt, err := a.resolveTypeExpr(t.SubTypes[0])
+		kt, err := a.resolveType(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
 		if !a.isComparableType(kt) {
 			return VoidType, newSemaError(t.SubTypes[0].Pos, "dict key type %s is not comparable", kt.String())
 		}
-		vt, err := a.resolveTypeExpr(t.SubTypes[1])
+		vt, err := a.resolveType(t.SubTypes[1])
 		if err != nil {
 			return VoidType, err
 		}
-		return Type{Kind: KindDict, SubTypes: []Type{kt, vt}}, nil
-	case ast.TypeQualified:
-		if len(t.Parts) == 1 {
-			name := t.Parts[0]
+		return Type{Pos: t.Pos, Kind: KindDict, SubTypes: []Type{kt, vt}}, nil
+	case "":
+		parts := strings.Split(t.Name, ".")
+		if len(parts) == 1 {
+			name := parts[0]
 			if sym, ok := a.mod.Structs[name]; ok {
-				return Type{Kind: KindStruct, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
+				return Type{Pos: t.Pos, Kind: KindStruct, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
 			}
 			if sym, ok := a.mod.Enums[name]; ok {
-				return Type{Kind: KindEnum, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
+				return Type{Pos: t.Pos, Kind: KindEnum, Name: name, ModuleID: a.mod.ID, GoName: sym.GoName}, nil
 			}
-		} else if len(t.Parts) == 2 {
-			modAlias, typeName := t.Parts[0], t.Parts[1]
+		} else if len(parts) == 2 {
+			modAlias, typeName := parts[0], parts[1]
 			impMod, ok := a.mod.Imports[modAlias]
 			if !ok {
 				return VoidType, newSemaError(t.Pos, "unknown module %q in type %q", modAlias, t.String())
@@ -364,13 +348,13 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 				if !sym.Public {
 					return VoidType, newSemaError(t.Pos, "type %q in module %q is private", typeName, modAlias)
 				}
-				return Type{Kind: KindStruct, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
+				return Type{Pos: t.Pos, Kind: KindStruct, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
 			}
 			if sym, ok := impMod.Enums[typeName]; ok {
 				if !sym.Public {
 					return VoidType, newSemaError(t.Pos, "enum %q in module %q is private", typeName, modAlias)
 				}
-				return Type{Kind: KindEnum, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
+				return Type{Pos: t.Pos, Kind: KindEnum, Name: typeName, ModuleID: impMod.ID, GoName: sym.GoName}, nil
 			}
 		}
 	}

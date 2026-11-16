@@ -71,7 +71,11 @@ end fn
 
 	for _, st := range fnDecl.Body {
 		if vd, ok := st.(*ast.VarDecl); ok {
-			gotType := vd.SemaType
+			if vd.Type == nil {
+				t.Errorf("missing inferred type for variable %q", vd.Name)
+				continue
+			}
+			gotType := *vd.Type
 			if gotType.IsVoid() {
 				t.Errorf("missing inferred type for variable %q", vd.Name)
 				continue
@@ -98,10 +102,12 @@ func TestSemanticErrors(t *testing.T) {
 		{"function argument type mismatch", "fn add(a as int, b as int) as int\n    return a + b\nend fn\nfn main() as int\n    return add(1, \"two\")\nend fn\n", `argument 2 ("b") to function "add" has type str, expected int`},
 		{"break outside loop", "fn main() as int\n    break\n    return 0\nend fn\n", "break statement is not inside a loop"},
 		{"pass const to byref parameter", "const c = 10\nfn inc(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    inc(c)\n    return 0\nend fn\n", `cannot mutate constant "c"`},
-		{"pass literal to byref UFCS method", "type Box\n    v as int\nend type\nfn bump(byref b as Box)\n    b.v = b.v + 1\nend fn\nfn main() as int\n    Box(1).bump()\n    return 0\nend fn\n", "target expression is not mutable"},
+		{"pass literal to byref UFCS method", "type Box\n    v as int\nend type\nfn bump(byref b as Box)\n    b.v = b.v + 1\nend fn\nfn main() as int\n    Box(1).bump()\n    return 0\nend fn\n", "is not an addressable mutable variable, struct field, or list element"},
 		{"mutate field of const struct", "type Box\n    v as int\nend type\nconst b = Box(1)\nfn main() as int\n    b.v = 2\n    return 0\nend fn\n", `cannot mutate constant "b"`},
 		{"nested fallible call rejected", "fn f() as int can error\n    return 1\nend fn\nfn g() as int can error\n    dim x = 1 + f()\n    return x\nend fn\n", "may only appear as a top-level statement expression"},
-		{"non-ident byref argument rejected", "type Box\n    v as int\nend type\nfn bump(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    dim b = Box(1)\n    bump(b.v)\n    return 0\nend fn\n", "must be a mutable variable"},
+		{"dict index byref argument rejected", "fn bump(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    dim d = {\"a\": 1}\n    bump(d[\"a\"])\n    return 0\nend fn\n", "only list elements are addressable"},
+		{"str index byref argument rejected", "fn bump(byref b as byte)\nend fn\nfn main() as int\n    dim s = \"abc\"\n    bump(s[0])\n    return 0\nend fn\n", "only list elements are addressable"},
+		{"dict element field byref argument rejected", "type Box\n    v as int\nend type\nfn bump(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    dim d = {\"a\": Box(1)}\n    bump(d[\"a\"].v)\n    return 0\nend fn\n", "only list elements are addressable"},
 		{"non-existent enum variant", "enum Color\n    Red\n    Blue\nend enum\nfn main() as int\n    dim c = Color.Green\n    return 0\nend fn\n", `enum "Color" has no variant "Green"`},
 		{"invalid select case pattern type", "fn main() as int\n    dim x = 1\n    select case x\n        case \"one\"\n            print(1)\n    end select\n    return 0\nend fn\n", "case pattern type str does not match select expression type int"},
 		{"call can error function outside try in non-fallible function", "fn risky() as int can error\n    return 1\nend fn\nfn main() as int\n    dim x = risky()\n    return x\nend fn\n", `call to 'can error' function "risky" must be inside a 'try' block or a 'can error' function`},
@@ -639,4 +645,30 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			t.Fatalf("expected fallible argument error in start job, got: %v", err)
 		}
 	})
+}
+
+func TestAddressableByRefSema(t *testing.T) {
+	src := strings.Join([]string{
+		"type Node",
+		"    val as int",
+		"    children as list[Node]",
+		"end type",
+		"fn inc(byref x as int)",
+		"    x = x + 1",
+		"end fn",
+		"fn bumpNode(byref n as Node)",
+		"    inc(n.val)",
+		"    inc(n.children[0].val)",
+		"end fn",
+		"fn main() as int",
+		"    dim root = Node(10, [Node(20, list[Node]())])",
+		"    inc(root.val)",
+		"    inc(root.children[0].val)",
+		"    root.children[0].bumpNode()",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	if _, err := AnalyzeSource(src, "addressable_byref.cb"); err != nil {
+		t.Fatalf("AnalyzeSource failed for addressable byref args: %v", err)
+	}
 }

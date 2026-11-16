@@ -11,7 +11,7 @@ import (
 )
 
 // TypeKind distinguishes primitive, container, user-defined, and void semantic types.
-type TypeKind = ast.SemaTypeKind
+type TypeKind = ast.TypeKind
 
 const (
 	KindVoid    = ast.KindVoid
@@ -29,7 +29,7 @@ const (
 )
 
 // Type represents a resolved semantic type in CleanBasic.
-type Type = ast.SemaType
+type Type = ast.Type
 
 var (
 	VoidType  = ast.VoidType

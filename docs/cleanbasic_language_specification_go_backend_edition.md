@@ -251,7 +251,7 @@ end fn
 
 * **Bounds-Safe Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` clamp out-of-bounds or negative indices without panicking and evaluate as r-values.
 
-* **2-Variable `for-in` Loops & `byref` Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. Local `dim`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
+* **2-Variable `for-in` Loops & `byref` Addressability/Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. Mutable variables, struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Local `dim`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
 
 ```
 fn demoContainers() as int

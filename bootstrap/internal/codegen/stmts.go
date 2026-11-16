@@ -17,10 +17,6 @@ func (e *emitter) emitStmtList(stmts []ast.Statement, indent string, sb *strings
 
 func (e *emitter) emitErrorJumpOrReturn(sb *strings.Builder, indent, errExpr string) {
 	if e.currentTryID > 0 {
-		if e.tryUsedCatch == nil {
-			e.tryUsedCatch = make(map[int]bool)
-		}
-		e.tryUsedCatch[e.currentTryID] = true
 		sb.WriteString(fmt.Sprintf("%s_tryErr_%d = %s\n", indent, e.currentTryID, errExpr))
 		sb.WriteString(fmt.Sprintf("%sgoto _catch_%d\n", indent, e.currentTryID))
 		return
@@ -82,8 +78,8 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 	case *ast.VarDecl:
 		valStr := e.emitRhs(sb, s.Value, indent)
 		typeStr := ""
-		if !s.SemaType.IsVoid() {
-			typeStr = " " + e.goSemaType(s.SemaType)
+		if s.Type != nil && !s.Type.IsVoid() {
+			typeStr = " " + e.goSemaType(*s.Type)
 		}
 		varGo := goIdent(s.Name)
 		sb.WriteString(fmt.Sprintf("%svar %s%s = %s\n", indent, varGo, typeStr, valStr))
@@ -209,9 +205,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		e.emitStmtList(s.TryBody, indent+"\t", sb)
 		e.currentTryID = prevTryID
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
-		if e.tryUsedCatch == nil || !e.tryUsedCatch[tryID] {
-			sb.WriteString(fmt.Sprintf("%sif false {\n%s\tgoto _catch_%d\n%s}\n", indent, indent, tryID, indent))
-		}
+		sb.WriteString(fmt.Sprintf("%sif false {\n%s\tgoto _catch_%d\n%s}\n", indent, indent, tryID, indent))
 		sb.WriteString(fmt.Sprintf("%sgoto _end_try_%d\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s_catch_%d:\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s{\n", indent))
