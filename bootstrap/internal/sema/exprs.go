@@ -157,7 +157,7 @@ func (a *analyzer) inferListLitExpr(e *ast.ListLitExpr, scope *Scope) (Type, err
 			return VoidType, newSemaError(e.Elements[i].ExprPos(), "list literal element %d has type %s, expected %s", i, elemType.String(), firstType.String())
 		}
 	}
-	return Type{Kind: KindList, ElemType: &firstType}, nil
+	return Type{Kind: KindList, SubTypes: []Type{firstType}}, nil
 }
 
 func (a *analyzer) inferDictLitExpr(e *ast.DictLitExpr, scope *Scope) (Type, error) {
@@ -188,7 +188,7 @@ func (a *analyzer) inferDictLitExpr(e *ast.DictLitExpr, scope *Scope) (Type, err
 			return VoidType, newSemaError(e.Entries[i].Value.ExprPos(), "dict literal value %d has type %s, expected %s", i, vt.String(), firstVal.String())
 		}
 	}
-	return Type{Kind: KindDict, KeyType: &firstKey, ValType: &firstVal}, nil
+	return Type{Kind: KindDict, SubTypes: []Type{firstKey, firstVal}}, nil
 }
 
 func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Scope) (Type, error) {
@@ -241,8 +241,7 @@ func (a *analyzer) inferStartJobExpr(e *ast.StartJobExpr, scope *Scope) (Type, e
 	if retType.IsVoid() {
 		return Type{Kind: KindJob}, nil
 	}
-	rt := retType
-	return Type{Kind: KindJob, ElemType: &rt}, nil
+	return Type{Kind: KindJob, SubTypes: []Type{retType}}, nil
 }
 
 func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (Type, error) {
@@ -323,12 +322,12 @@ func (a *analyzer) inferIndexExpr(e *ast.IndexExpr, scope *Scope) (Type, error) 
 		if !idxType.Equals(IntType) {
 			return VoidType, newSemaError(e.Index.ExprPos(), "list index must be int, got %s", idxType.String())
 		}
-		return *objType.ElemType, nil
+		return objType.Elem(), nil
 	case KindDict:
-		if !idxType.Equals(*objType.KeyType) {
-			return VoidType, newSemaError(e.Index.ExprPos(), "dict key must be %s, got %s", objType.KeyType.String(), idxType.String())
+		if !idxType.Equals(objType.Key()) {
+			return VoidType, newSemaError(e.Index.ExprPos(), "dict key must be %s, got %s", objType.Key().String(), idxType.String())
 		}
-		return *objType.ValType, nil
+		return objType.Val(), nil
 	case KindStr:
 		if !idxType.Equals(IntType) {
 			return VoidType, newSemaError(e.Index.ExprPos(), "str index must be int, got %s", idxType.String())

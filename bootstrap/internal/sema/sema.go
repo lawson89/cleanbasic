@@ -36,9 +36,28 @@ type Type struct {
 	Name     string
 	ModuleID string
 	GoName   string
-	ElemType *Type
-	KeyType  *Type
-	ValType  *Type
+	SubTypes []Type // [elem] for list/mailbox/job; [key, val] for dict
+}
+
+func (t Type) Elem() Type {
+	if len(t.SubTypes) > 0 {
+		return t.SubTypes[0]
+	}
+	return VoidType
+}
+
+func (t Type) Key() Type {
+	if len(t.SubTypes) > 0 {
+		return t.SubTypes[0]
+	}
+	return VoidType
+}
+
+func (t Type) Val() Type {
+	if len(t.SubTypes) > 1 {
+		return t.SubTypes[1]
+	}
+	return VoidType
 }
 
 var (
@@ -58,24 +77,19 @@ func (t Type) String() string {
 		return "void"
 	case KindStruct, KindEnum:
 		return t.Name
-	case KindList:
-		if t.ElemType != nil {
-			return fmt.Sprintf("list[%s]", t.ElemType.String())
+	case KindList, KindMailbox:
+		if len(t.SubTypes) == 1 {
+			return fmt.Sprintf("%s[%s]", t.Kind, t.SubTypes[0].String())
 		}
-		return "list[?]"
+		return fmt.Sprintf("%s[?]", t.Kind)
 	case KindDict:
-		if t.KeyType != nil && t.ValType != nil {
-			return fmt.Sprintf("dict[%s, %s]", t.KeyType.String(), t.ValType.String())
+		if len(t.SubTypes) == 2 {
+			return fmt.Sprintf("dict[%s, %s]", t.SubTypes[0].String(), t.SubTypes[1].String())
 		}
 		return "dict[?, ?]"
-	case KindMailbox:
-		if t.ElemType != nil {
-			return fmt.Sprintf("mailbox[%s]", t.ElemType.String())
-		}
-		return "mailbox[?]"
 	case KindJob:
-		if t.ElemType != nil {
-			return fmt.Sprintf("job[%s]", t.ElemType.String())
+		if len(t.SubTypes) == 1 {
+			return fmt.Sprintf("job[%s]", t.SubTypes[0].String())
 		}
 		return "job"
 	default:
@@ -94,16 +108,16 @@ func (t Type) Equals(other Type) bool {
 	switch t.Kind {
 	case KindStruct, KindEnum:
 		return t.Name == other.Name && t.ModuleID == other.ModuleID
-	case KindList, KindMailbox, KindJob:
-		if t.ElemType == nil || other.ElemType == nil {
-			return t.ElemType == other.ElemType
-		}
-		return t.ElemType.Equals(*other.ElemType)
-	case KindDict:
-		if t.KeyType == nil || other.KeyType == nil || t.ValType == nil || other.ValType == nil {
+	case KindList, KindMailbox, KindJob, KindDict:
+		if len(t.SubTypes) != len(other.SubTypes) {
 			return false
 		}
-		return t.KeyType.Equals(*other.KeyType) && t.ValType.Equals(*other.ValType)
+		for i := range t.SubTypes {
+			if !t.SubTypes[i].Equals(other.SubTypes[i]) {
+				return false
+			}
+		}
+		return true
 	default:
 		return true
 	}

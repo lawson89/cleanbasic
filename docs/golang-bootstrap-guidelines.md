@@ -23,7 +23,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
    - Lower `can error` functions to `(T, error)` (or `error` for void), `defer ... end defer` to `defer func() { ... }()`, and `try / catch` to scoped `{ ... }` blocks with `goto _catch_N`.
 
 ## Package Layout
-- `cmd/cb/main.go` — CLI entrypoint (`cb run <file.cb>`, `cb build <file.cb> [-o out]`, `cb check <file.cb>`, `--dump-ast`)
+- `cmd/cb/main.go` — CLI entrypoint (`cb run <file.cb>`, `cb build <file.cb> [-o out]`, `cb check <file.cb>`)
 - `internal/token/` — Token definitions, keyword lookup, and two-word keyword coalescing (`else if`, `end fn`, `go import`, `end go`, `select case`, etc.)
 - `internal/ast/` — AST node definitions for declarations, statements, expressions, and types
 - `internal/lexer/` — Scanner with line/col tracking, `'` and `#` comments, and `go ... end go` raw blocks

@@ -536,7 +536,7 @@ func (p *Parser) parseType() (ast.TypeExpr, error) {
 		if tok.Kind == token.MAILBOX {
 			kind = ast.TypeMailbox
 		}
-		return ast.TypeExpr{Pos: tok.Pos, Kind: kind, ElemType: &elemType}, nil
+		return ast.TypeExpr{Pos: tok.Pos, Kind: kind, SubTypes: []ast.TypeExpr{elemType}}, nil
 
 	case token.DICT:
 		p.advance()
@@ -558,10 +558,9 @@ func (p *Parser) parseType() (ast.TypeExpr, error) {
 			return ast.TypeExpr{}, err
 		}
 		return ast.TypeExpr{
-			Pos:     tok.Pos,
-			Kind:    ast.TypeDict,
-			KeyType: &keyType,
-			ValType: &valType,
+			Pos:      tok.Pos,
+			Kind:     ast.TypeDict,
+			SubTypes: []ast.TypeExpr{keyType, valType},
 		}, nil
 
 	case token.JOB:
@@ -577,7 +576,7 @@ func (p *Parser) parseType() (ast.TypeExpr, error) {
 			return ast.TypeExpr{
 				Pos:      tok.Pos,
 				Kind:     ast.TypeJob,
-				ElemType: &elemType,
+				SubTypes: []ast.TypeExpr{elemType},
 			}, nil
 		}
 		return ast.TypeExpr{

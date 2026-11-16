@@ -13,7 +13,6 @@ go build -o cb ./cmd/cb
 
 ### Commands
 
-- `cb parse <file.cb>` — Lex and parse a CleanBasic source file (`--dump-ast` prints the AST).
 - `cb check <file.cb>` — Run lexing, parsing, module resolution, and semantic type-checking.
 - `cb emit <file.cb> [-o out.go]` — Transpile a CleanBasic program to Go source code.
 - `cb build <file.cb> [-o bin]` — Compile a CleanBasic program into a native executable binary.

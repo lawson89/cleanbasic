@@ -332,96 +332,47 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 			return err
 		}
 		loopScope := NewScope(scope)
+		var varTypes []Type
 		switch iterType.Kind {
-		case KindList:
+		case KindList, KindStr:
 			if len(s.Vars) < 1 || len(s.Vars) > 2 {
-				return newSemaError(s.Pos, "for-in loop over list supports 1 or 2 loop variables")
+				return newSemaError(s.Pos, "for-in loop over %s supports 1 or 2 loop variables", iterType.Kind)
+			}
+			elemType := StrType
+			if iterType.Kind == KindList {
+				elemType = iterType.Elem()
 			}
 			if len(s.Vars) == 1 {
-				if err := a.defineLocalVar(loopScope, &VarSymbol{
-					Name: s.Vars[0],
-					Type: *iterType.ElemType,
-					Pos:  s.Pos,
-				}); err != nil {
-					return err
-				}
+				varTypes = []Type{elemType}
 			} else {
-				if err := a.defineLocalVar(loopScope, &VarSymbol{
-					Name: s.Vars[0],
-					Type: IntType,
-					Pos:  s.Pos,
-				}); err != nil {
-					return err
-				}
-				if err := a.defineLocalVar(loopScope, &VarSymbol{
-					Name: s.Vars[1],
-					Type: *iterType.ElemType,
-					Pos:  s.Pos,
-				}); err != nil {
-					return err
-				}
-			}
-		case KindStr:
-			if len(s.Vars) < 1 || len(s.Vars) > 2 {
-				return newSemaError(s.Pos, "for-in loop over str supports 1 or 2 loop variables")
-			}
-			if len(s.Vars) == 1 {
-				if err := a.defineLocalVar(loopScope, &VarSymbol{
-					Name: s.Vars[0],
-					Type: StrType,
-					Pos:  s.Pos,
-				}); err != nil {
-					return err
-				}
-			} else {
-				if err := a.defineLocalVar(loopScope, &VarSymbol{
-					Name: s.Vars[0],
-					Type: IntType,
-					Pos:  s.Pos,
-				}); err != nil {
-					return err
-				}
-				if err := a.defineLocalVar(loopScope, &VarSymbol{
-					Name: s.Vars[1],
-					Type: StrType,
-					Pos:  s.Pos,
-				}); err != nil {
-					return err
-				}
+				varTypes = []Type{IntType, elemType}
 			}
 		case KindDict:
 			if len(s.Vars) < 1 || len(s.Vars) > 2 {
 				return newSemaError(s.Pos, "for-in loop over dict supports 1 or 2 loop variables")
 			}
-			if err := a.defineLocalVar(loopScope, &VarSymbol{
-				Name: s.Vars[0],
-				Type: *iterType.KeyType,
-				Pos:  s.Pos,
-			}); err != nil {
-				return err
-			}
-			if len(s.Vars) == 2 {
-				if err := a.defineLocalVar(loopScope, &VarSymbol{
-					Name: s.Vars[1],
-					Type: *iterType.ValType,
-					Pos:  s.Pos,
-				}); err != nil {
-					return err
-				}
+			if len(s.Vars) == 1 {
+				varTypes = []Type{iterType.Key()}
+			} else {
+				varTypes = []Type{iterType.Key(), iterType.Val()}
 			}
 		case KindMailbox:
 			if len(s.Vars) != 1 {
 				return newSemaError(s.Pos, "for-in loop over mailbox supports exactly 1 loop variable")
 			}
+			varTypes = []Type{iterType.Elem()}
+		default:
+			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list, dict, str, or mailbox, got %s", iterType.String())
+		}
+
+		for i, name := range s.Vars {
 			if err := a.defineLocalVar(loopScope, &VarSymbol{
-				Name: s.Vars[0],
-				Type: *iterType.ElemType,
+				Name: name,
+				Type: varTypes[i],
 				Pos:  s.Pos,
 			}); err != nil {
 				return err
 			}
-		default:
-			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list, dict, str, or mailbox, got %s", iterType.String())
 		}
 
 		return a.analyzeLoopBody(s.Body, loopScope)

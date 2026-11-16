@@ -172,7 +172,7 @@ func init() {
 		"job.wait": {
 			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
 				recvType := e.prog.ExprTypes[ci.Receiver]
-				if recvType.ElemType == nil {
+				if len(recvType.SubTypes) == 0 {
 					return fmt.Sprintf("%s.waitVoid()", e.emitExpr(ci.Receiver))
 				}
 				return fmt.Sprintf("%s.wait()", e.emitExpr(ci.Receiver))
@@ -264,7 +264,7 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 			if len(ex.Args) == 1 {
 				capStr = e.emitExpr(ex.Args[0])
 			}
-			return fmt.Sprintf("cbNewMailbox[%s](%s)", e.goSemaType(*t.ElemType), capStr)
+			return fmt.Sprintf("cbNewMailbox[%s](%s)", e.goSemaType(t.Elem()), capStr)
 		}
 		return fmt.Sprintf("%s{}", e.goSemaType(t))
 

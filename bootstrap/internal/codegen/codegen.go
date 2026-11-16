@@ -393,25 +393,25 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		}
 		return goIdent(name)
 	case sema.KindList:
-		if t.ElemType != nil {
-			return "[]" + e.goSemaType(*t.ElemType)
+		if len(t.SubTypes) == 1 {
+			return "[]" + e.goSemaType(t.SubTypes[0])
 		}
 		return "[]any"
 	case sema.KindDict:
-		if t.KeyType != nil && t.ValType != nil {
-			return fmt.Sprintf("map[%s]%s", e.goSemaType(*t.KeyType), e.goSemaType(*t.ValType))
+		if len(t.SubTypes) == 2 {
+			return fmt.Sprintf("map[%s]%s", e.goSemaType(t.SubTypes[0]), e.goSemaType(t.SubTypes[1]))
 		}
 		return "map[any]any"
 	case sema.KindMailbox:
 		e.usedMailbox = true
-		if t.ElemType != nil {
-			return fmt.Sprintf("*CbMailbox[%s]", e.goSemaType(*t.ElemType))
+		if len(t.SubTypes) == 1 {
+			return fmt.Sprintf("*CbMailbox[%s]", e.goSemaType(t.SubTypes[0]))
 		}
 		return "*CbMailbox[any]"
 	case sema.KindJob:
 		e.usedJob = true
-		if t.ElemType != nil {
-			return fmt.Sprintf("*CbJob[%s]", e.goSemaType(*t.ElemType))
+		if len(t.SubTypes) == 1 {
+			return fmt.Sprintf("*CbJob[%s]", e.goSemaType(t.SubTypes[0]))
 		}
 		return "*CbJob[struct{}]"
 	default:

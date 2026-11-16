@@ -47,35 +47,28 @@ const (
 type TypeExpr struct {
 	Pos      token.Position
 	Kind     TypeKind
-	Name     string    // For TypeBasic ("int", "str", ...)
-	Parts    []string  // For TypeQualified (e.g., ["Player"] or ["player", "Player"])
-	ElemType *TypeExpr // For TypeList
-	KeyType  *TypeExpr // For TypeDict
-	ValType  *TypeExpr // For TypeDict
+	Name     string     // For TypeBasic ("int", "str", ...)
+	Parts    []string   // For TypeQualified (e.g., ["Player"] or ["player", "Player"])
+	SubTypes []TypeExpr // [elem] for list/mailbox/job; [key, val] for dict
 }
 
 func (t TypeExpr) String() string {
 	switch t.Kind {
 	case TypeBasic:
 		return t.Name
-	case TypeList:
-		if t.ElemType != nil {
-			return fmt.Sprintf("list[%s]", t.ElemType.String())
+	case TypeList, TypeMailbox:
+		if len(t.SubTypes) == 1 {
+			return fmt.Sprintf("%s[%s]", t.Kind, t.SubTypes[0].String())
 		}
-		return "list[]"
+		return string(t.Kind) + "[]"
 	case TypeDict:
-		if t.KeyType != nil && t.ValType != nil {
-			return fmt.Sprintf("dict[%s, %s]", t.KeyType.String(), t.ValType.String())
+		if len(t.SubTypes) == 2 {
+			return fmt.Sprintf("dict[%s, %s]", t.SubTypes[0].String(), t.SubTypes[1].String())
 		}
 		return "dict[]"
-	case TypeMailbox:
-		if t.ElemType != nil {
-			return fmt.Sprintf("mailbox[%s]", t.ElemType.String())
-		}
-		return "mailbox[]"
 	case TypeJob:
-		if t.ElemType != nil {
-			return fmt.Sprintf("job[%s]", t.ElemType.String())
+		if len(t.SubTypes) == 1 {
+			return fmt.Sprintf("job[%s]", t.SubTypes[0].String())
 		}
 		return "job"
 	case TypeQualified:
@@ -484,201 +477,3 @@ type StartJobExpr struct {
 
 func (e *StartJobExpr) ExprPos() token.Position { return e.Pos }
 func (e *StartJobExpr) exprNode()               {}
-
-// --- Pretty Printer / AST Dump ---
-
-func visPrefix(pub bool) string {
-	if pub {
-		return "public "
-	}
-	return ""
-}
-
-func optTypeStr(t *TypeExpr) string {
-	if t == nil {
-		return ""
-	}
-	return " as " + t.String()
-}
-
-func mapJoin[T any](items []T, fn func(T) string) string {
-	parts := make([]string, len(items))
-	for i, it := range items {
-		parts[i] = fn(it)
-	}
-	return strings.Join(parts, ", ")
-}
-
-func dumpBlock(sb *strings.Builder, stmts []Statement, indent string) {
-	for _, st := range stmts {
-		dumpStmt(sb, st, indent)
-	}
-}
-
-// Dump returns a deterministic, human-readable multi-line string representation of the AST.
-func Dump(prog *Program) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Program(%s)\n", prog.File)
-	for _, decl := range prog.Decls {
-		dumpDecl(&sb, decl, "  ")
-	}
-	return sb.String()
-}
-
-func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
-	switch d := decl.(type) {
-	case *ImportDecl:
-		if d.Alias != "" {
-			fmt.Fprintf(sb, "%sImport(%q as %s)\n", indent, d.Path, d.Alias)
-		} else {
-			fmt.Fprintf(sb, "%sImport(%q)\n", indent, d.Path)
-		}
-	case *GoImportDecl:
-		if d.Alias != "" {
-			fmt.Fprintf(sb, "%sGoImport(%q as %s)\n", indent, d.Path, d.Alias)
-		} else {
-			fmt.Fprintf(sb, "%sGoImport(%q)\n", indent, d.Path)
-		}
-	case *GoBlockDecl:
-		fmt.Fprintf(sb, "%sGoBlock(%d bytes)\n", indent, len(d.Code))
-	case *ConstDecl:
-		fmt.Fprintf(sb, "%s%sConstDecl(%s%s = %s)\n", indent, visPrefix(d.Public), d.Name, optTypeStr(d.Type), FormatExpr(d.Value))
-	case *TypeDecl:
-		if d.GoName != "" {
-			fmt.Fprintf(sb, "%s%sTypeDecl(%s = go %q)\n", indent, visPrefix(d.Public), d.Name, d.GoName)
-		} else {
-			fmt.Fprintf(sb, "%s%sTypeDecl(%s)\n", indent, visPrefix(d.Public), d.Name)
-			for _, f := range d.Fields {
-				fmt.Fprintf(sb, "%s  Field(%s as %s)\n", indent, f.Name, f.Type.String())
-			}
-		}
-	case *EnumDecl:
-		fmt.Fprintf(sb, "%s%sEnumDecl(%s: [%s])\n", indent, visPrefix(d.Public), d.Name, strings.Join(d.Variants, ", "))
-	case *FnDecl:
-		params := mapJoin(d.Params, func(p Param) string {
-			if p.ByRef {
-				return fmt.Sprintf("byref %s as %s", p.Name, p.Type.String())
-			}
-			return fmt.Sprintf("%s as %s", p.Name, p.Type.String())
-		})
-		errSuffix, goSuffix := "", ""
-		if d.CanError {
-			errSuffix = " can error"
-		}
-		if d.GoTarget != "" {
-			goSuffix = fmt.Sprintf(" = go %q", d.GoTarget)
-		}
-		fmt.Fprintf(sb, "%s%sFnDecl(%s(%s)%s%s%s)\n", indent, visPrefix(d.Public), d.Name, params, optTypeStr(d.ReturnType), errSuffix, goSuffix)
-		dumpBlock(sb, d.Body, indent+"  ")
-	}
-}
-
-func dumpStmt(sb *strings.Builder, stmt Statement, indent string) {
-	switch s := stmt.(type) {
-	case *VarDecl:
-		fmt.Fprintf(sb, "%sVarDecl(dim %s%s = %s)\n", indent, s.Name, optTypeStr(s.Type), FormatExpr(s.Value))
-	case *Assignment:
-		fmt.Fprintf(sb, "%sAssignment(%s = %s)\n", indent, FormatExpr(s.Target), FormatExpr(s.Value))
-	case *ExprStmt:
-		fmt.Fprintf(sb, "%sExprStmt(%s)\n", indent, FormatExpr(s.Expr))
-	case *IfStmt:
-		fmt.Fprintf(sb, "%sIf(%s)\n", indent, FormatExpr(s.Cond))
-		dumpBlock(sb, s.ThenBody, indent+"  ")
-		for _, elif := range s.ElseIfs {
-			fmt.Fprintf(sb, "%sElseIf(%s)\n", indent, FormatExpr(elif.Cond))
-			dumpBlock(sb, elif.Body, indent+"  ")
-		}
-		if s.HasElse {
-			fmt.Fprintf(sb, "%sElse\n", indent)
-			dumpBlock(sb, s.ElseBody, indent+"  ")
-		}
-	case *ForStmt:
-		if s.IsRange {
-			fmt.Fprintf(sb, "%sForRange(%s = %s to %s)\n", indent, s.VarName, FormatExpr(s.Start), FormatExpr(s.End))
-		} else {
-			fmt.Fprintf(sb, "%sForIn(%s in %s)\n", indent, strings.Join(s.Vars, ", "), FormatExpr(s.Iterable))
-		}
-		dumpBlock(sb, s.Body, indent+"  ")
-	case *WhileStmt:
-		fmt.Fprintf(sb, "%sWhile(%s)\n", indent, FormatExpr(s.Cond))
-		dumpBlock(sb, s.Body, indent+"  ")
-	case *SelectStmt:
-		fmt.Fprintf(sb, "%sSelectCase(%s)\n", indent, FormatExpr(s.Target))
-		for _, c := range s.Cases {
-			fmt.Fprintf(sb, "%s  Case(%s)\n", indent, mapJoin(c.Values, FormatExpr))
-			dumpBlock(sb, c.Body, indent+"    ")
-		}
-		if s.HasElse {
-			fmt.Fprintf(sb, "%s  CaseElse\n", indent)
-			dumpBlock(sb, s.ElseBody, indent+"    ")
-		}
-	case *TryCatchStmt:
-		fmt.Fprintf(sb, "%sTry\n", indent)
-		dumpBlock(sb, s.TryBody, indent+"  ")
-		fmt.Fprintf(sb, "%sCatch(%s)\n", indent, s.CatchVar)
-		dumpBlock(sb, s.CatchBody, indent+"  ")
-	case *DeferStmt:
-		fmt.Fprintf(sb, "%sDefer\n", indent)
-		dumpBlock(sb, s.Body, indent+"  ")
-	case *ReturnStmt:
-		if s.Value != nil {
-			fmt.Fprintf(sb, "%sReturn(%s)\n", indent, FormatExpr(s.Value))
-		} else {
-			fmt.Fprintf(sb, "%sReturn()\n", indent)
-		}
-	case *BreakStmt:
-		fmt.Fprintf(sb, "%sBreak\n", indent)
-	case *ContinueStmt:
-		fmt.Fprintf(sb, "%sContinue\n", indent)
-	}
-}
-
-// FormatExpr returns a concise single-line string representation of an expression.
-func FormatExpr(expr Expr) string {
-	if expr == nil {
-		return "<nil>"
-	}
-	switch e := expr.(type) {
-	case *IdentExpr:
-		return e.Name
-	case *IntLitExpr:
-		return e.Raw
-	case *FloatLitExpr:
-		return e.Raw
-	case *StringLitExpr:
-		return fmt.Sprintf("%q", e.Value)
-	case *BoolLitExpr:
-		return fmt.Sprintf("%v", e.Value)
-	case *ListLitExpr:
-		return "[" + mapJoin(e.Elements, FormatExpr) + "]"
-	case *DictLitExpr:
-		return "{" + mapJoin(e.Entries, func(ent DictEntryExpr) string {
-			return FormatExpr(ent.Key) + ": " + FormatExpr(ent.Value)
-		}) + "}"
-	case *TypedEmptyCtorExpr:
-		return fmt.Sprintf("%s(%s)", e.Type.String(), mapJoin(e.Args, FormatExpr))
-	case *StartJobExpr:
-		return fmt.Sprintf("start job %s", FormatExpr(e.Call))
-	case *UnaryExpr:
-		return fmt.Sprintf("(%s %s)", e.Op, FormatExpr(e.Operand))
-	case *BinaryExpr:
-		return fmt.Sprintf("(%s %s %s)", FormatExpr(e.Left), e.Op, FormatExpr(e.Right))
-	case *FieldAccessExpr:
-		return fmt.Sprintf("%s.%s", FormatExpr(e.Target), e.Field)
-	case *IndexExpr:
-		return fmt.Sprintf("%s[%s]", FormatExpr(e.Target), FormatExpr(e.Index))
-	case *SliceExpr:
-		startStr, endStr := "", ""
-		if e.Start != nil {
-			startStr = FormatExpr(e.Start)
-		}
-		if e.End != nil {
-			endStr = FormatExpr(e.End)
-		}
-		return fmt.Sprintf("%s[%s:%s]", FormatExpr(e.Target), startStr, endStr)
-	case *CallExpr:
-		return fmt.Sprintf("%s(%s)", FormatExpr(e.Callee), mapJoin(e.Args, FormatExpr))
-	default:
-		return "<unknown-expr>"
-	}
-}

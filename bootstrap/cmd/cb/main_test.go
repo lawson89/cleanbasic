@@ -8,16 +8,18 @@ import (
 	"testing"
 )
 
-func TestCLIParseCommand(t *testing.T) {
-	file := filepath.Join("..", "..", "..", "tests", "cases", "01_hello_and_math.cb")
-	if code := run([]string{"parse", file}); code != 0 {
-		t.Fatalf("cb parse %s returned exit code %d, want 0", file, code)
-	}
-	if code := run([]string{"--dump-ast", file}); code != 0 {
-		t.Fatalf("cb --dump-ast %s returned exit code %d, want 0", file, code)
-	}
+func TestCLIUsageAndUnknownCommand(t *testing.T) {
 	if code := run([]string{}); code != 2 {
 		t.Fatalf("cb with no args returned %d, want 2", code)
+	}
+	if code := run([]string{"--help"}); code != 0 {
+		t.Fatalf("cb --help returned %d, want 0", code)
+	}
+	if code := run([]string{"unknowncmd"}); code != 2 {
+		t.Fatalf("cb unknowncmd returned %d, want 2", code)
+	}
+	if code := run([]string{"--unknownflag"}); code != 2 {
+		t.Fatalf("cb --unknownflag returned %d, want 2", code)
 	}
 }
 

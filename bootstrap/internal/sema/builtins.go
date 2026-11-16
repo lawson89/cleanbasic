@@ -20,8 +20,8 @@ type builtinTypeRef struct {
 func bt(t Type) builtinTypeRef { return builtinTypeRef{kind: btConcrete, concrete: t} }
 
 var (
-	btListStr      = bt(Type{Kind: KindList, ElemType: &StrType})
-	btListByte     = bt(Type{Kind: KindList, ElemType: &ByteType})
+	btListStr      = bt(Type{Kind: KindList, SubTypes: []Type{StrType}})
+	btListByte     = bt(Type{Kind: KindList, SubTypes: []Type{ByteType}})
 	btElemRef      = builtinTypeRef{kind: btElem}
 	btKeyRef       = builtinTypeRef{kind: btKey}
 	btValRef       = builtinTypeRef{kind: btVal}
@@ -31,14 +31,14 @@ var (
 func (r builtinTypeRef) resolve(recv Type) Type {
 	switch r.kind {
 	case btElem:
-		return *recv.ElemType
+		return recv.Elem()
 	case btKey:
-		return *recv.KeyType
+		return recv.Key()
 	case btVal:
-		return *recv.ValType
+		return recv.Val()
 	case btJobResult:
-		if recv.ElemType != nil {
-			return *recv.ElemType
+		if len(recv.SubTypes) > 0 {
+			return recv.SubTypes[0]
 		}
 		return VoidType
 	default:

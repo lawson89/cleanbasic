@@ -318,48 +318,48 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 			return ErrType, nil
 		}
 	case ast.TypeList:
-		if t.ElemType == nil {
+		if len(t.SubTypes) != 1 {
 			return VoidType, newSemaError(t.Pos, "list type requires an element type")
 		}
-		elem, err := a.resolveTypeExpr(*t.ElemType)
+		elem, err := a.resolveTypeExpr(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
-		return Type{Kind: KindList, ElemType: &elem}, nil
+		return Type{Kind: KindList, SubTypes: []Type{elem}}, nil
 	case ast.TypeMailbox:
-		if t.ElemType == nil {
+		if len(t.SubTypes) != 1 {
 			return VoidType, newSemaError(t.Pos, "mailbox type requires an element type")
 		}
-		elem, err := a.resolveTypeExpr(*t.ElemType)
+		elem, err := a.resolveTypeExpr(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
-		return Type{Kind: KindMailbox, ElemType: &elem}, nil
+		return Type{Kind: KindMailbox, SubTypes: []Type{elem}}, nil
 	case ast.TypeJob:
-		if t.ElemType == nil {
+		if len(t.SubTypes) == 0 {
 			return Type{Kind: KindJob}, nil
 		}
-		elem, err := a.resolveTypeExpr(*t.ElemType)
+		elem, err := a.resolveTypeExpr(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
-		return Type{Kind: KindJob, ElemType: &elem}, nil
+		return Type{Kind: KindJob, SubTypes: []Type{elem}}, nil
 	case ast.TypeDict:
-		if t.KeyType == nil || t.ValType == nil {
+		if len(t.SubTypes) != 2 {
 			return VoidType, newSemaError(t.Pos, "dict type requires key and value types")
 		}
-		kt, err := a.resolveTypeExpr(*t.KeyType)
+		kt, err := a.resolveTypeExpr(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
 		if !a.isComparableType(kt) {
-			return VoidType, newSemaError(t.KeyType.Pos, "dict key type %s is not comparable", kt.String())
+			return VoidType, newSemaError(t.SubTypes[0].Pos, "dict key type %s is not comparable", kt.String())
 		}
-		vt, err := a.resolveTypeExpr(*t.ValType)
+		vt, err := a.resolveTypeExpr(t.SubTypes[1])
 		if err != nil {
 			return VoidType, err
 		}
-		return Type{Kind: KindDict, KeyType: &kt, ValType: &vt}, nil
+		return Type{Kind: KindDict, SubTypes: []Type{kt, vt}}, nil
 	case ast.TypeQualified:
 		if len(t.Parts) == 1 {
 			name := t.Parts[0]

@@ -10,12 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
-	"cleanbasic/bootstrap/internal/ast"
 	"cleanbasic/bootstrap/internal/codegen"
-	"cleanbasic/bootstrap/internal/parser"
 	"cleanbasic/bootstrap/internal/sema"
 )
 
@@ -34,10 +31,6 @@ func run(args []string) int {
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
-	case "parse":
-		return runParse(args[1:])
-	case "--dump-ast":
-		return runParse(args[1:])
 	case "check":
 		return runCheck(args[1:])
 	case "emit":
@@ -47,12 +40,6 @@ func run(args []string) int {
 	case "run":
 		return runExec(args[1:])
 	default:
-		// Support e.g. cb <file.cb> --dump-ast
-		for _, a := range args {
-			if a == "--dump-ast" {
-				return runParse(args)
-			}
-		}
 		if strings.HasPrefix(first, "-") {
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", first)
 		} else {
@@ -61,35 +48,6 @@ func run(args []string) int {
 		printUsage()
 		return 2
 	}
-}
-
-func runParse(args []string) int {
-	var filtered []string
-	for _, arg := range args {
-		if arg == "--dump-ast" || arg == "parse" {
-			continue
-		}
-		filtered = append(filtered, arg)
-	}
-	filePath, _, code := parseFileAndOutArgs(filtered, false)
-	if code != 0 {
-		return code
-	}
-
-	rawBytes, err := os.ReadFile(filePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading %s: %v\n", filePath, err)
-		return 1
-	}
-
-	prog, err := parser.Parse(string(rawBytes), filePath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
-	}
-
-	fmt.Print(ast.Dump(prog))
-	return 0
 }
 
 func runCheck(args []string) int {
@@ -194,98 +152,30 @@ func discoverGoMod(entryFile string, prog *sema.TypedProgram) (string, string, s
 	return "", "", ""
 }
 
-func rewriteReplaceLine(line, projectDir string) string {
-	comment := ""
-	code := line
-	if idx := strings.Index(line, "//"); idx >= 0 {
-		code = line[:idx]
-		comment = line[idx:]
-	}
-	arrowIdx := strings.Index(code, "=>")
-	if arrowIdx < 0 {
-		return line
-	}
-	left := code[:arrowIdx+2]
-	right := strings.TrimSpace(code[arrowIdx+2:])
-	if right == "" {
-		return line
-	}
-
-	var targetToken, rest string
-	wasQuoted := false
-	if strings.HasPrefix(right, "\x22") {
-		if unq, endIdx, err := extractQuotedPrefix(right); err == nil {
-			targetToken = unq
-			rest = right[endIdx:]
-			wasQuoted = true
-		}
-	}
-	if targetToken == "" && !wasQuoted {
-		fields := strings.Fields(right)
-		if len(fields) == 0 {
-			return line
-		}
-		targetToken = fields[0]
-		rest = right[len(targetToken):]
-	}
-
-	if targetToken == "." || targetToken == ".." || strings.HasPrefix(targetToken, "./") || strings.HasPrefix(targetToken, "../") || strings.HasPrefix(targetToken, ".\x5c") || strings.HasPrefix(targetToken, "..\x5c") {
-		absTarget := filepath.Clean(filepath.Join(projectDir, targetToken))
-		if wasQuoted || strings.ContainsAny(absTarget, " \t") {
-			targetToken = strconv.Quote(absTarget)
-		} else {
-			targetToken = absTarget
-		}
-		return left + " " + targetToken + rest + comment
-	}
-	return line
-}
-
-func extractQuotedPrefix(s string) (string, int, error) {
-	for i := 1; i < len(s); i++ {
-		if s[i] == '\x5c' {
-			i++
-			continue
-		}
-		if s[i] == '"' {
-			unq, err := strconv.Unquote(s[:i+1])
-			if err != nil {
-				return "", 0, err
-			}
-			return unq, i + 1, nil
-		}
-	}
-	return "", 0, fmt.Errorf("unterminated quote")
-}
-
 func rewriteGoModReplacePaths(raw []byte, projectDir string) []byte {
 	lines := strings.Split(string(raw), "\n")
-	inReplaceBlock := false
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		noComment := trimmed
-		if idx := strings.Index(noComment, "//"); idx >= 0 {
-			noComment = strings.TrimSpace(noComment[:idx])
-		}
-		if inReplaceBlock {
-			if noComment == ")" {
-				inReplaceBlock = false
-				continue
-			}
-			if strings.Contains(noComment, "=>") {
-				lines[i] = rewriteReplaceLine(line, projectDir)
-			}
+		left, right, ok := strings.Cut(line, "=>")
+		if !ok {
 			continue
 		}
-		if strings.HasPrefix(noComment, "replace ") || noComment == "replace(" {
-			rest := strings.TrimSpace(strings.TrimPrefix(noComment, "replace"))
-			if strings.HasPrefix(rest, "(") {
-				inReplaceBlock = true
-				continue
+		code, comment, hasComment := strings.Cut(right, "//")
+		fields := strings.Fields(code)
+		if len(fields) == 0 {
+			continue
+		}
+		target := strings.Trim(fields[0], `"`)
+		if target == "." || target == ".." || strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../") || strings.HasPrefix(target, `.\`) || strings.HasPrefix(target, `..\`) {
+			absTarget := filepath.Clean(filepath.Join(projectDir, target))
+			if strings.ContainsAny(absTarget, " \t") {
+				absTarget = fmt.Sprintf("%q", absTarget)
 			}
-			if strings.Contains(noComment, "=>") {
-				lines[i] = rewriteReplaceLine(line, projectDir)
+			fields[0] = absTarget
+			rebuilt := strings.TrimRight(left, " \t") + " => " + strings.Join(fields, " ")
+			if hasComment {
+				rebuilt += " //" + comment
 			}
+			lines[i] = rebuilt
 		}
 	}
 	return []byte(strings.Join(lines, "\n"))
@@ -296,25 +186,7 @@ func syncFileIfChanged(path string, content []byte) error {
 	if err == nil && bytes.Equal(existing, content) {
 		return nil
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return os.WriteFile(path, content, 0644)
 }
 
 func prepareBuildJob(entryFile string, prog *sema.TypedProgram, goCode string) (string, func(), error) {
@@ -324,8 +196,7 @@ func prepareBuildJob(entryFile string, prog *sema.TypedProgram, goCode string) (
 	if err != nil || cacheRoot == "" {
 		cacheRoot = os.TempDir()
 	}
-
-	workKey := "stdlib"
+	workKey := "default"
 	if projectDir != "" {
 		sum := sha256.Sum256([]byte(projectDir))
 		workKey = hex.EncodeToString(sum[:8])
@@ -548,8 +419,6 @@ func parseFileAndOutArgs(args []string, allowOutputFlag bool) (string, string, i
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
-	fmt.Fprintln(os.Stderr, "  cb parse <file.cb>")
-	fmt.Fprintln(os.Stderr, "  cb --dump-ast <file.cb>")
 	fmt.Fprintln(os.Stderr, "  cb check <file.cb>")
 	fmt.Fprintln(os.Stderr, "  cb emit <file.cb> [-o <out.go>]")
 	fmt.Fprintln(os.Stderr, "  cb build <file.cb> [-o <bin>]")

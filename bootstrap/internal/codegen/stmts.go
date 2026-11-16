@@ -133,48 +133,37 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		} else {
 			iterType := e.prog.ExprTypes[s.Iterable]
+			iterExpr := e.emitExpr(s.Iterable)
+			v0 := goIdent(s.Vars[0])
 			switch iterType.Kind {
 			case sema.KindList:
 				if len(s.Vars) == 1 {
-					v0 := goIdent(s.Vars[0])
-					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, v0, e.emitExpr(s.Iterable)))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
+					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, v0, iterExpr))
 				} else {
 					e.loopCounter++
 					idxTmp := fmt.Sprintf("_cbIdx_%d", e.loopCounter)
-					v0 := goIdent(s.Vars[0])
 					v1 := goIdent(s.Vars[1])
-					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, v1, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, v1, iterExpr))
 					sb.WriteString(fmt.Sprintf("%s\tvar %s int64 = int64(%s)\n", indent, v0, idxTmp))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
 				}
 			case sema.KindStr:
 				e.loopCounter++
 				runeTmp := fmt.Sprintf("_cbRune_%d", e.loopCounter)
 				if len(s.Vars) == 1 {
-					v0 := goIdent(s.Vars[0])
-					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, runeTmp, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, runeTmp, iterExpr))
 					sb.WriteString(fmt.Sprintf("%s\tvar %s string = string(%s)\n", indent, v0, runeTmp))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
 				} else {
 					idxTmp := fmt.Sprintf("_cbIdx_%d", e.loopCounter)
-					v0 := goIdent(s.Vars[0])
 					v1 := goIdent(s.Vars[1])
-					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, runeTmp, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, runeTmp, iterExpr))
 					sb.WriteString(fmt.Sprintf("%s\tvar %s int64 = int64(%s)\n", indent, v0, idxTmp))
 					sb.WriteString(fmt.Sprintf("%s\tvar %s string = string(%s)\n", indent, v1, runeTmp))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
 				}
 			case sema.KindDict:
 				if len(s.Vars) == 1 {
-					v0 := goIdent(s.Vars[0])
-					sb.WriteString(fmt.Sprintf("%sfor %s := range %s {\n", indent, v0, e.emitExpr(s.Iterable)))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
+					sb.WriteString(fmt.Sprintf("%sfor %s := range %s {\n", indent, v0, iterExpr))
 				} else {
-					v0 := goIdent(s.Vars[0])
-					v1 := goIdent(s.Vars[1])
-					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, v0, v1, e.emitExpr(s.Iterable)))
-					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
+					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, v0, goIdent(s.Vars[1]), iterExpr))
 				}
 			case sema.KindMailbox:
 				e.loopCounter++
@@ -182,13 +171,14 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 				msgTmp := fmt.Sprintf("_cbMsg_%d", lid)
 				errTmp := fmt.Sprintf("_cbErr_%d", lid)
 				boxTmp := fmt.Sprintf("_cbBox_%d", lid)
-				v0 := goIdent(s.Vars[0])
-				sb.WriteString(fmt.Sprintf("%s%s := %s\n", indent, boxTmp, e.emitExpr(s.Iterable)))
+				sb.WriteString(fmt.Sprintf("%s%s := %s\n", indent, boxTmp, iterExpr))
 				sb.WriteString(fmt.Sprintf("%sfor {\n", indent))
 				sb.WriteString(fmt.Sprintf("%s\t%s, %s := %s.get()\n", indent, msgTmp, errTmp, boxTmp))
 				sb.WriteString(fmt.Sprintf("%s\tif %s != nil {\n%s\t\tbreak\n%s\t}\n", indent, errTmp, indent, indent))
 				sb.WriteString(fmt.Sprintf("%s\tvar %s = %s\n", indent, v0, msgTmp))
-				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
+			}
+			for _, v := range s.Vars {
+				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, goIdent(v)))
 			}
 			e.emitStmtList(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))

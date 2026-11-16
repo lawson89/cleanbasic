@@ -35,9 +35,15 @@ func TestParseAllTestCases(t *testing.T) {
 				t.Fatalf("expected non-empty AST declarations for %s", relSlash)
 			}
 			if !strings.Contains(relSlash, "/") || d.Name() == "main.cb" {
-				dump := ast.Dump(prog)
-				if !strings.Contains(dump, "FnDecl(main()") {
-					t.Errorf("expected AST dump for %s to contain FnDecl(main()), got:\n%s", relSlash, dump)
+				hasMain := false
+				for _, decl := range prog.Decls {
+					if fn, ok := decl.(*ast.FnDecl); ok && fn.Name == "main" {
+						hasMain = true
+						break
+					}
+				}
+				if !hasMain {
+					t.Errorf("expected AST for %s to contain FnDecl main", relSlash)
 				}
 			}
 		})
@@ -94,7 +100,7 @@ func TestOperatorPrecedenceAndTrailingCommas(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected VarDecl, got %T", fnDecl.Body[0])
 	}
-	gotExpr := ast.FormatExpr(varDecl.Value)
+	gotExpr := formatTestExpr(varDecl.Value)
 	wantExpr := "((((1 + (2 * 3)) == 7) and (not false)) or true)"
 	if gotExpr != wantExpr {
 		t.Errorf("precedence mismatch:\ngot:  %s\nwant: %s", gotExpr, wantExpr)
@@ -177,19 +183,37 @@ end fn
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
-	dump := ast.Dump(prog)
-	for _, want := range []string{
-		`GoImport("os" as stdos)`,
-		"GoBlock(",
-		`public TypeDecl(Opaque = go "CbOpaque")`,
-		`public FnDecl(readIt(p as str) as list[byte] can error = go "stdos.ReadFile")`,
-		"s[1:3]",
-		"s[:2]",
-		"s[2:]",
-		"s[:]",
-	} {
-		if !strings.Contains(dump, want) {
-			t.Errorf("ast.Dump missing %q in:\n%s", want, dump)
+	if len(prog.Decls) != 5 {
+		t.Fatalf("expected 5 decls, got %d", len(prog.Decls))
+	}
+	gi, ok := prog.Decls[0].(*ast.GoImportDecl)
+	if !ok || gi.Path != "os" || gi.Alias != "stdos" {
+		t.Fatalf("unexpected GoImportDecl: %#v", prog.Decls[0])
+	}
+	if _, ok := prog.Decls[1].(*ast.GoBlockDecl); !ok {
+		t.Fatalf("expected GoBlockDecl, got %T", prog.Decls[1])
+	}
+	td, ok := prog.Decls[2].(*ast.TypeDecl)
+	if !ok || !td.Public || td.Name != "Opaque" || td.GoName != "CbOpaque" {
+		t.Fatalf("unexpected TypeDecl: %#v", prog.Decls[2])
+	}
+	fnRead, ok := prog.Decls[3].(*ast.FnDecl)
+	if !ok || !fnRead.Public || fnRead.Name != "readIt" || !fnRead.CanError || fnRead.GoTarget != "stdos.ReadFile" || fnRead.ReturnType == nil || fnRead.ReturnType.String() != "list[byte]" {
+		t.Fatalf("unexpected FnDecl readIt: %#v", prog.Decls[3])
+	}
+	fnMain, ok := prog.Decls[4].(*ast.FnDecl)
+	if !ok || len(fnMain.Body) != 5 {
+		t.Fatalf("unexpected main FnDecl: %#v", prog.Decls[4])
+	}
+	wantSlices := [][2]bool{{true, true}, {false, true}, {true, false}, {false, false}}
+	for i, want := range wantSlices {
+		vd, ok := fnMain.Body[i].(*ast.VarDecl)
+		if !ok {
+			t.Fatalf("stmt %d: expected VarDecl, got %T", i, fnMain.Body[i])
+		}
+		sl, ok := vd.Value.(*ast.SliceExpr)
+		if !ok || (sl.Start != nil) != want[0] || (sl.End != nil) != want[1] {
+			t.Fatalf("stmt %d: unexpected SliceExpr: %#v", i, vd.Value)
 		}
 	}
 }
@@ -214,5 +238,23 @@ func TestParseMailboxAndStartJob(t *testing.T) {
 	}
 	if len(prog.Decls) != 2 {
 		t.Fatalf("got %d decls, want 2", len(prog.Decls))
+	}
+}
+
+func formatTestExpr(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.IntLitExpr:
+		return e.Raw
+	case *ast.BoolLitExpr:
+		if e.Value {
+			return "true"
+		}
+		return "false"
+	case *ast.UnaryExpr:
+		return "(" + string(e.Op) + " " + formatTestExpr(e.Operand) + ")"
+	case *ast.BinaryExpr:
+		return "(" + formatTestExpr(e.Left) + " " + string(e.Op) + " " + formatTestExpr(e.Right) + ")"
+	default:
+		return "<expr>"
 	}
 }
