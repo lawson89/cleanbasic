@@ -73,7 +73,7 @@ func TestCLICheckEmitBuildAndRun(t *testing.T) {
 
 	// 5. cb check on invalid program should return exit code 1
 	badFile := filepath.Join(tmpDir, "bad.cb")
-	badSrc := "fn main() as int\n    const x = 1\n    x = 2\n    return 0\nend fn\n"
+	badSrc := "const x = 1\nfn main() as int\n    x = 2\n    return 0\nend fn\n"
 	if err := os.WriteFile(badFile, []byte(badSrc), 0644); err != nil {
 		t.Fatalf("failed to write bad.cb: %v", err)
 	}

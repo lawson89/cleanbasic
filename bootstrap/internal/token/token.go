@@ -48,7 +48,6 @@ const (
 	ELSE     Kind = "else"
 	FOR      Kind = "for"
 	TO       Kind = "to"
-	STEP     Kind = "step"
 	IN       Kind = "in"
 	WHILE    Kind = "while"
 	CASE     Kind = "case"
@@ -157,7 +156,6 @@ var singleWordKeywords = map[string]Kind{
 	"else":     ELSE,
 	"for":      FOR,
 	"to":       TO,
-	"step":     STEP,
 	"in":       IN,
 	"while":    WHILE,
 	"case":     CASE,

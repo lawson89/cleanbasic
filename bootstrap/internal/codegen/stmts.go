@@ -3,7 +3,6 @@ package codegen
 import (
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"cleanbasic/bootstrap/internal/ast"
@@ -43,14 +42,9 @@ func (e *emitter) emitFallibleCallExpr(sb *strings.Builder, expr ast.Expr, inden
 		return "", false
 	}
 	if ci.Kind == sema.CallError {
-		e.usedCbError = true
-		codeExpr := "int64(0)"
-		if len(call.Args) == 2 {
-			codeExpr = e.emitExpr(call.Args[1])
-		}
-		cbErr := fmt.Sprintf("CbError{msg: %s, code: %s, file: %s, line: int64(%d)}",
-			e.emitExpr(call.Args[0]), codeExpr, strconv.Quote(call.Pos.File), call.Pos.Line)
-		e.emitErrorJumpOrReturn(sb, indent, cbErr)
+		e.useImport("errors")
+		errExpr := fmt.Sprintf("errors.New(%s)", e.emitExpr(call.Args[0]))
+		e.emitErrorJumpOrReturn(sb, indent, errExpr)
 		return "", true
 	}
 	if !ci.CanError {
@@ -139,24 +133,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			endVar := fmt.Sprintf("_cbEnd_%d", lid)
 			varGo := goIdent(s.VarName)
 			sb.WriteString(fmt.Sprintf("%svar %s int64 = %s\n", indent, endVar, e.emitExpr(s.End)))
-			if s.Step == nil {
-				sb.WriteString(fmt.Sprintf("%sfor %s := %s; %s <= %s; %s += int64(1) {\n",
-					indent, varGo, e.emitExpr(s.Start), varGo, endVar, varGo))
-				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, varGo))
-				e.emitStmtList(s.Body, indent+"\t", sb)
-				sb.WriteString(fmt.Sprintf("%s}\n", indent))
-			} else {
-				stepVar := fmt.Sprintf("_cbStep_%d", lid)
-				sb.WriteString(fmt.Sprintf("%svar %s int64 = %s\n", indent, stepVar, e.emitExpr(s.Step)))
-				sb.WriteString(fmt.Sprintf("%sfor %s := %s; (%s > 0 && %s <= %s) || (%s < 0 && %s >= %s); %s += %s {\n",
-					indent, varGo, e.emitExpr(s.Start),
-					stepVar, varGo, endVar,
-					stepVar, varGo, endVar,
-					varGo, stepVar))
-				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, varGo))
-				e.emitStmtList(s.Body, indent+"\t", sb)
-				sb.WriteString(fmt.Sprintf("%s}\n", indent))
-			}
+			sb.WriteString(fmt.Sprintf("%sfor %s := %s; %s <= %s; %s++ {\n",
+				indent, varGo, e.emitExpr(s.Start), varGo, endVar, varGo))
+			sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, varGo))
+			e.emitStmtList(s.Body, indent+"\t", sb)
+			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		} else {
 			iterType := e.prog.ExprTypes[s.Iterable]
 			switch iterType.Kind {
@@ -242,7 +223,6 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
 
 	case *ast.TryCatchStmt:
-		e.usedCbError = true
 		e.tryCounter++
 		tryID := e.tryCounter
 		prevTryID := e.currentTryID
@@ -260,12 +240,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		sb.WriteString(fmt.Sprintf("%s_catch_%d:\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s{\n", indent))
 		catchGo := goIdent(s.CatchVar)
-		sb.WriteString(fmt.Sprintf("%s\tvar %s CbError\n", indent, catchGo))
-		sb.WriteString(fmt.Sprintf("%s\tif _cbErr, _ok := _tryErr_%d.(CbError); _ok {\n", indent, tryID))
-		sb.WriteString(fmt.Sprintf("%s\t\t%s = _cbErr\n", indent, catchGo))
-		sb.WriteString(fmt.Sprintf("%s\t} else {\n", indent))
-		sb.WriteString(fmt.Sprintf("%s\t\t%s = CbError{msg: _tryErr_%d.Error()}\n", indent, catchGo, tryID))
-		sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
+		sb.WriteString(fmt.Sprintf("%s\tvar %s error = _tryErr_%d\n", indent, catchGo, tryID))
 		sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, catchGo))
 		e.emitStmtList(s.CatchBody, indent+"\t", sb)
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))

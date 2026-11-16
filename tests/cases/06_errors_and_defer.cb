@@ -1,4 +1,4 @@
-' EXPECT_OUT: caught expected error (code=408): IP cannot be empty
+' EXPECT_OUT: caught expected error: IP cannot be empty
 ' EXPECT_OUT: defer cleanup: conn=1
 ' EXPECT_OUT: success: 100
 type Connection
@@ -7,7 +7,7 @@ end type
 
 fn connect(ip as str) as Connection can error
     if ip == ""
-        error("IP cannot be empty", 408)
+        error("IP cannot be empty")
     end if
     return Connection(1)
 end fn
@@ -23,7 +23,7 @@ fn processNetwork(ip as str) as int can error
     end defer
 
     if ip == "bad-route"
-        error("Routing failed", 500)
+        error("Routing failed")
     end if
 
     return 100
@@ -34,7 +34,7 @@ fn main() as int
         dim v1 = processNetwork("")
         print("unreachable: ", v1)
     catch e
-        print("caught expected error (code=" & e.code & "): " & e.msg)
+        print("caught expected error: " & e.msg)
     end try
 
     try

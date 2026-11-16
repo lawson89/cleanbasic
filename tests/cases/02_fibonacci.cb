@@ -33,7 +33,7 @@ public fn fibRecursive(n as int) as int
 end fn
 
 fn main() as int
-    const target = 10
+    dim target = 10
     print("Iterative Fib(", target, ") = ", fibIterative(target))
     print("Recursive Fib(", target, ") = ", fibRecursive(target))
 

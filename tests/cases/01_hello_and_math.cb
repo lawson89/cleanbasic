@@ -2,7 +2,7 @@
 ' EXPECT_OUT: logic: true
 
 fn main() as int
-    const base = 10
+    dim base = 10
     dim x = base + 5
     x = x - 3
     x = x * 4

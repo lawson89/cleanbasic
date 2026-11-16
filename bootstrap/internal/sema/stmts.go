@@ -1,9 +1,6 @@
 package sema
 
-import (
-	"cleanbasic/bootstrap/internal/ast"
-	"cleanbasic/bootstrap/internal/token"
-)
+import "cleanbasic/bootstrap/internal/ast"
 
 func (a *analyzer) analyzeFnBody(fn *ast.FnDecl) error {
 	if fn.GoTarget != "" {
@@ -163,7 +160,7 @@ func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
 	sym := &VarSymbol{
 		Name:    s.Name,
 		Type:    finalType,
-		IsConst: s.IsConst,
+		IsConst: false,
 		Pos:     s.Pos,
 	}
 	if err := a.defineLocalVar(scope, sym); err != nil {
@@ -228,6 +225,9 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 	case *ast.FieldAccessExpr:
 		if err := a.checkMutableTarget(target.Target, scope); err != nil {
 			return err
+		}
+		if targetType, err := a.inferExpr(target.Target, scope); err == nil && targetType.Kind == KindErr {
+			return newSemaError(s.Pos, "cannot assign to read-only field %q on err", target.Field)
 		}
 		fieldType, err := a.inferExpr(target, scope)
 		if err != nil {
@@ -443,24 +443,11 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 		return newSemaError(s.End.ExprPos(), "for loop end expression must be int, got %s", endType.String())
 	}
 
-	if s.Step != nil {
-		stepType, err := a.inferExpr(s.Step, scope)
-		if err != nil {
-			return err
-		}
-		if !stepType.Equals(IntType) {
-			return newSemaError(s.Step.ExprPos(), "for loop step expression must be int, got %s", stepType.String())
-		}
-		if isZeroIntLiteral(s.Step) {
-			return newSemaError(s.Step.ExprPos(), "for loop step cannot be 0")
-		}
-	}
-
 	loopScope := NewScope(scope)
 	if err := a.defineLocalVar(loopScope, &VarSymbol{
 		Name:    s.VarName,
 		Type:    IntType,
-		IsConst: false,
+		IsConst: true,
 		Pos:     s.Pos,
 	}); err != nil {
 		return err
@@ -601,16 +588,4 @@ func (a *analyzer) analyzeReturnStmt(s *ast.ReturnStmt, scope *Scope) error {
 		return newSemaError(s.Pos, "return type mismatch in function %q: expected %s, got %s", a.currentFn.Name, expected.String(), valType.String())
 	}
 	return nil
-}
-
-func isZeroIntLiteral(expr ast.Expr) bool {
-	switch ex := expr.(type) {
-	case *ast.IntLitExpr:
-		return ex.Value == 0
-	case *ast.UnaryExpr:
-		if ex.Op == token.MINUS || ex.Op == token.PLUS {
-			return isZeroIntLiteral(ex.Operand)
-		}
-	}
-	return false
 }

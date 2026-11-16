@@ -290,14 +290,10 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 		return VoidType, err
 	}
 	if objType.Kind == KindErr {
-		switch e.Field {
-		case "msg", "file":
+		if e.Field == "msg" {
 			return StrType, nil
-		case "code", "line":
-			return IntType, nil
-		default:
-			return VoidType, newSemaError(e.Pos, "err type has no field %q", e.Field)
 		}
+		return VoidType, newSemaError(e.Pos, "err type has no field %q", e.Field)
 	}
 	if objType.Kind != KindStruct {
 		return VoidType, newSemaError(e.Pos, "cannot access field %q on non-struct type %s", e.Field, objType.String())
@@ -431,8 +427,8 @@ func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
 	if e != a.allowedFallibleExpr {
 		return VoidType, newSemaError(e.Pos, "error() may only appear as a top-level statement expression")
 	}
-	if len(e.Args) < 1 || len(e.Args) > 2 {
-		return VoidType, newSemaError(e.Pos, "error() expects 1 or 2 argument(s), got %d", len(e.Args))
+	if len(e.Args) != 1 {
+		return VoidType, newSemaError(e.Pos, "error() expects 1 argument, got %d", len(e.Args))
 	}
 	msgType, err := a.inferExpr(e.Args[0], scope)
 	if err != nil {
@@ -440,15 +436,6 @@ func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
 	}
 	if !msgType.Equals(StrType) {
 		return VoidType, newSemaError(e.Args[0].ExprPos(), "error() message must be str, got %s", msgType.String())
-	}
-	if len(e.Args) == 2 {
-		codeType, err := a.inferExpr(e.Args[1], scope)
-		if err != nil {
-			return VoidType, err
-		}
-		if !codeType.Equals(IntType) {
-			return VoidType, newSemaError(e.Args[1].ExprPos(), "error() code must be int, got %s", codeType.String())
-		}
 	}
 	a.prog.CallInfos[e] = &CallInfo{Kind: CallError}
 	return VoidType, nil

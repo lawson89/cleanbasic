@@ -183,13 +183,12 @@ func (d *FnDecl) declNode()               {}
 
 // --- Statements ---
 
-// VarDecl represents: (dim | const) Name [as Type] = Value
+// VarDecl represents: dim Name [as Type] = Value
 type VarDecl struct {
-	Pos     token.Position
-	IsConst bool
-	Name    string
-	Type    *TypeExpr // nil if inferred
-	Value   Expr
+	Pos   token.Position
+	Name  string
+	Type  *TypeExpr // nil if inferred
+	Value Expr
 }
 
 func (s *VarDecl) StmtPos() token.Position { return s.Pos }
@@ -234,17 +233,16 @@ type IfStmt struct {
 func (s *IfStmt) StmtPos() token.Position { return s.Pos }
 func (s *IfStmt) stmtNode()               {}
 
-// ForStmt represents either a numeric range loop ("for i = start to end [step s]")
+// ForStmt represents either a numeric range loop ("for i = start to end")
 // or a collection loop ("for x [, y] in iterable").
 type ForStmt struct {
 	Pos     token.Position
 	IsRange bool
 
-	// Range loop fields: for VarName = Start to End [step Step]
+	// Range loop fields: for VarName = Start to End
 	VarName string
 	Start   Expr
 	End     Expr
-	Step    Expr // nil if omitted
 
 	// For-in loop fields: for Vars in Iterable
 	Vars     []string
@@ -578,11 +576,7 @@ func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 func dumpStmt(sb *strings.Builder, stmt Statement, indent string) {
 	switch s := stmt.(type) {
 	case *VarDecl:
-		kw := "dim"
-		if s.IsConst {
-			kw = "const"
-		}
-		fmt.Fprintf(sb, "%sVarDecl(%s %s%s = %s)\n", indent, kw, s.Name, optTypeStr(s.Type), FormatExpr(s.Value))
+		fmt.Fprintf(sb, "%sVarDecl(dim %s%s = %s)\n", indent, s.Name, optTypeStr(s.Type), FormatExpr(s.Value))
 	case *Assignment:
 		fmt.Fprintf(sb, "%sAssignment(%s = %s)\n", indent, FormatExpr(s.Target), FormatExpr(s.Value))
 	case *ExprStmt:
@@ -600,11 +594,7 @@ func dumpStmt(sb *strings.Builder, stmt Statement, indent string) {
 		}
 	case *ForStmt:
 		if s.IsRange {
-			stepStr := ""
-			if s.Step != nil {
-				stepStr = " step " + FormatExpr(s.Step)
-			}
-			fmt.Fprintf(sb, "%sForRange(%s = %s to %s%s)\n", indent, s.VarName, FormatExpr(s.Start), FormatExpr(s.End), stepStr)
+			fmt.Fprintf(sb, "%sForRange(%s = %s to %s)\n", indent, s.VarName, FormatExpr(s.Start), FormatExpr(s.End))
 		} else {
 			fmt.Fprintf(sb, "%sForIn(%s in %s)\n", indent, strings.Join(s.Vars, ", "), FormatExpr(s.Iterable))
 		}

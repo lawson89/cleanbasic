@@ -149,19 +149,9 @@ func init() {
 				return fmt.Sprintf("%s.post(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
 			},
 		},
-		"mailbox.postTimeout": {
-			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.postTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
-			},
-		},
 		"mailbox.check": {
 			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
 				return fmt.Sprintf("%s.check(%s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0], true))
-			},
-		},
-		"mailbox.checkTimeout": {
-			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.checkTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0], true), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"mailbox.get": {
@@ -179,11 +169,6 @@ func init() {
 				return fmt.Sprintf("%s.count()", e.emitExpr(ci.Receiver))
 			},
 		},
-		"mailbox.isClosed": {
-			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
-				return fmt.Sprintf("%s.isClosed()", e.emitExpr(ci.Receiver))
-			},
-		},
 		"job.wait": {
 			Emit: func(e *emitter, _ *ast.CallExpr, ci *sema.CallInfo) string {
 				recvType := e.prog.ExprTypes[ci.Receiver]
@@ -191,15 +176,6 @@ func init() {
 					return fmt.Sprintf("%s.waitVoid()", e.emitExpr(ci.Receiver))
 				}
 				return fmt.Sprintf("%s.wait()", e.emitExpr(ci.Receiver))
-			},
-		},
-		"job.waitTimeout": {
-			Emit: func(e *emitter, ex *ast.CallExpr, ci *sema.CallInfo) string {
-				recvType := e.prog.ExprTypes[ci.Receiver]
-				if recvType.ElemType == nil {
-					return fmt.Sprintf("%s.waitTimeoutVoid(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
-				}
-				return fmt.Sprintf("%s.waitTimeout(%s, %s)", e.emitExpr(ci.Receiver), e.emitArgExpr(ex.Args[0], true), e.emitExpr(ex.Args[1]))
 			},
 		},
 		"job.isDone": {
@@ -304,22 +280,18 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 				e.usedBoxHelpers = true
 				return fmt.Sprintf("cbUnbox(%s.%s)", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
 			}
-			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok && targetType.Kind == sema.KindStruct {
-				return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
+			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok {
+				if targetType.Kind == sema.KindErr && ex.Field == "msg" {
+					return fmt.Sprintf("%s.Error()", e.emitExpr(ex.Target))
+				}
+				if targetType.Kind == sema.KindStruct {
+					return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
+				}
 			}
 		}
 		return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), ex.Field)
 
 	case *ast.IndexExpr:
-		targetType := e.prog.ExprTypes[ex.Target]
-		if targetType.Kind == sema.KindList {
-			e.usedListGet = true
-			return fmt.Sprintf("cbListGet(%s, %s)", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
-		}
-		if targetType.Kind == sema.KindStr {
-			e.usedStrGet = true
-			return fmt.Sprintf("cbStrGet(%s, %s)", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
-		}
 		return fmt.Sprintf("%s[%s]", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
 
 	case *ast.SliceExpr:

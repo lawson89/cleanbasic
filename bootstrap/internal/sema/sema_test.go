@@ -89,7 +89,6 @@ func TestSemanticErrors(t *testing.T) {
 		src     string
 		wantErr string
 	}{
-		{"reassign local const", "\nfn main() as int\n    const x = 10\n    x = 20\n    return 0\nend fn\n", `test.cb:4:5: semantic error: cannot reassign constant "x"`},
 		{"reassign top-level const", "\nconst MAX_LIMIT = 50\nfn main() as int\n    MAX_LIMIT = 60\n    return 0\nend fn\n", `test.cb:4:5: semantic error: cannot reassign constant "MAX_LIMIT"`},
 		{"call undefined function", "\nfn main() as int\n    dim x = unknownFunc(1, 2)\n    return x\nend fn\n", `test.cb:3:13: semantic error: undefined function "unknownFunc"`},
 		{"return wrong type", "\nfn getCount() as int\n    return \"not an int\"\nend fn\nfn main() as int\n    return getCount()\nend fn\n", `test.cb:3:5: semantic error: return type mismatch in function "getCount": expected int, got str`},
@@ -98,9 +97,9 @@ func TestSemanticErrors(t *testing.T) {
 		{"if condition not bool", "fn main() as int\n    if 123\n        return 1\n    end if\n    return 0\nend fn\n", "if condition must be bool, got int"},
 		{"function argument type mismatch", "fn add(a as int, b as int) as int\n    return a + b\nend fn\nfn main() as int\n    return add(1, \"two\")\nend fn\n", `argument 2 ("b") to function "add" has type str, expected int`},
 		{"break outside loop", "fn main() as int\n    break\n    return 0\nend fn\n", "break statement is not inside a loop"},
-		{"pass const to byref parameter", "fn inc(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    const c = 10\n    inc(c)\n    return 0\nend fn\n", `cannot mutate constant "c"`},
+		{"pass const to byref parameter", "const c = 10\nfn inc(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    inc(c)\n    return 0\nend fn\n", `cannot mutate constant "c"`},
 		{"pass literal to byref UFCS method", "type Box\n    v as int\nend type\nfn bump(byref b as Box)\n    b.v = b.v + 1\nend fn\nfn main() as int\n    Box(1).bump()\n    return 0\nend fn\n", "target expression is not mutable"},
-		{"mutate field of const struct", "type Box\n    v as int\nend type\nfn main() as int\n    const b = Box(1)\n    b.v = 2\n    return 0\nend fn\n", `cannot mutate constant "b"`},
+		{"mutate field of const struct", "type Box\n    v as int\nend type\nconst b = Box(1)\nfn main() as int\n    b.v = 2\n    return 0\nend fn\n", `cannot mutate constant "b"`},
 		{"nested fallible call rejected", "fn f() as int can error\n    return 1\nend fn\nfn g() as int can error\n    dim x = 1 + f()\n    return x\nend fn\n", "may only appear as a top-level statement expression"},
 		{"non-ident byref argument rejected", "type Box\n    v as int\nend type\nfn bump(byref x as int)\n    x = x + 1\nend fn\nfn main() as int\n    dim b = Box(1)\n    bump(b.v)\n    return 0\nend fn\n", "must be a mutable variable"},
 		{"non-existent enum variant", "enum Color\n    Red\n    Blue\nend enum\nfn main() as int\n    dim c = Color.Green\n    return 0\nend fn\n", `enum "Color" has no variant "Green"`},
@@ -111,7 +110,13 @@ func TestSemanticErrors(t *testing.T) {
 		{"unhandled fallible call inside defer block", "fn cleanup() can error\n    error(\"cleanup failed\")\nend fn\nfn helper() can error\n    defer\n        cleanup()\n    end defer\nend fn\nfn main() as int\n    try\n        helper()\n    catch e\n        print(e.msg)\n    end try\n    return 0\nend fn\n", `call to 'can error' function "cleanup" must be inside a 'try' block or a 'can error' function`},
 		{"main cannot be declared can error", "fn main() as int can error\n    return 0\nend fn\n", `function "main" cannot be declared 'can error'`},
 		{"mutate catch error binding", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        e.msg = \"mutated\"\n    end try\n    return 0\nend fn\n", `cannot mutate constant "e"`},
-		{"access invalid field on err", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        print(e.nope)\n    end try\n    return 0\nend fn\n", `err type has no field "nope"`},
+		{"access invalid field on err", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        print(e.code)\n    end try\n    return 0\nend fn\n", `err type has no field "code"`},
+		{"error() rejects 2 arguments", "fn risky() can error\n    error(\"fail\", 1)\nend fn\nfn main() as int\n    return 0\nend fn\n", `error() expects 1 argument, got 2`},
+		{"reassign numeric for counter", "fn main() as int\n    for i = 1 to 5\n        i = 10\n    end for\n    return 0\nend fn\n", `cannot reassign constant "i"`},
+		{"mailbox postTimeout removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    ch.postTimeout(1, 10)\n    return 0\nend fn\n", `no method or UFCS function "postTimeout" for receiver type mailbox[int]`},
+		{"mailbox checkTimeout removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    dim v = 0\n    ch.checkTimeout(v, 10)\n    return 0\nend fn\n", `no method or UFCS function "checkTimeout" for receiver type mailbox[int]`},
+		{"mailbox isClosed removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    dim c = ch.isClosed()\n    return 0\nend fn\n", `no method or UFCS function "isClosed" for receiver type mailbox[int]`},
+		{"job waitTimeout removed", "fn work() as int\n    return 1\nend fn\nfn main() as int\n    dim j = start job work()\n    dim v = 0\n    j.waitTimeout(v, 10)\n    return 0\nend fn\n", `no method or UFCS function "waitTimeout" for receiver type job[int]`},
 	}
 
 	for _, tc := range tests {
@@ -420,11 +425,6 @@ func TestReviewRegressionSema(t *testing.T) {
 			src:     "fn main() as int\n    dim d = dict[list[int], str]()\n    return 0\nend fn\n",
 			wantErr: "is not comparable",
 		},
-		{
-			name:    "for step 0 rejected",
-			src:     "fn main() as int\n    for i = 1 to 10 step 0\n        print(i)\n    end for\n    return 0\nend fn\n",
-			wantErr: "for loop step cannot be 0",
-		},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -485,11 +485,6 @@ end fn
 		{
 			name:    "byref shadowed by dim",
 			src:     "fn f(byref x as int)\n    dim x = 1\nend fn\n",
-			wantErr: "cannot shadow byref parameter \"x\"",
-		},
-		{
-			name:    "byref shadowed by const",
-			src:     "fn f(byref x as int)\n    if true\n        const x = 2\n    end if\nend fn\n",
 			wantErr: "cannot shadow byref parameter \"x\"",
 		},
 		{

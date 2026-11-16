@@ -55,7 +55,7 @@ Statement       ::= VarDecl | Assignment | ExprStmt
                   | IfStmt | ForStmt | WhileStmt | SelectStmt
                   | TryCatchStmt | DeferStmt | ReturnStmt | BreakStmt | ContinueStmt
 
-VarDecl         ::= ("dim" | "const") Identifier ["as" Type] "=" Expr NEWLINE
+VarDecl         ::= "dim" Identifier ["as" Type] "=" Expr NEWLINE
 Assignment      ::= Expr "=" Expr NEWLINE
 ExprStmt        ::= Expr NEWLINE
 
@@ -67,7 +67,7 @@ IfStmt          ::= "if" Expr NEWLINE Statement*
                     ["else" NEWLINE Statement*]
                     "end if" NEWLINE
 
-ForStmt         ::= "for" Identifier "=" Expr "to" Expr ["step" Expr] NEWLINE
+ForStmt         ::= "for" Identifier "=" Expr "to" Expr NEWLINE
                     Statement*
                     "end for" NEWLINE
                   | "for" IdentList "in" Expr NEWLINE
@@ -135,7 +135,7 @@ Every `.cb` file is implicitly a module. Everything is private by default; the `
 
 * **Default & Explicit Aliases (`as`):** `import "entities/hero.cb"` binds the alias `hero`. Use `import "input/button.cb" as inputBtn` to disambiguate colliding filenames.
 
-* **Go Identifier Mangling & Native Go Interop:** Declarations emit with collision-free mangled Go identifiers (`cb_<sanitizedModuleId>__<name>`, e.g., `cb_entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting `any` parameter types on Go-bound functions and automatic `CbError` wrapping for `can error` bindings).
+* **Go Identifier Mangling & Native Go Interop:** Declarations emit with collision-free mangled Go identifiers (`cb_<sanitizedModuleId>__<name>`, e.g., `cb_entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting `any` parameter types on Go-bound functions and native `error` returns for `can error` bindings).
 
 * **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `byte`, `list`, `dict`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
 
@@ -176,7 +176,7 @@ fn isAlive(p as player.Player) as bool
 end fn
 
 fn main() as int
-    const maxPotion = 50
+    dim maxPotion = 50
     dim hero = player.Player("Alice", 10)
 
     ' Cross-module function uses explicit module prefix:
@@ -214,7 +214,7 @@ end type
 
 public fn connect(ip as str) as Connection can error
     if ip == ""
-        error("IP cannot be empty", code=408)
+        error("IP cannot be empty")
     end if
     return Connection(1)
 end fn
@@ -236,7 +236,7 @@ fn startServer()
         dim records = processNetwork()
         print("Connected and processed " & records & " records.")
     catch e
-        print("Failed to start server (code=" & e.code & "): " & e.msg)
+        print("Failed to start server: " & e.msg)
     end try
 end fn
 
@@ -246,11 +246,11 @@ end fn
 
 * **Universal `&` Concatenation:** The `&` operator unconditionally coerces operands to strings (lowering to `fmt.Sprint(a) + fmt.Sprint(b)` in Go).
 
-* **`byte` Primitive Type & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, and `int.toByte()`, `byte.toInt()`, `str.toBytes()`, and `str.fromBytes(b)` convert explicitly. Read-only string indexing `s[i]` returns `byte` safely (returning `byte(0)` if out of bounds).
+* **`byte` Primitive Type & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, and `int.toByte()`, `byte.toInt()`, `str.toBytes()`, and `str.fromBytes(b)` convert explicitly. Read-only string indexing `s[i]` returns `byte` directly via Go indexing.
 
 * **Bounds-Safe Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` clamp out-of-bounds or negative indices without panicking and evaluate as r-values.
 
-* **2-Variable `for-in` Loops & `byref` Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. Local `dim`/`const`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
+* **2-Variable `for-in` Loops & `byref` Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. Local `dim`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
 
 ```
 fn demoContainers() as int
@@ -314,14 +314,13 @@ CleanBasic provides structured, data-race-safe concurrency built around typed me
 
 * **Typed Mailboxes (`mailbox[T]`):** Created with `mailbox[T]()` (default buffer capacity 64) or `mailbox[T](cap)` (including `0` for rendezvous).
   * `box.post(msg as T) can error` — sends `msg`, blocking if full and raising an error if closed.
-  * `box.postTimeout(msg as T, ms as int) as bool can error` — timed send returning `false` on timeout or raising an error if closed.
-  * `box.check(byref out as T) as bool` / `box.checkTimeout(byref out as T, ms as int) as bool` — non-blocking / timed atomic receive into `out`.
+  * `box.check(byref out as T) as bool` — non-blocking atomic receive into `out`.
   * `box.get() as T can error` — blocking receive; raises an error when closed and empty.
-  * `box.close()`, `box.count() as int`, `box.isClosed() as bool`, and `for msg in box ... end for` (drains until closed and empty).
+  * `box.close()`, `box.count() as int`, and `for msg in box ... end for` (drains until closed and empty).
 * **Background Jobs (`start job`, `job`, `job[T]`):**
   * `start job fnCall(...)` works both as a standalone statement and as an expression returning `job` (for void functions) or `job[T]`.
   * Arguments are evaluated eagerly by value before spawning the goroutine, and `byref` parameters are rejected at compile time.
-  * `j.wait() [as T] can error`, `j.waitTimeout([byref out as T,] ms as int) as bool can error`, and `j.isDone() as bool` await completion and propagate errors or recovered panics.
+  * `j.wait() [as T] can error` and `j.isDone() as bool` await completion and propagate errors or recovered panics.
 
 ### 7. Auto-Boxed Recursive Structs (Zero-Nil Value Semantics)
 

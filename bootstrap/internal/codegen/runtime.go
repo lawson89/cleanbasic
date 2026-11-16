@@ -3,36 +3,6 @@ package codegen
 import "strings"
 
 const (
-	cbErrorRuntimeHelper = `type CbError struct {
-	msg  string
-	code int64
-	file string
-	line int64
-}
-
-func (e CbError) Error() string { return e.msg }
-
-`
-
-	cbListGetRuntimeHelper = `func cbListGet[T any](s []T, idx int64) T {
-	var zero T
-	if idx < 0 || int(idx) >= len(s) {
-		return zero
-	}
-	return s[idx]
-}
-
-`
-
-	cbStrGetRuntimeHelper = `func cbStrGet(s string, idx int64) byte {
-	if idx < 0 || int(idx) >= len(s) {
-		return 0
-	}
-	return s[idx]
-}
-
-`
-
 	cbSliceStrRuntimeHelper = `func cbSliceStr(s string, start, end int64) string {
 	n := int64(len(s))
 	if start < 0 {
@@ -144,7 +114,7 @@ func (m *CbMailbox[T]) post(v T) error {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return CbError{msg: "cannot post to closed mailbox"}
+		return errors.New("cannot post to closed mailbox")
 	}
 	done := m.done
 	m.mu.Unlock()
@@ -152,37 +122,7 @@ func (m *CbMailbox[T]) post(v T) error {
 	case m.ch <- v:
 		return nil
 	case <-done:
-		return CbError{msg: "cannot post to closed mailbox"}
-	}
-}
-
-func (m *CbMailbox[T]) postTimeout(v T, ms int64) (bool, error) {
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		return false, CbError{msg: "cannot post to closed mailbox"}
-	}
-	done := m.done
-	m.mu.Unlock()
-	if ms <= 0 {
-		select {
-		case m.ch <- v:
-			return true, nil
-		case <-done:
-			return false, CbError{msg: "cannot post to closed mailbox"}
-		default:
-			return false, nil
-		}
-	}
-	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case m.ch <- v:
-		return true, nil
-	case <-done:
-		return false, CbError{msg: "cannot post to closed mailbox"}
-	case <-timer.C:
-		return false, nil
+		return errors.New("cannot post to closed mailbox")
 	}
 }
 
@@ -192,29 +132,6 @@ func (m *CbMailbox[T]) check(out *T) bool {
 		*out = v
 		return true
 	default:
-		return false
-	}
-}
-
-func (m *CbMailbox[T]) checkTimeout(out *T, ms int64) bool {
-	if ms <= 0 {
-		return m.check(out)
-	}
-	select {
-	case v := <-m.ch:
-		*out = v
-		return true
-	default:
-	}
-	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case v := <-m.ch:
-		*out = v
-		return true
-	case <-m.done:
-		return m.check(out)
-	case <-timer.C:
 		return false
 	}
 }
@@ -234,7 +151,7 @@ func (m *CbMailbox[T]) get() (T, error) {
 			return v, nil
 		default:
 			var zero T
-			return zero, CbError{msg: "mailbox is closed and empty"}
+			return zero, errors.New("mailbox is closed and empty")
 		}
 	}
 }
@@ -252,13 +169,6 @@ func (m *CbMailbox[T]) count() int64 {
 	return int64(len(m.ch))
 }
 
-func (m *CbMailbox[T]) isClosed() bool {
-	m.mu.Lock()
-	c := m.closed
-	m.mu.Unlock()
-	return c
-}
-
 `
 
 	cbJobRuntimeHelper = `type CbJob[T any] struct {
@@ -273,7 +183,7 @@ func cbStartJob[T any](fn func() (T, error)) *CbJob[T] {
 		defer close(j.done)
 		defer func() {
 			if r := recover(); r != nil {
-				j.err = CbError{msg: fmt.Sprint(r)}
+				j.err = fmt.Errorf("%v", r)
 			}
 		}()
 		j.val, j.err = fn()
@@ -291,41 +201,6 @@ func (j *CbJob[T]) waitVoid() error {
 	return j.err
 }
 
-func (j *CbJob[T]) waitTimeout(out *T, ms int64) (bool, error) {
-	if ms <= 0 {
-		select {
-		case <-j.done:
-			if j.err != nil {
-				return false, j.err
-			}
-			if out != nil {
-				*out = j.val
-			}
-			return true, nil
-		default:
-			return false, nil
-		}
-	}
-	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-j.done:
-		if j.err != nil {
-			return false, j.err
-		}
-		if out != nil {
-			*out = j.val
-		}
-		return true, nil
-	case <-timer.C:
-		return false, nil
-	}
-}
-
-func (j *CbJob[T]) waitTimeoutVoid(ms int64) (bool, error) {
-	return j.waitTimeout(nil, ms)
-}
-
 func (j *CbJob[T]) isDone() bool {
 	select {
 	case <-j.done:
@@ -340,26 +215,14 @@ func (j *CbJob[T]) isDone() bool {
 
 func (e *emitter) emitRuntimeHelpers() string {
 	if e.usedMailbox {
+		e.useImport("errors")
 		e.useImport("sync")
-		e.useImport("time")
-		e.usedCbError = true
 	}
 	if e.usedJob {
 		e.useImport("fmt")
-		e.useImport("time")
-		e.usedCbError = true
 	}
 
 	var helpers strings.Builder
-	if e.usedCbError {
-		helpers.WriteString(cbErrorRuntimeHelper)
-	}
-	if e.usedListGet {
-		helpers.WriteString(cbListGetRuntimeHelper)
-	}
-	if e.usedStrGet {
-		helpers.WriteString(cbStrGetRuntimeHelper)
-	}
 	if e.usedSliceStr {
 		helpers.WriteString(cbSliceStrRuntimeHelper)
 	}

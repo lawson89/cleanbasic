@@ -9,6 +9,7 @@ const (
 	btElem
 	btKey
 	btVal
+	btJobResult
 )
 
 type builtinTypeRef struct {
@@ -19,11 +20,12 @@ type builtinTypeRef struct {
 func bt(t Type) builtinTypeRef { return builtinTypeRef{kind: btConcrete, concrete: t} }
 
 var (
-	btListStr  = bt(Type{Kind: KindList, ElemType: &StrType})
-	btListByte = bt(Type{Kind: KindList, ElemType: &ByteType})
-	btElemRef  = builtinTypeRef{kind: btElem}
-	btKeyRef   = builtinTypeRef{kind: btKey}
-	btValRef   = builtinTypeRef{kind: btVal}
+	btListStr      = bt(Type{Kind: KindList, ElemType: &StrType})
+	btListByte     = bt(Type{Kind: KindList, ElemType: &ByteType})
+	btElemRef      = builtinTypeRef{kind: btElem}
+	btKeyRef       = builtinTypeRef{kind: btKey}
+	btValRef       = builtinTypeRef{kind: btVal}
+	btJobResultRef = builtinTypeRef{kind: btJobResult}
 )
 
 func (r builtinTypeRef) resolve(recv Type) Type {
@@ -34,6 +36,11 @@ func (r builtinTypeRef) resolve(recv Type) Type {
 		return *recv.KeyType
 	case btVal:
 		return *recv.ValType
+	case btJobResult:
+		if recv.ElemType != nil {
+			return *recv.ElemType
+		}
+		return VoidType
 	default:
 		return r.concrete
 	}
@@ -46,7 +53,6 @@ type builtinMethodSpec struct {
 	MutatesReceiver bool
 	FirstArgByRef   bool
 	CanError        bool
-	ResolveCustom   func(recv Type) (params []Type, ret Type, firstArgByRef bool)
 }
 
 var staticStrMethods = map[string]builtinMethodSpec{
@@ -88,36 +94,14 @@ var instanceBuiltinMethods = map[TypeKind]map[string]builtinMethodSpec{
 		"toInt": {MethodName: "byte.toInt", Return: bt(IntType)},
 	},
 	KindMailbox: {
-		"post":         {MethodName: "mailbox.post", Params: []builtinTypeRef{btElemRef}, Return: bt(VoidType), CanError: true},
-		"postTimeout":  {MethodName: "mailbox.postTimeout", Params: []builtinTypeRef{btElemRef, bt(IntType)}, Return: bt(BoolType), CanError: true},
-		"check":        {MethodName: "mailbox.check", Params: []builtinTypeRef{btElemRef}, Return: bt(BoolType), FirstArgByRef: true},
-		"checkTimeout": {MethodName: "mailbox.checkTimeout", Params: []builtinTypeRef{btElemRef, bt(IntType)}, Return: bt(BoolType), FirstArgByRef: true},
-		"get":          {MethodName: "mailbox.get", Return: btElemRef, CanError: true},
-		"close":        {MethodName: "mailbox.close", Return: bt(VoidType)},
-		"count":        {MethodName: "mailbox.count", Return: bt(IntType)},
-		"isClosed":     {MethodName: "mailbox.isClosed", Return: bt(BoolType)},
+		"post":  {MethodName: "mailbox.post", Params: []builtinTypeRef{btElemRef}, Return: bt(VoidType), CanError: true},
+		"check": {MethodName: "mailbox.check", Params: []builtinTypeRef{btElemRef}, Return: bt(BoolType), FirstArgByRef: true},
+		"get":   {MethodName: "mailbox.get", Return: btElemRef, CanError: true},
+		"close": {MethodName: "mailbox.close", Return: bt(VoidType)},
+		"count": {MethodName: "mailbox.count", Return: bt(IntType)},
 	},
 	KindJob: {
-		"wait": {
-			MethodName: "job.wait",
-			CanError:   true,
-			ResolveCustom: func(recv Type) ([]Type, Type, bool) {
-				if recv.ElemType != nil {
-					return nil, *recv.ElemType, false
-				}
-				return nil, VoidType, false
-			},
-		},
-		"waitTimeout": {
-			MethodName: "job.waitTimeout",
-			CanError:   true,
-			ResolveCustom: func(recv Type) ([]Type, Type, bool) {
-				if recv.ElemType == nil {
-					return []Type{IntType}, BoolType, false
-				}
-				return []Type{*recv.ElemType, IntType}, BoolType, true
-			},
-		},
+		"wait":   {MethodName: "job.wait", Return: btJobResultRef, CanError: true},
 		"isDone": {MethodName: "job.isDone", Return: bt(BoolType)},
 	},
 }
@@ -130,19 +114,14 @@ func (a *analyzer) applyBuiltinMethod(e *ast.CallExpr, recvExpr ast.Expr, recvTy
 	}
 
 	var params []Type
-	var retType Type
-	firstArgByRef := spec.FirstArgByRef
-	if spec.ResolveCustom != nil {
-		params, retType, firstArgByRef = spec.ResolveCustom(recvType)
-	} else {
-		if len(spec.Params) > 0 {
-			params = make([]Type, len(spec.Params))
-			for i, p := range spec.Params {
-				params[i] = p.resolve(recvType)
-			}
+	if len(spec.Params) > 0 {
+		params = make([]Type, len(spec.Params))
+		for i, p := range spec.Params {
+			params[i] = p.resolve(recvType)
 		}
-		retType = spec.Return.resolve(recvType)
 	}
+	retType := spec.Return.resolve(recvType)
+	firstArgByRef := spec.FirstArgByRef
 
 	if err := a.expectPositionalArgs(e, spec.MethodName, scope, params...); err != nil {
 		return VoidType, err

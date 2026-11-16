@@ -132,6 +132,16 @@ func TestSyntaxErrorReporting(t *testing.T) {
 			src:     "fn main()\n    dim d = {}\nend fn\n",
 			wantSub: "empty dict literal '{}' is not allowed",
 		},
+		{
+			name:    "local const rejected",
+			src:     "fn main()\n    const x = 1\nend fn\n",
+			wantSub: "unexpected token const",
+		},
+		{
+			name:    "for step rejected",
+			src:     "fn main()\n    for i = 1 to 10 step 2\n    end for\nend fn\n",
+			wantSub: "expected newline after for loop header",
+		},
 	}
 
 	for _, tc := range tests {

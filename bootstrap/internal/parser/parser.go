@@ -616,7 +616,7 @@ func (p *Parser) parseStatement() (ast.Statement, error) {
 	tok := p.cur()
 
 	switch tok.Kind {
-	case token.DIM, token.CONST:
+	case token.DIM:
 		return p.parseVarDecl()
 	case token.IF:
 		return p.parseIfStmt()
@@ -649,10 +649,9 @@ func (p *Parser) parseStatement() (ast.Statement, error) {
 	}
 }
 
-// VarDecl ::= ("dim" | "const") Identifier ["as" Type] "=" Expr NEWLINE
+// VarDecl ::= "dim" Identifier ["as" Type] "=" Expr NEWLINE
 func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {
 	kwTok := p.advance()
-	isConst := kwTok.Kind == token.CONST
 
 	nameTok, err := p.expectIdent("in variable declaration")
 	if err != nil {
@@ -673,7 +672,7 @@ func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {
 	if err := p.expectNewline("variable declaration"); err != nil {
 		return nil, err
 	}
-	return &ast.VarDecl{Pos: kwTok.Pos, IsConst: isConst, Name: nameTok.Lexeme, Type: explicitType, Value: val}, nil
+	return &ast.VarDecl{Pos: kwTok.Pos, Name: nameTok.Lexeme, Type: explicitType, Value: val}, nil
 }
 
 // Assignment ::= Expr "=" Expr NEWLINE
@@ -770,7 +769,7 @@ func (p *Parser) parseIfStmt() (*ast.IfStmt, error) {
 	return &ast.IfStmt{Pos: ifTok.Pos, Cond: cond, ThenBody: thenBody, ElseIfs: elseIfs, ElseBody: elseBody, HasElse: hasElse}, nil
 }
 
-// ForStmt ::= "for" Identifier "=" Expr "to" Expr ["step" Expr] NEWLINE Statement* "end for" NEWLINE
+// ForStmt ::= "for" Identifier "=" Expr "to" Expr NEWLINE Statement* "end for" NEWLINE
 //
 //	| "for" IdentList "in" Expr NEWLINE Statement* "end for" NEWLINE
 func (p *Parser) parseForStmt() (*ast.ForStmt, error) {
@@ -784,7 +783,7 @@ func (p *Parser) parseForStmt() (*ast.ForStmt, error) {
 		return nil, err
 	}
 
-	// Range loop: for i = start to end [step s]
+	// Range loop: for i = start to end
 	if p.match(token.ASSIGN) {
 		startExpr, err := p.parseExpr()
 		if err != nil {
@@ -797,20 +796,12 @@ func (p *Parser) parseForStmt() (*ast.ForStmt, error) {
 		if err != nil {
 			return nil, err
 		}
-		var stepExpr ast.Expr
-		if p.match(token.STEP) {
-			stepExpr, err = p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-		}
 		return p.finishForStmt(&ast.ForStmt{
 			Pos:     forTok.Pos,
 			IsRange: true,
 			VarName: firstIdent.Lexeme,
 			Start:   startExpr,
 			End:     endExpr,
-			Step:    stepExpr,
 		}, "for loop header")
 	}
 

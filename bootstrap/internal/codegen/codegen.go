@@ -82,15 +82,12 @@ type emitter struct {
 	currentFnSym        *sema.FnSymbol
 	imports             map[string]bool
 	goImports           map[string]string
-	usedListGet         bool
-	usedStrGet          bool
 	usedSliceStr        bool
 	usedSliceList       bool
 	usedDictGet         bool
 	usedDictContains    bool
 	usedStrToInt        bool
 	usedStrFromCharCode bool
-	usedCbError         bool
 	usedBoxHelpers      bool
 	usedMailbox         bool
 	usedJob             bool
@@ -279,7 +276,6 @@ func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
 	retType := ""
 	hasRet := fnSym != nil && !fnSym.ReturnType.IsVoid()
 	if fn.CanError {
-		e.usedCbError = true
 		if hasRet {
 			retType = fmt.Sprintf(" (%s, error)", e.goSemaType(fnSym.ReturnType))
 		} else {
@@ -291,21 +287,7 @@ func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
 
 	sb.WriteString(fmt.Sprintf("func %s(%s)%s {\n", name, strings.Join(params, ", "), retType))
 	callExpr := fmt.Sprintf("%s(%s)", fn.GoTarget, strings.Join(callArgs, ", "))
-	if fn.CanError {
-		if hasRet {
-			sb.WriteString(fmt.Sprintf("\t_res, _err := %s\n", callExpr))
-			sb.WriteString("\tif _err != nil {\n")
-			sb.WriteString(fmt.Sprintf("\t\treturn %s, CbError{msg: _err.Error()}\n", e.goSemaZeroValue(fnSym.ReturnType)))
-			sb.WriteString("\t}\n")
-			sb.WriteString("\treturn _res, nil\n")
-		} else {
-			sb.WriteString(fmt.Sprintf("\t_err := %s\n", callExpr))
-			sb.WriteString("\tif _err != nil {\n")
-			sb.WriteString("\t\treturn CbError{msg: _err.Error()}\n")
-			sb.WriteString("\t}\n")
-			sb.WriteString("\treturn nil\n")
-		}
-	} else if hasRet {
+	if fn.CanError || hasRet {
 		sb.WriteString(fmt.Sprintf("\treturn %s\n", callExpr))
 	} else {
 		sb.WriteString(fmt.Sprintf("\t%s\n", callExpr))
@@ -357,7 +339,6 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 
 	retType := ""
 	if fn.CanError {
-		e.usedCbError = true
 		if fnSym != nil && !fnSym.ReturnType.IsVoid() {
 			retType = fmt.Sprintf(" (%s, error)", e.goSemaType(fnSym.ReturnType))
 		} else {
@@ -408,8 +389,7 @@ func (e *emitter) goSemaType(t sema.Type) string {
 	case sema.KindAny:
 		return "any"
 	case sema.KindErr:
-		e.usedCbError = true
-		return "CbError"
+		return "error"
 	case sema.KindStruct, sema.KindEnum:
 		name := t.Name
 		if t.GoName != "" {
@@ -456,8 +436,7 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 	case sema.KindByte:
 		return "byte(0)"
 	case sema.KindErr:
-		e.usedCbError = true
-		return "CbError{}"
+		return "nil"
 	case sema.KindList, sema.KindDict, sema.KindMailbox, sema.KindJob:
 		return "nil"
 	case sema.KindEnum:

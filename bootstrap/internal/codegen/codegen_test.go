@@ -153,7 +153,7 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 	src := strings.Join([]string{
 		"fn mightFail(n as int) as int can error",
 		"    if n < 0",
-		fmt.Sprintf("        error(%q, n)", "negative"),
+		fmt.Sprintf("        error(%q)", "negative"),
 		"    end if",
 		"    return n * 10",
 		"end fn",
@@ -162,7 +162,7 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		"    try",
 		"        return mightFail(n)",
 		"    catch e",
-		"        return e.code",
+		"        return -1",
 		"    end try",
 		"end fn",
 		"",
@@ -214,7 +214,6 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		"        print(cNeg)",
 		"    catch e",
 		"        print(e.msg)",
-		"        print(e.code)",
 		"    end try",
 		"    return 0",
 		"end fn",
@@ -230,7 +229,7 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 	}
 
 	got := runGeneratedGo(t, goCode)
-	want := "30\n-7\n0\n1\n2\n106\nnegative\n-1"
+	want := "30\n-1\n0\n1\n2\n106\nnegative"
 	if got != want {
 		t.Errorf("phase4 edge cases output = %q, want %q\ngo:\n%s", got, want, goCode)
 	}
@@ -438,12 +437,11 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"    end if",
 
 		"    dim endCalls = 0",
-		"    dim stepCalls = 0",
 		"    dim sum = 0",
-		"    for i = 1 to countCall(endCalls, 5) step countCall(stepCalls, 2)",
+		"    for i = 1 to countCall(endCalls, 5)",
 		"        sum = sum + i",
 		"    end for",
-		`    print(sum & ":" & endCalls & ":" & stepCalls)`,
+		`    print(sum & ":" & endCalls)`,
 		"",
 		`    dim u = User("Ada", 7)`,
 		"    print(json.stringify(u))",
@@ -485,7 +483,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 	want := strings.Join([]string{
 		"sc-and-ok",
 		"sc-or-ok",
-		"9:1:1",
+		"15:1",
 		"{\"name\":\"Ada\",\"func\":7}",
 		"{\"k\":1}",
 		"inner=99",

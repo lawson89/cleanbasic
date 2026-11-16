@@ -71,7 +71,7 @@ fn main() as int
     e.blk.expr.tag = 77
     print("mutual=" & e.blk.expr.tag)
 
-    ' 3. Mailbox check, postTimeout, close, error on closed post & empty get
+    ' 3. Mailbox check, post, close, error on closed post & empty get
     dim mb = mailbox[int](2)
     dim outVal = 0
     dim ok = mb.check(outVal)
@@ -127,14 +127,12 @@ fn main() as int
         print("job wait err=" & ex.msg)
     end try
 
-    ' 6. Mailbox for-in drain & job waitTimeout / isDone
+    ' 6. Mailbox for-in drain & job wait / isDone
     dim q = mailbox[int](4)
     try
-        dim posted = q.postTimeout(100, 50)
-        if posted
-            q.post(200)
-            q.post(300)
-        end if
+        q.post(100)
+        q.post(200)
+        q.post(300)
         q.close()
     catch ex
         print("q err=" & ex.msg)
@@ -146,10 +144,9 @@ fn main() as int
     print("drain=" & str.join(parts, ","))
 
     dim qj = start job quickJob(41)
-    dim qOut = 0
     try
-        dim finished = qj.waitTimeout(qOut, 1000)
-        print("done=" & (finished and qj.isDone() and qOut == 42))
+        dim qOut = qj.wait()
+        print("done=" & (qj.isDone() and qOut == 42))
     catch ex
         print("qj err=" & ex.msg)
     end try
