@@ -136,3 +136,40 @@ func TestSyntaxErrorReporting(t *testing.T) {
 		})
 	}
 }
+
+func TestParserTier1GoInteropByteAndSlicing(t *testing.T) {
+	src := `go import "os" as stdos
+go
+func helper() int64 { return 1 }
+end go
+public type Opaque = go "CbOpaque"
+public fn readIt(p as str) as list[byte] can error = go "stdos.ReadFile"
+fn main() as int
+    dim a = s[1:3]
+    dim b = s[:2]
+    dim c = s[2:]
+    dim d = s[:]
+    return 0
+end fn
+`
+
+	prog, err := Parse(src, "tier1.cb")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	dump := ast.Dump(prog)
+	for _, want := range []string{
+		`GoImport("os" as stdos)`,
+		"GoBlock(",
+		`public TypeDecl(Opaque = go "CbOpaque")`,
+		`public FnDecl(readIt(p as str) as list[byte] can error = go "stdos.ReadFile")`,
+		"s[1:3]",
+		"s[:2]",
+		"s[2:]",
+		"s[:]",
+	} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("ast.Dump missing %q in:\n%s", want, dump)
+		}
+	}
+}

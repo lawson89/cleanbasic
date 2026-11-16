@@ -1,0 +1,69 @@
+go import "bytes"
+go import "fmt"
+go import "io"
+go import "os"
+go import "os/exec"
+
+public type ExecResult
+	exitCode as int
+	stdout as str
+	stderr as str
+end type
+
+go
+func cbStdOsArgs() []string {
+	if len(os.Args) <= 1 {
+		return nil
+	}
+	return os.Args[1:]
+}
+
+func cbStdOsExit(code int64) {
+	os.Exit(int(code))
+}
+
+func cbStdOsExec(cmd string, args []string) (cb_std_os__ExecResult, error) {
+	c := exec.Command(cmd, args...)
+	var outBuf, errBuf bytes.Buffer
+	c.Stdout = &outBuf
+	c.Stderr = &errBuf
+	err := c.Run()
+	var exitCode int64
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = int64(exitErr.ExitCode())
+			err = nil
+		}
+	}
+	return cb_std_os__ExecResult{
+		Cb_exitCode: exitCode,
+		Cb_stdout:   outBuf.String(),
+		Cb_stderr:   errBuf.String(),
+	}, err
+}
+
+func cbStdOsReadStdin() (string, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func cbStdOsEprint(msg string) {
+	fmt.Fprint(os.Stderr, msg)
+}
+
+func cbStdOsEprintln(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+}
+end go
+
+public fn args() as list[str] = go "cbStdOsArgs"
+public fn exit(code as int) = go "cbStdOsExit"
+public fn getEnv(key as str) as str = go "os.Getenv"
+public fn exec(cmd as str, args as list[str]) as ExecResult can error = go "cbStdOsExec"
+public fn readStdin() as str can error = go "cbStdOsReadStdin"
+public fn cwd() as str can error = go "os.Getwd"
+public fn eprint(msg as str) = go "cbStdOsEprint"
+public fn eprintln(msg as str) = go "cbStdOsEprintln"

@@ -8,26 +8,30 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
 - Do NOT implement legacy C++ features (no C++ headers, no `EXPECT_CPP` assertions, no LSP server in the bootstrap compiler).
 
 ## Architectural & Coding Rules
-1. **Zero External Dependencies:** Use ONLY the Go standard library (`fmt`, `os`, `strings`, `strconv`, `path/filepath`, `os/exec`) in both the transpiler codebase and the emitted `main.go` output.
-2. **Self-Hosting Ready Style:** Write flat, procedural, data-oriented Go code. Use plain structs, enums, and free functions. Avoid complex reflection, deep OOP hierarchies, or visitor-pattern boilerplate so the transpiler can be easily ported to CleanBasic itself later.
+1. **Zero External Dependencies:** Use ONLY the Go standard library (`fmt`, `os`, `strings`, `strconv`, `path/filepath`, `os/exec`, `slices`, `maps`, etc.) in both the transpiler codebase and the emitted `main.go` output.
+2. **Idiomatic Go for Clarity, Bounded by Self-Hosting Portability:** Write idiomatic, readable Go (1.22+) so the bootstrap compiler is as clear and maintainable as possible (using standard library helpers like `slices`, `maps`, `strings`, `fmt`, receiver methods that map cleanly to CleanBasic UFCS, and clean data structures). Avoid Go features that CleanBasic does not support and has no straightforward self-hosting mapping—specifically: runtime `reflect`, complex interface hierarchies / visitor-pattern double-dispatch, ubiquitous closures capturing mutable outer scope, channel/goroutine concurrency inside the compiler pipeline, or `unsafe`. (Existing shallow AST marker interfaces `ast.Expr` / `ast.Statement` / `ast.TopLevelDecl` are fine in Go because they map cleanly to tagged/arena structs in CleanBasic.) Also avoid ternary-like simulated one-liners where explicit `if/else` blocks are clearer.
 3. **Permanent Language Simplifications:**
    - **One-Way Bottom-Up Inference:** Expressions compute their own types bottom-up. Untyped empty collection literals (`dim x = []` or `foo([])`) are compile errors; require `dim x as list[int] = []`.
-   - **Local & Prelude UFCS Only:** `obj.method(args)` resolves ONLY to methods in the built-in prelude (`str`, `list`, `dict`) or functions declared in the *same* `.cb` module. Cross-module calls must be module-qualified (`modAlias.fnName(obj, args)`).
-   - **Lexer-Desugared String Interpolation:** `$"Hello {user.name}!"` restricts `{...}` to dotted identifier paths (`QualifiedIdent`) and simple `[index]` access (`{parts[0]}` / `{parts[idx]}`), and is desugared directly in the lexer into `"Hello " & user.name & "!"` tokens.
-4. **Go Target Emitter Hygiene:**
-   - CleanBasic `int` maps to `int64`; `float` maps to `float64`; `str` maps to `string`; `bool` maps to `bool`.
+   - **Defining-Module & Local UFCS:** `obj.method(args)` resolves to methods in the built-in prelude (`str`, `int`, `byte`, `list`, `dict`), functions declared in the *same* `.cb` module, or `public fn`s declared in the defining module of `obj`'s `type`/`enum`.
+   - **Full-Expression String Interpolation:** `$"Hello {user.name} ({a + b})!"` supports arbitrary CleanBasic expressions inside `{...}` (handling nested braces and nested string/interpolated literals) and is desugared in the lexer into parenthesized `(expr)` tokens joined with `&`.
+   - **No `byref` Shadowing:** Local `dim`/`const`, `for` loop variables, and `catch` variables may not shadow an enclosing function's `byref` parameter.
+4. **Go Target Emitter Hygiene & Stdlib Modules:**
+   - CleanBasic `int` maps to `int64`; `float` maps to `float64`; `str` maps to `string`; `bool` maps to `bool`; `byte` maps to `byte` (`uint8`); `list[byte]` maps to `[]byte`.
+   - Standard library modules (`std/fs`, `std/os`, `std/json`, `std/cli`, `std/regex`) live as real `.cb` files in `std/` using CleanBasic Go interop (`go import`, `go ... end go`, `type ... = go "..."`, `fn ... = go "..."`) or pure CleanBasic (`std/cli.cb`).
    - Emit `_ = varName` after local variable declarations so Go's unused-variable rule never breaks valid CleanBasic programs.
-   - Track used standard library packages (`fmt`, `strings`, `os`, etc.) during code generation and emit only the imports actually referenced in `main.go`.
+   - Emit column-1 `//line <filepath>:<line>` directives before statements by default so Go stack traces and debuggers point directly to `.cb` source lines.
+   - Track used standard library packages (`fmt`, `strings`, `os`, etc.) and `go import` declarations during code generation and emit only the imports actually referenced in `main.go`.
    - Lower `can error` functions to `(T, error)` (or `error` for void), `defer ... end defer` to `defer func() { ... }()`, and `try / catch` to scoped `{ ... }` blocks with `goto _catch_N`.
 
 ## Package Layout
 - `cmd/cb/main.go` — CLI entrypoint (`cb run <file.cb>`, `cb build <file.cb> [-o out]`, `cb check <file.cb>`, `--dump-ast`)
-- `internal/token/` — Token definitions, keyword lookup, and two-word keyword coalescing (`else if`, `end fn`, `select case`, etc.)
+- `internal/token/` — Token definitions, keyword lookup, and two-word keyword coalescing (`else if`, `end fn`, `go import`, `end go`, `select case`, etc.)
 - `internal/ast/` — AST node definitions for declarations, statements, expressions, and types
-- `internal/lexer/` — Scanner with line/col tracking, `'` and `#` comments, and `$"..."` desugaring
+- `internal/lexer/` — Scanner with line/col tracking, `'` and `#` comments, `go ... end go` raw blocks, and `$"..."` desugaring
 - `internal/parser/` — Recursive-descent parser matching the EBNF grammar
-- `internal/sema/` — Symbol tables, module import graph, type checking, mutability, and fallibility verification
-- `internal/codegen/` — Single-file procedural Go code emitter
+- `internal/sema/` — Symbol tables, module import graph (including `std/*.cb` discovery), type checking, mutability, `byref` shadowing checks, and fallibility verification
+- `internal/codegen/` — Single-file procedural Go code emitter with `//line` directives
+- `../std/` — Standard library modules (`fs.cb`, `os.cb`, `json.cb`, `cli.cb`, `regex.cb`)
 
 ## Verification Workflow
 - Run `go test ./...` after every change.

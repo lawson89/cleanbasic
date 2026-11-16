@@ -42,7 +42,7 @@ const (
 	TYPE     Kind = "type"
 	ENUM     Kind = "enum"
 	FN       Kind = "fn"
-	EXTERN   Kind = "extern"
+	GO       Kind = "go"
 	BYREF    Kind = "byref"
 	IF       Kind = "if"
 	ELSE     Kind = "else"
@@ -67,6 +67,7 @@ const (
 	FLOAT Kind = "float"
 	STR   Kind = "str"
 	BOOL  Kind = "bool"
+	BYTE  Kind = "byte"
 	ERR   Kind = "err"
 	LIST  Kind = "list"
 	DICT  Kind = "dict"
@@ -87,9 +88,14 @@ const (
 	END_DEFER   Kind = "end defer"
 	END_TYPE    Kind = "end type"
 	END_ENUM    Kind = "end enum"
+	END_GO      Kind = "end go"
+	GO_IMPORT   Kind = "go import"
 	SELECT_CASE Kind = "select case"
 	CASE_ELSE   Kind = "case else"
 	CAN_ERROR   Kind = "can error"
+
+	// Verbatim Go block token
+	GO_BLOCK Kind = "GO_BLOCK"
 
 	// Operators and punctuation
 	ASSIGN   Kind = "="
@@ -142,7 +148,7 @@ var singleWordKeywords = map[string]Kind{
 	"type":     TYPE,
 	"enum":     ENUM,
 	"fn":       FN,
-	"extern":   EXTERN,
+	"go":       GO,
 	"byref":    BYREF,
 	"if":       IF,
 	"else":     ELSE,
@@ -165,6 +171,7 @@ var singleWordKeywords = map[string]Kind{
 	"float":    FLOAT,
 	"str":      STR,
 	"bool":     BOOL,
+	"byte":     BYTE,
 	"err":      ERR,
 	"list":     LIST,
 	"dict":     DICT,
@@ -189,6 +196,8 @@ var twoWordKeywords = map[twoWordKey]Kind{
 	{first: "end", second: "defer"}:   END_DEFER,
 	{first: "end", second: "type"}:    END_TYPE,
 	{first: "end", second: "enum"}:    END_ENUM,
+	{first: "end", second: "go"}:      END_GO,
+	{first: "go", second: "import"}:   GO_IMPORT,
 	{first: "select", second: "case"}: SELECT_CASE,
 	{first: "case", second: "else"}:   CASE_ELSE,
 	{first: "can", second: "error"}:   CAN_ERROR,

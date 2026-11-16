@@ -35,7 +35,7 @@ type Expr interface {
 type TypeKind string
 
 const (
-	TypeBasic     TypeKind = "basic"     // int, float, str, bool, err
+	TypeBasic     TypeKind = "basic"     // int, float, str, bool, byte, err
 	TypeList      TypeKind = "list"      // list[ElemType]
 	TypeDict      TypeKind = "dict"      // dict[KeyType, ValType]
 	TypeQualified TypeKind = "qualified" // Player or mod.Player
@@ -85,6 +85,25 @@ type ImportDecl struct {
 func (d *ImportDecl) DeclPos() token.Position { return d.Pos }
 func (d *ImportDecl) declNode()               {}
 
+// GoImportDecl represents: go import "pkg" [as alias]
+type GoImportDecl struct {
+	Pos   token.Position
+	Path  string
+	Alias string
+}
+
+func (d *GoImportDecl) DeclPos() token.Position { return d.Pos }
+func (d *GoImportDecl) declNode()               {}
+
+// GoBlockDecl represents a top-level raw Go code block: go ... end go
+type GoBlockDecl struct {
+	Pos  token.Position
+	Code string
+}
+
+func (d *GoBlockDecl) DeclPos() token.Position { return d.Pos }
+func (d *GoBlockDecl) declNode()               {}
+
 // ConstDecl represents: [public] const Name [as Type] = Value
 type ConstDecl struct {
 	Pos    token.Position
@@ -104,11 +123,12 @@ type FieldDecl struct {
 	Type TypeExpr
 }
 
-// TypeDecl represents: [public] type Name ... end type
+// TypeDecl represents: [public] type Name ... end type or [public] type Name = go "GoType"
 type TypeDecl struct {
 	Pos    token.Position
 	Public bool
 	Name   string
+	GoName string
 	Fields []FieldDecl
 }
 
@@ -134,15 +154,15 @@ type Param struct {
 	Type  TypeExpr
 }
 
-// FnDecl represents a function or extern function declaration.
+// FnDecl represents a function or Go-bound function declaration.
 type FnDecl struct {
 	Pos        token.Position
 	Public     bool
-	Extern     bool
 	Name       string
 	Params     []Param
 	ReturnType *TypeExpr // nil if void
 	CanError   bool
+	GoTarget   string
 	Body       []Statement
 }
 
@@ -424,6 +444,17 @@ type IndexExpr struct {
 func (e *IndexExpr) ExprPos() token.Position { return e.Pos }
 func (e *IndexExpr) exprNode()               {}
 
+// SliceExpr represents postfix slicing: Target[Start:End]
+type SliceExpr struct {
+	Pos    token.Position
+	Target Expr
+	Start  Expr // nil if omitted (e.g. x[:end])
+	End    Expr // nil if omitted (e.g. x[start:])
+}
+
+func (e *SliceExpr) ExprPos() token.Position { return e.Pos }
+func (e *SliceExpr) exprNode()               {}
+
 // CallArg represents an argument in a function/method call, supporting optional named syntax (e.g. code=408).
 type CallArg struct {
 	Pos   token.Position
@@ -462,6 +493,16 @@ func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 			fmt.Fprintf(sb, "%sImport(%q)\n", indent, d.Path)
 		}
 
+	case *GoImportDecl:
+		if d.Alias != "" {
+			fmt.Fprintf(sb, "%sGoImport(%q as %s)\n", indent, d.Path, d.Alias)
+		} else {
+			fmt.Fprintf(sb, "%sGoImport(%q)\n", indent, d.Path)
+		}
+
+	case *GoBlockDecl:
+		fmt.Fprintf(sb, "%sGoBlock(%d bytes)\n", indent, len(d.Code))
+
 	case *ConstDecl:
 		vis := ""
 		if d.Public {
@@ -478,9 +519,13 @@ func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 		if d.Public {
 			vis = "public "
 		}
-		fmt.Fprintf(sb, "%s%sTypeDecl(%s)\n", indent, vis, d.Name)
-		for _, f := range d.Fields {
-			fmt.Fprintf(sb, "%s  Field(%s as %s)\n", indent, f.Name, f.Type.String())
+		if d.GoName != "" {
+			fmt.Fprintf(sb, "%s%sTypeDecl(%s = go %q)\n", indent, vis, d.Name, d.GoName)
+		} else {
+			fmt.Fprintf(sb, "%s%sTypeDecl(%s)\n", indent, vis, d.Name)
+			for _, f := range d.Fields {
+				fmt.Fprintf(sb, "%s  Field(%s as %s)\n", indent, f.Name, f.Type.String())
+			}
 		}
 
 	case *EnumDecl:
@@ -491,16 +536,9 @@ func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 		fmt.Fprintf(sb, "%s%sEnumDecl(%s: [%s])\n", indent, vis, d.Name, strings.Join(d.Variants, ", "))
 
 	case *FnDecl:
-		var mods []string
-		if d.Public {
-			mods = append(mods, "public")
-		}
-		if d.Extern {
-			mods = append(mods, "extern")
-		}
 		modPrefix := ""
-		if len(mods) > 0 {
-			modPrefix = strings.Join(mods, " ") + " "
+		if d.Public {
+			modPrefix = "public "
 		}
 		var params []string
 		for _, p := range d.Params {
@@ -518,7 +556,11 @@ func dumpDecl(sb *strings.Builder, decl TopLevelDecl, indent string) {
 		if d.CanError {
 			errSuffix = " can error"
 		}
-		fmt.Fprintf(sb, "%s%sFnDecl(%s(%s)%s%s)\n", indent, modPrefix, d.Name, strings.Join(params, ", "), ret, errSuffix)
+		goSuffix := ""
+		if d.GoTarget != "" {
+			goSuffix = fmt.Sprintf(" = go %q", d.GoTarget)
+		}
+		fmt.Fprintf(sb, "%s%sFnDecl(%s(%s)%s%s%s)\n", indent, modPrefix, d.Name, strings.Join(params, ", "), ret, errSuffix, goSuffix)
 		for _, st := range d.Body {
 			dumpStmt(sb, st, indent+"  ")
 		}
@@ -673,6 +715,16 @@ func FormatExpr(expr Expr) string {
 		return fmt.Sprintf("%s.%s", FormatExpr(e.Target), e.Field)
 	case *IndexExpr:
 		return fmt.Sprintf("%s[%s]", FormatExpr(e.Target), FormatExpr(e.Index))
+	case *SliceExpr:
+		startStr := ""
+		if e.Start != nil {
+			startStr = FormatExpr(e.Start)
+		}
+		endStr := ""
+		if e.End != nil {
+			endStr = FormatExpr(e.End)
+		}
+		return fmt.Sprintf("%s[%s:%s]", FormatExpr(e.Target), startStr, endStr)
 	case *CallExpr:
 		var args []string
 		for _, a := range e.Args {

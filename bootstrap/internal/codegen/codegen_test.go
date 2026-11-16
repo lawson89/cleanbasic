@@ -263,7 +263,7 @@ func TestEmitGoPhase5MultiFileAndStdlib(t *testing.T) {
 			"cbStdFsReadFile",
 			"cbStdOsExec",
 			"cbStdJsonParse",
-			"cbStdCliNewParser",
+			"cb_std_cli__newParser",
 		} {
 			if !strings.Contains(goCode, want) {
 				t.Errorf("expected stdlib helper %q in generated Go", want)
@@ -409,10 +409,10 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"    return v",
 		"end fn",
 		"",
-		"fn shadowByRef(byref x as int)",
+		"fn updateByRef(byref x as int)",
 		"    if true",
-		"        dim x = 99",
-		`        print("inner=" & x)`,
+		"        dim y = 99",
+		`        print("inner=" & y)`,
 		"    end if",
 		"    x = x + 1",
 		"end fn",
@@ -450,7 +450,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		"",
 		"    dim fmt = 10",
 		"    dim map = 20",
-		"    shadowByRef(fmt)",
+		"    updateByRef(fmt)",
 		`    print("vars=" & fmt & ":" & map)`,
 		"",
 		"    dim r = regex.Regex()",
@@ -489,5 +489,29 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 	}, "\n")
 	if got != want {
 		t.Errorf("output mismatch:\ngot:\n%s\nwant:\n%s\ngo:\n%s", got, want, goCode)
+	}
+}
+
+func TestEmitGoLineDirectives(t *testing.T) {
+	src := "fn main() as int\n    dim x = 42\n    return 0\nend fn\n"
+	prog, err := sema.AnalyzeSource(src, "dir/sample.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+
+	withLines, err := EmitGo(prog)
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	if !strings.Contains(withLines, "\n//line dir/sample.cb:2\n") {
+		t.Errorf("expected column-1 //line directive in generated Go:\n%s", withLines)
+	}
+
+	withoutLines, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGoWithOptions failed: %v", err)
+	}
+	if strings.Contains(withoutLines, "//line ") {
+		t.Errorf("did not expect //line directive when EmitLineDirectives is false:\n%s", withoutLines)
 	}
 }

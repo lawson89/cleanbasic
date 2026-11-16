@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -22,6 +23,7 @@ type ModuleInfo struct {
 	IsStdlib    bool
 	Program     *ast.Program
 	Imports     map[string]*ModuleInfo
+	GoImports   []ast.GoImportDecl
 	Functions   map[string]*FnSymbol
 	Structs     map[string]*StructSymbol
 	Enums       map[string]*EnumSymbol
@@ -69,7 +71,6 @@ type moduleLoader struct {
 	state     map[string]int // 0=unvisited, 1=visiting, 2=done
 	modules   map[string]*ModuleInfo
 	byID      map[string]*ModuleInfo
-	stdMods   map[string]*ModuleInfo
 	topoOrder []*ModuleInfo
 	stack     []string
 }
@@ -80,7 +81,6 @@ func newModuleLoader(rootDir string) *moduleLoader {
 		state:   make(map[string]int),
 		modules: make(map[string]*ModuleInfo),
 		byID:    make(map[string]*ModuleInfo),
-		stdMods: make(map[string]*ModuleInfo),
 	}
 }
 
@@ -102,21 +102,25 @@ func (l *moduleLoader) loadEntry(entryPath string, entryProg *ast.Program) ([]*M
 			absEntry = filepath.Clean(abs)
 		}
 	}
-	mod, err := l.visitFile(absEntry, entryProg, true)
+	mod, err := l.visitFile(absEntry, entryProg, true, "", false)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	return l.topoOrder, mod, l.byID, nil
 }
 
-func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry bool) (*ModuleInfo, error) {
+func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry bool, overrideID string, isStdlib bool) (*ModuleInfo, error) {
 	key := absPath
 	if key == "" {
 		key = "<memory>"
 	}
-	modID := l.canonicalID(key)
-	if key == "<memory>" {
-		modID = "main"
+	modID := overrideID
+	if modID == "" {
+		if key == "<memory>" {
+			modID = "main"
+		} else {
+			modID = l.canonicalID(key)
+		}
 	}
 
 	if l.state[key] == 2 {
@@ -142,7 +146,7 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 		prog = parsed
 	}
 
-	mod := newModuleInfo(modID, absPath, isEntry, false, prog)
+	mod := newModuleInfo(modID, absPath, isEntry, isStdlib, prog)
 	l.modules[key] = mod
 	l.byID[modID] = mod
 
@@ -152,6 +156,10 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 	}
 
 	for _, decl := range prog.Decls {
+		if gi, ok := decl.(*ast.GoImportDecl); ok {
+			mod.GoImports = append(mod.GoImports, *gi)
+			continue
+		}
 		imp, ok := decl.(*ast.ImportDecl)
 		if !ok {
 			continue
@@ -196,7 +204,7 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 			return nil, newSemaError(imp.Pos, "cannot import %q: %v", imp.Path, err)
 		}
 
-		depMod, err := l.visitFile(targetPath, nil, false)
+		depMod, err := l.visitFile(targetPath, nil, false, "", false)
 		if err != nil {
 			return nil, err
 		}
@@ -209,257 +217,76 @@ func (l *moduleLoader) visitFile(absPath string, preParsed *ast.Program, isEntry
 }
 
 func (l *moduleLoader) getOrCreateStdlib(modPath string, pos token.Position) (*ModuleInfo, error) {
-	if existing, ok := l.stdMods[modPath]; ok {
+	if existing, ok := l.byID[modPath]; ok {
 		return existing, nil
 	}
 
-	var mod *ModuleInfo
-	switch modPath {
-	case "std/fs":
-		mod = buildStdFsModule()
-	case "std/os":
-		mod = buildStdOsModule()
-	case "std/json":
-		mod = buildStdJsonModule()
-	case "std/cli":
-		mod = buildStdCliModule()
-	case "std/regex":
-		mod = buildStdRegexModule()
-	default:
+	stdFile, ok := findStdlibFile(l.rootDir, modPath)
+	if !ok {
 		return nil, newSemaError(pos, "unknown standard library module %q", modPath)
 	}
 
-	l.stdMods[modPath] = mod
-	l.byID[mod.ID] = mod
-	l.topoOrder = append(l.topoOrder, mod)
-	return mod, nil
+	if l.state[stdFile] == 1 {
+		cycle := slices.Clone(l.stack)
+		cycle = append(cycle, modPath)
+		return nil, newSemaError(pos, "circular import detected: %s", strings.Join(cycle, " -> "))
+	}
+
+	return l.visitFile(stdFile, nil, false, modPath, true)
 }
 
-func buildStdFsModule() *ModuleInfo {
-	m := newModuleInfo("std/fs", "std/fs", false, true, nil)
-	listStr := Type{Kind: KindList, ElemType: &StrType}
+func findStdlibFile(rootDir, modPath string) (string, bool) {
+	if !strings.HasPrefix(modPath, "std/") {
+		return "", false
+	}
+	rel := strings.TrimPrefix(modPath, "std/")
+	if rel == "" || strings.Contains(rel, "..") {
+		return "", false
+	}
+	relPath := filepath.FromSlash(rel) + ".cb"
 
-	m.Functions["readFile"] = &FnSymbol{
-		Name:       "readFile",
-		GoName:     "cbStdFsReadFile",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: StrType,
-		CanError:   true,
-		Public:     true,
+	var candidates []string
+	if envDir := os.Getenv("CB_STDLIB_DIR"); envDir != "" {
+		candidates = append(candidates, envDir)
 	}
-	m.Functions["writeFile"] = &FnSymbol{
-		Name:       "writeFile",
-		GoName:     "cbStdFsWriteFile",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}, {Name: "content", Type: StrType}},
-		ReturnType: VoidType,
-		CanError:   true,
-		Public:     true,
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates, filepath.Join(exeDir, "std"), filepath.Join(exeDir, "..", "std"))
 	}
-	m.Functions["exists"] = &FnSymbol{
-		Name:       "exists",
-		GoName:     "cbStdFsExists",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: BoolType,
-		Public:     true,
-	}
-	m.Functions["mkdirAll"] = &FnSymbol{
-		Name:       "mkdirAll",
-		GoName:     "cbStdFsMkdirAll",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: VoidType,
-		CanError:   true,
-		Public:     true,
-	}
-	m.Functions["listDir"] = &FnSymbol{
-		Name:       "listDir",
-		GoName:     "cbStdFsListDir",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: listStr,
-		CanError:   true,
-		Public:     true,
-	}
-	m.Functions["isDir"] = &FnSymbol{
-		Name:       "isDir",
-		GoName:     "cbStdFsIsDir",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: BoolType,
-		Public:     true,
-	}
-	m.Functions["isSymlink"] = &FnSymbol{
-		Name:       "isSymlink",
-		GoName:     "cbStdFsIsSymlink",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: BoolType,
-		Public:     true,
-	}
-	m.Functions["join"] = &FnSymbol{
-		Name:       "join",
-		GoName:     "cbStdFsJoin",
-		Params:     []ParamSymbol{{Name: "a", Type: StrType}, {Name: "b", Type: StrType}},
-		ReturnType: StrType,
-		Public:     true,
-	}
-	m.Functions["base"] = &FnSymbol{
-		Name:       "base",
-		GoName:     "cbStdFsBase",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: StrType,
-		Public:     true,
-	}
-	m.Functions["dir"] = &FnSymbol{
-		Name:       "dir",
-		GoName:     "cbStdFsDir",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: StrType,
-		Public:     true,
-	}
-	m.Functions["ext"] = &FnSymbol{
-		Name:       "ext",
-		GoName:     "cbStdFsExt",
-		Params:     []ParamSymbol{{Name: "path", Type: StrType}},
-		ReturnType: StrType,
-		Public:     true,
-	}
-	return m
-}
 
-func newStdStruct(name, goName, moduleID string, fields ...FieldSymbol) (*StructSymbol, Type) {
-	fmap := make(map[string]FieldSymbol, len(fields))
-	for _, f := range fields {
-		fmap[f.Name] = f
+	addAncestors := func(startDir string) {
+		if startDir == "" {
+			return
+		}
+		cur := filepath.Clean(startDir)
+		for {
+			candidates = append(candidates, filepath.Join(cur, "std"))
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
 	}
-	sym := &StructSymbol{
-		Name:     name,
-		GoName:   goName,
-		ModuleID: moduleID,
-		Public:   true,
-		Fields:   fields,
-		FieldMap: fmap,
+	addAncestors(rootDir)
+	if wd, err := os.Getwd(); err == nil {
+		addAncestors(wd)
 	}
-	typ := Type{Kind: KindStruct, Name: name, ModuleID: moduleID, GoName: goName}
-	return sym, typ
-}
-
-func buildStdOsModule() *ModuleInfo {
-	m := newModuleInfo("std/os", "std/os", false, true, nil)
-	listStr := Type{Kind: KindList, ElemType: &StrType}
-
-	execResult, execResultType := newStdStruct("ExecResult", "CbStdOsExecResult", "std/os",
-		FieldSymbol{Name: "exitCode", Type: IntType},
-		FieldSymbol{Name: "stdout", Type: StrType},
-		FieldSymbol{Name: "stderr", Type: StrType},
-	)
-	m.Structs["ExecResult"] = execResult
-
-	m.Functions["args"] = &FnSymbol{
-		Name:       "args",
-		GoName:     "cbStdOsArgs",
-		ReturnType: listStr,
-		Public:     true,
+	if _, callerFile, _, ok := runtime.Caller(0); ok {
+		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(callerFile), "..", "..", "..", "std")))
 	}
-	m.Functions["exit"] = &FnSymbol{
-		Name:       "exit",
-		GoName:     "cbStdOsExit",
-		Params:     []ParamSymbol{{Name: "code", Type: IntType}},
-		ReturnType: VoidType,
-		Public:     true,
-	}
-	m.Functions["getEnv"] = &FnSymbol{
-		Name:       "getEnv",
-		GoName:     "cbStdOsGetEnv",
-		Params:     []ParamSymbol{{Name: "key", Type: StrType}},
-		ReturnType: StrType,
-		Public:     true,
-	}
-	m.Functions["exec"] = &FnSymbol{
-		Name:       "exec",
-		GoName:     "cbStdOsExec",
-		Params:     []ParamSymbol{{Name: "cmd", Type: StrType}, {Name: "args", Type: listStr}},
-		ReturnType: execResultType,
-		CanError:   true,
-		Public:     true,
-	}
-	m.Functions["readStdin"] = &FnSymbol{
-		Name:       "readStdin",
-		GoName:     "cbStdOsReadStdin",
-		ReturnType: StrType,
-		CanError:   true,
-		Public:     true,
-	}
-	m.Functions["cwd"] = &FnSymbol{
-		Name:       "cwd",
-		GoName:     "cbStdOsCwd",
-		ReturnType: StrType,
-		CanError:   true,
-		Public:     true,
-	}
-	return m
-}
 
-func buildStdJsonModule() *ModuleInfo {
-	m := newModuleInfo("std/json", "std/json", false, true, nil)
-	jvStruct, jvType := newStdStruct("JsonValue", "CbStdJsonValue", "std/json")
-	m.Structs["JsonValue"] = jvStruct
-
-	m.Functions["parse"] = &FnSymbol{
-		Name:       "parse",
-		GoName:     "cbStdJsonParse",
-		Params:     []ParamSymbol{{Name: "raw", Type: StrType}},
-		ReturnType: jvType,
-		CanError:   true,
-		Public:     true,
+	seen := make(map[string]bool, len(candidates))
+	for _, dir := range candidates {
+		cleanDir := filepath.Clean(dir)
+		if seen[cleanDir] {
+			continue
+		}
+		seen[cleanDir] = true
+		full := filepath.Join(cleanDir, relPath)
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			return full, true
+		}
 	}
-	return m
-}
-
-func buildStdCliModule() *ModuleInfo {
-	m := newModuleInfo("std/cli", "std/cli", false, true, nil)
-	listStr := Type{Kind: KindList, ElemType: &StrType}
-
-	parserStruct, parserType := newStdStruct("Parser", "CbStdCliParser", "std/cli")
-	m.Structs["Parser"] = parserStruct
-
-	argsStruct, _ := newStdStruct("ParsedArgs", "CbStdCliArgs", "std/cli",
-		FieldSymbol{Name: "helpRequested", Type: BoolType},
-		FieldSymbol{Name: "positionals", Type: listStr},
-	)
-	m.Structs["ParsedArgs"] = argsStruct
-
-	m.Functions["newParser"] = &FnSymbol{
-		Name:   "newParser",
-		GoName: "cbStdCliNewParser",
-		Params: []ParamSymbol{
-			{Name: "name", Type: StrType},
-			{Name: "version", Type: StrType},
-			{Name: "description", Type: StrType},
-		},
-		ReturnType: parserType,
-		Public:     true,
-	}
-	return m
-}
-
-func buildStdRegexModule() *ModuleInfo {
-	m := newModuleInfo("std/regex", "std/regex", false, true, nil)
-
-	regexStruct, regexType := newStdStruct("Regex", "CbStdRegex", "std/regex")
-	m.Structs["Regex"] = regexStruct
-
-	m.Functions["compile"] = &FnSymbol{
-		Name:       "compile",
-		GoName:     "cbStdRegexCompile",
-		Params:     []ParamSymbol{{Name: "pattern", Type: StrType}},
-		ReturnType: regexType,
-		CanError:   true,
-		Public:     true,
-	}
-	m.Functions["match"] = &FnSymbol{
-		Name:       "match",
-		GoName:     "cbStdRegexMatch",
-		Params:     []ParamSymbol{{Name: "pattern", Type: StrType}, {Name: "text", Type: StrType}},
-		ReturnType: BoolType,
-		CanError:   true,
-		Public:     true,
-	}
-	return m
+	return "", false
 }

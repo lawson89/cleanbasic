@@ -1,0 +1,56 @@
+go import "regexp"
+
+public type Regex = go "CbStdRegex"
+
+go
+type CbStdRegex struct {
+	re *regexp.Regexp
+}
+
+func cbStdRegexCompile(pattern string) (CbStdRegex, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return CbStdRegex{}, err
+	}
+	return CbStdRegex{re: re}, nil
+}
+
+func cbStdRegexMatch(pattern, text string) (bool, error) {
+	return regexp.MatchString(pattern, text)
+}
+
+func cbStdRegexIsMatch(r CbStdRegex, text string) bool {
+	if r.re == nil {
+		return false
+	}
+	return r.re.MatchString(text)
+}
+
+func cbStdRegexFind(r CbStdRegex, text string) string {
+	if r.re == nil {
+		return ""
+	}
+	return r.re.FindString(text)
+}
+
+func cbStdRegexFindAll(r CbStdRegex, text string) []string {
+	if r.re == nil {
+		return nil
+	}
+	return r.re.FindAllString(text, -1)
+}
+
+func cbStdRegexReplaceAll(r CbStdRegex, text, repl string) string {
+	if r.re == nil {
+		return text
+	}
+	return r.re.ReplaceAllString(text, repl)
+}
+end go
+
+public fn compile(pattern as str) as Regex can error = go "cbStdRegexCompile"
+public fn match(pattern as str, text as str) as bool can error = go "cbStdRegexMatch"
+public fn isMatch(r as Regex, text as str) as bool = go "cbStdRegexIsMatch"
+public fn find(r as Regex, text as str) as str = go "cbStdRegexFind"
+public fn findAll(r as Regex, text as str) as list[str] = go "cbStdRegexFindAll"
+public fn replaceAll(r as Regex, text as str, repl as str) as str = go "cbStdRegexReplaceAll"

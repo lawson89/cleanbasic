@@ -1,0 +1,71 @@
+go import "os"
+go import "path/filepath"
+
+go
+func cbStdFsReadFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func cbStdFsWriteFile(path string, content string) error {
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func cbStdFsExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func cbStdFsMkdirAll(path string) error {
+	return os.MkdirAll(path, 0755)
+}
+
+func cbStdFsListDir(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.Name())
+	}
+	return out, nil
+}
+
+func cbStdFsIsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func cbStdFsIsSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && (info.Mode()&os.ModeSymlink != 0)
+}
+
+func cbStdFsJoin(a, b string) string {
+	return filepath.Join(a, b)
+}
+
+func cbStdFsMkdirTemp(pattern string) (string, error) {
+	return os.MkdirTemp("", pattern)
+}
+end go
+
+public fn readFile(path as str) as str can error = go "cbStdFsReadFile"
+public fn writeFile(path as str, content as str) can error = go "cbStdFsWriteFile"
+public fn exists(path as str) as bool = go "cbStdFsExists"
+public fn mkdirAll(path as str) can error = go "cbStdFsMkdirAll"
+public fn listDir(path as str) as list[str] can error = go "cbStdFsListDir"
+public fn isDir(path as str) as bool = go "cbStdFsIsDir"
+public fn isSymlink(path as str) as bool = go "cbStdFsIsSymlink"
+public fn join(a as str, b as str) as str = go "cbStdFsJoin"
+public fn base(path as str) as str = go "filepath.Base"
+public fn dir(path as str) as str = go "filepath.Dir"
+public fn ext(path as str) as str = go "filepath.Ext"
+public fn clean(path as str) as str = go "filepath.Clean"
+public fn abs(path as str) as str can error = go "filepath.Abs"
+public fn mkdirTemp(pattern as str) as str can error = go "cbStdFsMkdirTemp"
+public fn removeAll(path as str) can error = go "os.RemoveAll"

@@ -509,9 +509,30 @@ end fn
 			wantErr: `constant "SECRET" in module "helper" is private`,
 		},
 		{
-			name: "cross-module UFCS rejected",
+			name: "private defining-module UFCS rejected",
 			files: map[string]string{
 				"main.cb": `import "helper.cb"
+fn main() as int
+    dim b = helper.Box(1)
+    b.secretBump()
+    return 0
+end fn
+`,
+				"helper.cb": `public type Box
+    v as int
+end type
+fn secretBump(byref b as Box)
+    b.v = b.v + 1
+end fn
+`,
+			},
+			wantErr: `no method or UFCS function "secretBump" for receiver type Box`,
+		},
+		{
+			name: "unrelated-module UFCS rejected",
+			files: map[string]string{
+				"main.cb": `import "helper.cb"
+import "other.cb"
 fn main() as int
     dim b = helper.Box(1)
     b.bump()
@@ -521,7 +542,9 @@ end fn
 				"helper.cb": `public type Box
     v as int
 end type
-public fn bump(byref b as Box)
+`,
+				"other.cb": `import "helper.cb"
+public fn bump(byref b as helper.Box)
     b.v = b.v + 1
 end fn
 `,
@@ -698,6 +721,107 @@ func TestReviewRegressionSema(t *testing.T) {
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := AnalyzeSource(tc.src, "test.cb")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestTier1SemaFeatures(t *testing.T) {
+	writeFiles := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		for rel, content := range files {
+			full := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+				t.Fatalf("mkdir failed: %v", err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+				t.Fatalf("write failed: %v", err)
+			}
+		}
+		return filepath.Join(dir, "main.cb")
+	}
+
+	t.Run("defining-module public UFCS allowed", func(t *testing.T) {
+		entry := writeFiles(t, map[string]string{
+			"helper.cb": `public type Box
+    v as int
+end type
+public fn bump(byref b as Box)
+    b.v = b.v + 1
+end fn
+`,
+			"main.cb": `import "helper.cb"
+fn main() as int
+    dim b = helper.Box(1)
+    b.bump()
+    return 0
+end fn
+`,
+		})
+		if _, err := LoadAndAnalyze(entry); err != nil {
+			t.Fatalf("LoadAndAnalyze failed: %v", err)
+		}
+	})
+
+	errCases := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "byref shadowed by dim",
+			src:     "fn f(byref x as int)\n    dim x = 1\nend fn\n",
+			wantErr: "cannot shadow byref parameter \"x\"",
+		},
+		{
+			name:    "byref shadowed by const",
+			src:     "fn f(byref x as int)\n    if true\n        const x = 2\n    end if\nend fn\n",
+			wantErr: "cannot shadow byref parameter \"x\"",
+		},
+		{
+			name:    "byref shadowed by for loop var",
+			src:     "fn f(byref x as int)\n    for x = 1 to 3\n        print(x)\n    end for\nend fn\n",
+			wantErr: "cannot shadow byref parameter \"x\"",
+		},
+		{
+			name:    "byref shadowed by catch var",
+			src:     "fn f(byref x as int)\n    try\n        print(x)\n    catch x\n        print(x.msg)\n    end try\nend fn\n",
+			wantErr: "cannot shadow byref parameter \"x\"",
+		},
+		{
+			name: "string index assignment rejected",
+			src: `fn main()
+    dim s = "abc"
+    s[0] = 65.toByte()
+end fn
+`,
+			wantErr: "cannot assign to string index",
+		},
+		{
+			name: "slice non-int bound rejected",
+			src: `fn main()
+    dim s = "abc"
+    dim t = s["a":2]
+end fn
+`,
+			wantErr: "slice start index must be int",
+		},
+		{
+			name:    "slice non-sliceable type rejected",
+			src:     "fn main()\n    dim n = 10\n    dim t = n[0:1]\nend fn\n",
+			wantErr: "cannot slice type int",
+		},
+	}
+
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := AnalyzeSource(tc.src, tc.name+".cb")
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
 			}

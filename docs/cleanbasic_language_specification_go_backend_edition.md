@@ -29,22 +29,25 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 ```
 Program         ::= TopLevelDecl*
 
-TopLevelDecl    ::= ImportDecl | ConstDecl | TypeDecl | EnumDecl | FnDecl
+TopLevelDecl    ::= ImportDecl | GoImportDecl | GoBlockDecl | ConstDecl | TypeDecl | EnumDecl | FnDecl
 
 ImportDecl      ::= "import" StringLiteral ["as" Identifier] NEWLINE
+GoImportDecl    ::= "go import" StringLiteral ["as" Identifier] NEWLINE
+GoBlockDecl     ::= "go" NEWLINE <verbatim Go code> "end go" NEWLINE
 
 ConstDecl       ::= ["public"] "const" Identifier ["as" Type] "=" Expr NEWLINE
 
 EnumDecl        ::= ["public"] "enum" Identifier NEWLINE Identifier* "end enum" NEWLINE
 
 
-TypeDecl        ::= ["public"] "type" Identifier NEWLINE FieldDecl* "end type" NEWLINE
+TypeDecl        ::= ["public"] "type" Identifier "=" "go" StringLiteral NEWLINE
+                  | ["public"] "type" Identifier NEWLINE FieldDecl* "end type" NEWLINE
 FieldDecl       ::= Identifier "as" Type NEWLINE
 
-FnDecl          ::= ["public"] "fn" Identifier "(" [ParamList] ")" ["as" Type] ["can error"] NEWLINE
+FnDecl          ::= ["public"] "fn" Identifier "(" [ParamList] ")" ["as" Type] ["can error"] "=" "go" StringLiteral NEWLINE
+                  | ["public"] "fn" Identifier "(" [ParamList] ")" ["as" Type] ["can error"] NEWLINE
                     Statement*
                     "end fn" NEWLINE
-                  | ["public"] "extern" "fn" Identifier "(" [ParamList] ")" ["as" Type] ["can error"] NEWLINE
 ParamList       ::= Param ("," Param)* [","]
 Param           ::= ["byref"] Identifier "as" Type
 
@@ -97,6 +100,7 @@ UnaryExpr       ::= ("+" | "-") UnaryExpr | PostfixExpr
 PostfixExpr     ::= PrimaryExpr
                     ( "." Identifier
                     | "[" Expr "]"
+                    | "[" [Expr] ":" [Expr] "]"
                     | "(" [CallArgList] ")" )*
 
 PrimaryExpr     ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
@@ -107,12 +111,12 @@ CallArgList     ::= Expr ("," Expr)* [","]
 Literal         ::= NumberLiteral | StringLiteral | InterpString
                   | "true" | "false"
                   | NonEmptyListLiteral | NonEmptyDictLiteral
-InterpString    ::= '$"' (StringChar | "{{" | "}}" | "{" QualifiedIdent ["[" (IntegerLiteral | Identifier) "]"] "}")* '"'
+InterpString    ::= '$"' (StringChar | "{{" | "}}" | "{" Expr "}")* '"'
 NonEmptyListLiteral ::= "[" Expr ("," Expr)* [","] "]"
 NonEmptyDictLiteral ::= "{" DictEntry ("," DictEntry)* [","] "}"
 DictEntry       ::= Expr ":" Expr
 
-Type            ::= "int" | "float" | "str" | "bool" | "err"
+Type            ::= "int" | "float" | "str" | "bool" | "byte" | "err"
                   | "list" "[" Type "]"
                   | "dict" "[" Type "," Type "]"
                   | QualifiedIdent
@@ -132,9 +136,9 @@ Every `.cb` file is implicitly a module. Everything is private by default; the `
 
 * **Default & Explicit Aliases (`as`):** `import "entities/hero.cb"` binds the alias `hero`. Use `import "input/button.cb" as inputBtn` to disambiguate colliding filenames.
 
-* **Go Identifier Mangling:** Non-`extern` declarations emit with collision-free mangled Go identifiers (`cb_<sanitizedModuleId>__<name>`, e.g., `cb_entities_hero__Player`).
+* **Go Identifier Mangling & Native Go Interop:** Declarations emit with collision-free mangled Go identifiers (`cb_<sanitizedModuleId>__<name>`, e.g., `cb_entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting `any` parameter types on Go-bound functions and automatic `CbError` wrapping for `can error` bindings).
 
-* **Local-Only UFCS (No Cross-Module UFCS Search):** Unified Function Call Syntax (`obj.method(arg)`) resolves strictly against functions declared in the **current module** or the **built-in prelude** (`str`, `list`, `dict`). Functions imported from external modules must be called with their explicit module alias (`player.heal(hero, 50)`). This eliminates ambiguous dot-resolution and global symbol table scans.
+* **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `byte`, `list`, `dict`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
 
 **player.cb (The Library Module)**
 
@@ -239,11 +243,17 @@ end fn
 
 ```
 
-### 4. Simple Path-Restricted String Interpolation & Auto-Coercing `&`
+### 4. Full-Expression String Interpolation, `byte`, Slicing, 2-Var Loops & `&`
 
-* **Lexer-Desugared `$"..."`:** String interpolation only permits simple identifiers and dotted field accesses (`{name}` or `{user.age}`) inside braces—arbitrary expressions or function calls inside `{...}` are disallowed. The lexer directly lowers `$"Hello {user.name}!"` into `"Hello " & user.name & "!"` tokens, requiring zero AST or semantic analyzer complexity.
+* **Lexer-Desugared `$"..."`:** String interpolation supports arbitrary CleanBasic expressions inside `{...}` (tracking nested braces and nested string/interpolated literals). The lexer lowers `$"Sum: {a + b}"` into parenthesized `( a + b )` tokens joined with `&` (with leading `"" &` when starting with a placeholder).
 
 * **Universal `&` Concatenation:** The `&` operator unconditionally coerces operands to strings (lowering to `fmt.Sprint(a) + fmt.Sprint(b)` in Go).
+
+* **`byte` Primitive Type & String Byte Indexing:** `byte` lowers to Go `byte` (`uint8`), `list[byte]` lowers to `[]byte`, and `int.toByte()`, `byte.toInt()`, `str.toBytes()`, and `str.fromBytes(b)` convert explicitly. Read-only string indexing `s[i]` returns `byte` safely (returning `byte(0)` if out of bounds).
+
+* **Bounds-Safe Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` clamp out-of-bounds or negative indices without panicking and evaluate as r-values.
+
+* **2-Variable `for-in` Loops & `byref` Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. Local `dim`/`const`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
 
 ```
 fn demoContainers() as int

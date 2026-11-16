@@ -1,0 +1,131 @@
+go import "encoding/json"
+go import "fmt"
+go import "strconv"
+
+public type JsonValue = go "CbStdJsonValue"
+
+go
+type CbStdJsonValue struct {
+	val any
+}
+
+func (j CbStdJsonValue) MarshalJSON() ([]byte, error) {
+	return json.Marshal(j.val)
+}
+
+func cbStdJsonParse(raw string) (CbStdJsonValue, error) {
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return CbStdJsonValue{}, err
+	}
+	return CbStdJsonValue{val: v}, nil
+}
+
+func cbStdJsonStringify(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "null"
+	}
+	return string(b)
+}
+
+func cbStdJsonIsNull(j CbStdJsonValue) bool {
+	return j.val == nil
+}
+
+func cbStdJsonAsStr(j CbStdJsonValue) string {
+	if j.val == nil {
+		return ""
+	}
+	if s, ok := j.val.(string); ok {
+		return s
+	}
+	return fmt.Sprint(j.val)
+}
+
+func cbStdJsonAsInt(j CbStdJsonValue) int64 {
+	switch n := j.val.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case string:
+		v, _ := strconv.ParseInt(n, 10, 64)
+		return v
+	default:
+		return 0
+	}
+}
+
+func cbStdJsonAsFloat(j CbStdJsonValue) float64 {
+	switch n := j.val.(type) {
+	case float64:
+		return n
+	case int64:
+		return float64(n)
+	case string:
+		v, _ := strconv.ParseFloat(n, 64)
+		return v
+	default:
+		return 0
+	}
+}
+
+func cbStdJsonAsBool(j CbStdJsonValue) bool {
+	if b, ok := j.val.(bool); ok {
+		return b
+	}
+	return false
+}
+
+func cbStdJsonHas(j CbStdJsonValue, key string) bool {
+	if m, ok := j.val.(map[string]any); ok {
+		_, exists := m[key]
+		return exists
+	}
+	return false
+}
+
+func cbStdJsonGet(j CbStdJsonValue, key string) CbStdJsonValue {
+	if m, ok := j.val.(map[string]any); ok {
+		return CbStdJsonValue{val: m[key]}
+	}
+	return CbStdJsonValue{}
+}
+
+func cbStdJsonAsList(j CbStdJsonValue) []CbStdJsonValue {
+	arr, ok := j.val.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]CbStdJsonValue, len(arr))
+	for i, item := range arr {
+		out[i] = CbStdJsonValue{val: item}
+	}
+	return out
+}
+
+func cbStdJsonAsDict(j CbStdJsonValue) map[string]CbStdJsonValue {
+	m, ok := j.val.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]CbStdJsonValue, len(m))
+	for k, v := range m {
+		out[k] = CbStdJsonValue{val: v}
+	}
+	return out
+}
+end go
+
+public fn parse(raw as str) as JsonValue can error = go "cbStdJsonParse"
+public fn stringify(v as any) as str = go "cbStdJsonStringify"
+public fn isNull(j as JsonValue) as bool = go "cbStdJsonIsNull"
+public fn asStr(j as JsonValue) as str = go "cbStdJsonAsStr"
+public fn asInt(j as JsonValue) as int = go "cbStdJsonAsInt"
+public fn asFloat(j as JsonValue) as float = go "cbStdJsonAsFloat"
+public fn asBool(j as JsonValue) as bool = go "cbStdJsonAsBool"
+public fn has(j as JsonValue, key as str) as bool = go "cbStdJsonHas"
+public fn get(j as JsonValue, key as str) as JsonValue = go "cbStdJsonGet"
+public fn asList(j as JsonValue) as list[JsonValue] = go "cbStdJsonAsList"
+public fn asDict(j as JsonValue) as dict[str, JsonValue] = go "cbStdJsonAsDict"

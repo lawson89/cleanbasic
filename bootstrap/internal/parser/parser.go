@@ -119,7 +119,7 @@ func (p *Parser) expectIdent(context string) (token.Token, error) {
 // that may appear after '.' (e.g., str.join, d.get, etc.).
 func (p *Parser) expectFieldOrMethodIdent(context string) (token.Token, error) {
 	tok := p.cur()
-	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.LIST, token.DICT, token.ERR}, tok.Kind) {
+	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.BYTE, token.LIST, token.DICT, token.ERR}, tok.Kind) {
 		p.advance()
 		return tok, nil
 	}
@@ -189,6 +189,17 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 	if startTok.Kind == token.IMPORT {
 		return p.parseImportDecl()
 	}
+	if startTok.Kind == token.GO_IMPORT {
+		return p.parseGoImportDecl()
+	}
+	if startTok.Kind == token.GO_BLOCK {
+		tok := p.advance()
+		p.skipNewlines()
+		return &ast.GoBlockDecl{
+			Pos:  tok.Pos,
+			Code: tok.Lexeme,
+		}, nil
+	}
 
 	isPublic := false
 	if p.cur().Kind == token.PUBLIC {
@@ -203,13 +214,13 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 		return p.parseTypeDecl(startTok.Pos, isPublic)
 	case token.ENUM:
 		return p.parseEnumDecl(startTok.Pos, isPublic)
-	case token.FN, token.EXTERN:
+	case token.FN:
 		return p.parseFnDecl(startTok.Pos, isPublic)
 	default:
 		tok := p.cur()
 		return nil, &ParseError{
 			Pos:     tok.Pos,
-			Message: fmt.Sprintf("unexpected token %s (%q) at top level; expected import, const, type, enum, or fn", tok.Kind, tok.Lexeme),
+			Message: fmt.Sprintf("unexpected token %s (%q) at top level; expected import, go import, go, const, type, enum, or fn", tok.Kind, tok.Lexeme),
 		}
 	}
 }
@@ -237,6 +248,35 @@ func (p *Parser) parseImportDecl() (*ast.ImportDecl, error) {
 	}
 
 	return &ast.ImportDecl{
+		Pos:   startTok.Pos,
+		Path:  pathTok.Lexeme,
+		Alias: alias,
+	}, nil
+}
+
+// GoImportDecl ::= "go import" StringLiteral ["as" Identifier] NEWLINE
+func (p *Parser) parseGoImportDecl() (*ast.GoImportDecl, error) {
+	startTok := p.advance() // consume GO_IMPORT
+
+	pathTok, err := p.expect(token.STRING_LIT, "in go import declaration")
+	if err != nil {
+		return nil, err
+	}
+
+	alias := ""
+	if p.match(token.AS) {
+		aliasTok, err := p.expectIdent("after 'as' in go import declaration")
+		if err != nil {
+			return nil, err
+		}
+		alias = aliasTok.Lexeme
+	}
+
+	if err := p.expectNewline("go import declaration"); err != nil {
+		return nil, err
+	}
+
+	return &ast.GoImportDecl{
 		Pos:   startTok.Pos,
 		Path:  pathTok.Lexeme,
 		Alias: alias,
@@ -295,6 +335,25 @@ func (p *Parser) parseTypeDecl(pos token.Position, isPublic bool) (*ast.TypeDecl
 	nameTok, err := p.expectIdent("for type name")
 	if err != nil {
 		return nil, err
+	}
+
+	if p.match(token.ASSIGN) {
+		if _, err := p.expect(token.GO, "after '=' in Go type binding"); err != nil {
+			return nil, err
+		}
+		goTok, err := p.expect(token.STRING_LIT, "for Go type name")
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectNewline("go type binding"); err != nil {
+			return nil, err
+		}
+		return &ast.TypeDecl{
+			Pos:    pos,
+			Public: isPublic,
+			Name:   nameTok.Lexeme,
+			GoName: goTok.Lexeme,
+		}, nil
 	}
 
 	if err := p.expectNewline("type header"); err != nil {
@@ -386,13 +445,8 @@ func (p *Parser) parseEnumDecl(pos token.Position, isPublic bool) (*ast.EnumDecl
 	}, nil
 }
 
-// FnDecl ::= ["public"] ["extern"] "fn" Identifier "(" [ParamList] ")" ["as" Type] ["can error"] NEWLINE ...
+// FnDecl ::= ["public"] "fn" Identifier "(" [ParamList] ")" ["as" Type] ["can error"] ("=" "go" StringLiteral | NEWLINE ... "end fn") NEWLINE
 func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, error) {
-	isExtern := false
-	if p.match(token.EXTERN) {
-		isExtern = true
-	}
-
 	if _, err := p.expect(token.FN, "in function declaration"); err != nil {
 		return nil, err
 	}
@@ -429,20 +483,30 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 		canError = true
 	}
 
-	if err := p.expectNewline("function signature"); err != nil {
-		return nil, err
-	}
-
-	if isExtern {
+	if p.match(token.ASSIGN) {
+		if _, err := p.expect(token.GO, "after '=' in Go function binding"); err != nil {
+			return nil, err
+		}
+		goTok, err := p.expect(token.STRING_LIT, "for Go function target")
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectNewline("go function binding"); err != nil {
+			return nil, err
+		}
 		return &ast.FnDecl{
 			Pos:        pos,
 			Public:     isPublic,
-			Extern:     true,
 			Name:       nameTok.Lexeme,
 			Params:     params,
 			ReturnType: retType,
 			CanError:   canError,
+			GoTarget:   goTok.Lexeme,
 		}, nil
+	}
+
+	if err := p.expectNewline("function signature"); err != nil {
+		return nil, err
 	}
 
 	body, err := p.parseStmtBlock(token.END_FN)
@@ -460,7 +524,6 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 	return &ast.FnDecl{
 		Pos:        pos,
 		Public:     isPublic,
-		Extern:     false,
 		Name:       nameTok.Lexeme,
 		Params:     params,
 		ReturnType: retType,
@@ -540,7 +603,7 @@ func (p *Parser) parseParamList() ([]ast.Param, error) {
 func (p *Parser) parseType() (ast.TypeExpr, error) {
 	tok := p.cur()
 	switch tok.Kind {
-	case token.INT, token.FLOAT, token.STR, token.BOOL, token.ERR:
+	case token.INT, token.FLOAT, token.STR, token.BOOL, token.BYTE, token.ERR:
 		p.advance()
 		return ast.TypeExpr{
 			Pos:  tok.Pos,
@@ -1212,9 +1275,48 @@ func (p *Parser) parsePostfixExpr() (ast.Expr, error) {
 
 		case token.LBRACKET:
 			lbrTok := p.advance()
+			if p.match(token.COLON) {
+				var endExpr ast.Expr
+				if p.cur().Kind != token.RBRACKET {
+					var err error
+					endExpr, err = p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+				}
+				if _, err := p.expect(token.RBRACKET, "after slice expression"); err != nil {
+					return nil, err
+				}
+				expr = &ast.SliceExpr{
+					Pos:    lbrTok.Pos,
+					Target: expr,
+					Start:  nil,
+					End:    endExpr,
+				}
+				continue
+			}
 			idxExpr, err := p.parseExpr()
 			if err != nil {
 				return nil, err
+			}
+			if p.match(token.COLON) {
+				var endExpr ast.Expr
+				if p.cur().Kind != token.RBRACKET {
+					endExpr, err = p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+				}
+				if _, err := p.expect(token.RBRACKET, "after slice expression"); err != nil {
+					return nil, err
+				}
+				expr = &ast.SliceExpr{
+					Pos:    lbrTok.Pos,
+					Target: expr,
+					Start:  idxExpr,
+					End:    endExpr,
+				}
+				continue
 			}
 			if _, err := p.expect(token.RBRACKET, "after index expression"); err != nil {
 				return nil, err

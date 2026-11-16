@@ -126,7 +126,8 @@ func TestCommentsAndNewlineCoalescing(t *testing.T) {
 }
 
 func TestInterpolatedStringDesugaring(t *testing.T) {
-	src := "print($\"Hello {user.name}, score={{100}} and {parts[2]}!\")\n"
+	src := `print($"Hello {user.name}, score={{100}} and {parts[2]}!")
+`
 	toks, err := Tokenize(src, "interp.cb")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -134,14 +135,14 @@ func TestInterpolatedStringDesugaring(t *testing.T) {
 
 	// Expected sequence:
 	// IDENT("print") (
-	//   STRING_LIT("Hello ") & IDENT("user") . IDENT("name") & STRING_LIT(", score={100} and ") & IDENT("parts") [ INT_LIT("2") ] & STRING_LIT("!")
+	//   STRING_LIT("Hello ") & ( IDENT("user") . IDENT("name") ) & STRING_LIT(", score={100} and ") & ( IDENT("parts") [ INT_LIT("2") ] ) & STRING_LIT("!")
 	// ) NEWLINE EOF
 	wantKinds := []token.Kind{
 		token.IDENT, token.LPAREN,
 		token.STRING_LIT,
-		token.AMP, token.IDENT, token.DOT, token.IDENT,
+		token.AMP, token.LPAREN, token.IDENT, token.DOT, token.IDENT, token.RPAREN,
 		token.AMP, token.STRING_LIT,
-		token.AMP, token.IDENT, token.LBRACKET, token.INT_LIT, token.RBRACKET,
+		token.AMP, token.LPAREN, token.IDENT, token.LBRACKET, token.INT_LIT, token.RBRACKET, token.RPAREN,
 		token.AMP, token.STRING_LIT,
 		token.RPAREN, token.NEWLINE, token.EOF,
 	}
@@ -154,25 +155,66 @@ func TestInterpolatedStringDesugaring(t *testing.T) {
 			t.Errorf("tok[%d] = %s (%q), want %s", i, toks[i].Kind, toks[i].Lexeme, want)
 		}
 	}
-	if toks[8].Lexeme != ", score={100} and " {
-		t.Errorf("escaped brace segment = %q, want %q", toks[8].Lexeme, ", score={100} and ")
+	if toks[10].Lexeme != ", score={100} and " {
+		t.Errorf("escaped brace segment = %q, want %q", toks[10].Lexeme, ", score={100} and ")
 	}
 }
 
-func TestInterpolatedStringRejectsComplexExpressions(t *testing.T) {
+func TestInterpolatedStringFullExpressionsAndGoBlocks(t *testing.T) {
+	goodInputs := []string{
+		`print($"sum={a + b}")
+`,
+		`print($"call={foo(x)}")
+`,
+		`print($"bool={true}")
+`,
+		`print($"nested={str.quote("hi")}")
+`,
+		`print($"dict={{"k": 1}.len()}")
+`,
+	}
+	for _, src := range goodInputs {
+		if _, err := Tokenize(src, "good_interp.cb"); err != nil {
+			t.Errorf("unexpected error for %q: %v", src, err)
+		}
+	}
+
 	badInputs := []string{
-		"print($\"sum={a + b}\")\n",
-		"print($\"call={foo(x)}\")\n",
-		"print($\"empty={}\")\n",
-		"print($\"bool={true}\")\n",
-		"print($\"kw={and}\")\n",
-		"print($\"idx={parts[true]}\")\n",
+		`print($"empty={}")
+`,
+		`print($"unterm={a + b")
+`,
+		"print($\"newline={a\n+ b}\")\n",
 	}
 	for _, src := range badInputs {
-		_, err := Tokenize(src, "bad_interp.cb")
-		if err == nil {
-			t.Errorf("expected error for complex interpolation %q, got nil", src)
+		if _, err := Tokenize(src, "bad_interp.cb"); err == nil {
+			t.Errorf("expected error for invalid interpolation %q, got nil", src)
 		}
+	}
+
+	goSrc := `go import "os"
+go
+func helper() bool { return true && !false }
+end go
+`
+	toks, err := Tokenize(goSrc, "go_block.cb")
+	if err != nil {
+		t.Fatalf("unexpected error for go block: %v", err)
+	}
+	if toks[0].Kind != token.GO_IMPORT {
+		t.Errorf("tok[0] = %s, want GO_IMPORT", toks[0].Kind)
+	}
+	foundBlock := false
+	for _, tk := range toks {
+		if tk.Kind == token.GO_BLOCK {
+			foundBlock = true
+			if !strings.Contains(tk.Lexeme, "true && !false") {
+				t.Errorf("go block lexeme = %q, expected verbatim Go operators", tk.Lexeme)
+			}
+		}
+	}
+	if !foundBlock {
+		t.Fatalf("expected GO_BLOCK token in %v", toks)
 	}
 }
 

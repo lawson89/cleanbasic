@@ -19,6 +19,8 @@ const (
 	KindFloat  TypeKind = "float"
 	KindStr    TypeKind = "str"
 	KindBool   TypeKind = "bool"
+	KindByte   TypeKind = "byte"
+	KindAny    TypeKind = "any"
 	KindStruct TypeKind = "struct"
 	KindEnum   TypeKind = "enum"
 	KindList   TypeKind = "list"
@@ -43,6 +45,8 @@ var (
 	FloatType = Type{Kind: KindFloat}
 	StrType   = Type{Kind: KindStr}
 	BoolType  = Type{Kind: KindBool}
+	ByteType  = Type{Kind: KindByte}
+	AnyType   = Type{Kind: KindAny}
 	ErrType   = Type{Kind: KindErr}
 )
 
@@ -137,7 +141,7 @@ type FnSymbol struct {
 	ReturnType Type
 	CanError   bool
 	Public     bool
-	Extern     bool
+	GoTarget   string
 	IsVariadic bool
 	Decl       *ast.FnDecl
 	Pos        token.Position
@@ -191,6 +195,7 @@ type StructSymbol struct {
 	Fields   []FieldSymbol
 	FieldMap map[string]FieldSymbol
 	Public   bool
+	IsGoType bool
 	Decl     *ast.TypeDecl
 	Pos      token.Position
 }
@@ -300,7 +305,7 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 	}
 
 	for _, mod := range topoOrder {
-		if mod.IsStdlib {
+		if mod.Program == nil {
 			continue
 		}
 		a.mod = mod
@@ -345,12 +350,18 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 			if err := a.predeclareType(d.Name, d.Pos); err != nil {
 				return err
 			}
+			goName := a.mod.symbolGoName(d.Name)
+			isGoType := d.GoName != ""
+			if isGoType {
+				goName = d.GoName
+			}
 			a.mod.Structs[d.Name] = &StructSymbol{
 				Name:     d.Name,
-				GoName:   a.mod.symbolGoName(d.Name),
+				GoName:   goName,
 				ModuleID: a.mod.ID,
 				FieldMap: make(map[string]FieldSymbol),
 				Public:   d.Public,
+				IsGoType: isGoType,
 				Decl:     d,
 				Pos:      d.Pos,
 			}
@@ -474,9 +485,15 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 			return newSemaError(p.Pos, "duplicate parameter %q in function %q (previous at %s)", p.Name, fn.Name, prevPos.String())
 		}
 		seenParams[p.Name] = p.Pos
-		pType, err := a.resolveTypeExpr(p.Type)
-		if err != nil {
-			return err
+		var pType Type
+		var err error
+		if fn.GoTarget != "" && p.Type.Kind == ast.TypeQualified && len(p.Type.Parts) == 1 && p.Type.Parts[0] == "any" {
+			pType = AnyType
+		} else {
+			pType, err = a.resolveTypeExpr(p.Type)
+			if err != nil {
+				return err
+			}
 		}
 		params = append(params, ParamSymbol{
 			Name:  p.Name,
@@ -514,7 +531,7 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 		ReturnType: retType,
 		CanError:   fn.CanError,
 		Public:     fn.Public,
-		Extern:     fn.Extern,
+		GoTarget:   fn.GoTarget,
 		Decl:       fn,
 		Pos:        fn.Pos,
 	}
@@ -562,7 +579,7 @@ func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
 }
 
 func (a *analyzer) analyzeFnBody(fn *ast.FnDecl) error {
-	if fn.Extern {
+	if fn.GoTarget != "" {
 		return nil
 	}
 
@@ -732,11 +749,22 @@ func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
 		IsConst: s.IsConst,
 		Pos:     s.Pos,
 	}
-	if err := scope.Define(sym); err != nil {
+	if err := a.defineLocalVar(scope, sym); err != nil {
 		return err
 	}
 	a.prog.VarTypes[s] = finalType
 	return nil
+}
+
+func (a *analyzer) defineLocalVar(scope *Scope, sym *VarSymbol) error {
+	if a.currentFn != nil {
+		for _, p := range a.currentFn.Params {
+			if p.ByRef && p.Name == sym.Name {
+				return newSemaError(sym.Pos, "cannot shadow byref parameter %q", sym.Name)
+			}
+		}
+	}
+	return scope.Define(sym)
 }
 
 func (a *analyzer) checkMutableTarget(expr ast.Expr, scope *Scope) error {
@@ -800,6 +828,9 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		elemType, err := a.inferExpr(target, scope)
 		if err != nil {
 			return err
+		}
+		if targetObjType, ok := a.prog.ExprTypes[target.Target]; ok && targetObjType.Kind == KindStr {
+			return newSemaError(s.Pos, "cannot assign to string index (strings are immutable)")
 		}
 		if !elemType.Equals(valType) {
 			return newSemaError(s.Pos, "type mismatch in index assignment: expected %s, got %s", elemType.String(), valType.String())
@@ -886,21 +917,66 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 		loopScope := NewScope(scope)
 		switch iterType.Kind {
 		case KindList:
-			if len(s.Vars) != 1 {
-				return newSemaError(s.Pos, "for-in loop over list only supports a single loop variable")
+			if len(s.Vars) < 1 || len(s.Vars) > 2 {
+				return newSemaError(s.Pos, "for-in loop over list supports 1 or 2 loop variables")
 			}
-			if err := loopScope.Define(&VarSymbol{
-				Name: s.Vars[0],
-				Type: *iterType.ElemType,
-				Pos:  s.Pos,
-			}); err != nil {
-				return err
+			if len(s.Vars) == 1 {
+				if err := a.defineLocalVar(loopScope, &VarSymbol{
+					Name: s.Vars[0],
+					Type: *iterType.ElemType,
+					Pos:  s.Pos,
+				}); err != nil {
+					return err
+				}
+			} else {
+				if err := a.defineLocalVar(loopScope, &VarSymbol{
+					Name: s.Vars[0],
+					Type: IntType,
+					Pos:  s.Pos,
+				}); err != nil {
+					return err
+				}
+				if err := a.defineLocalVar(loopScope, &VarSymbol{
+					Name: s.Vars[1],
+					Type: *iterType.ElemType,
+					Pos:  s.Pos,
+				}); err != nil {
+					return err
+				}
+			}
+		case KindStr:
+			if len(s.Vars) < 1 || len(s.Vars) > 2 {
+				return newSemaError(s.Pos, "for-in loop over str supports 1 or 2 loop variables")
+			}
+			if len(s.Vars) == 1 {
+				if err := a.defineLocalVar(loopScope, &VarSymbol{
+					Name: s.Vars[0],
+					Type: StrType,
+					Pos:  s.Pos,
+				}); err != nil {
+					return err
+				}
+			} else {
+				if err := a.defineLocalVar(loopScope, &VarSymbol{
+					Name: s.Vars[0],
+					Type: IntType,
+					Pos:  s.Pos,
+				}); err != nil {
+					return err
+				}
+				if err := a.defineLocalVar(loopScope, &VarSymbol{
+					Name: s.Vars[1],
+					Type: StrType,
+					Pos:  s.Pos,
+				}); err != nil {
+					return err
+				}
 			}
 		case KindDict:
 			if len(s.Vars) < 1 || len(s.Vars) > 2 {
 				return newSemaError(s.Pos, "for-in loop over dict supports 1 or 2 loop variables")
 			}
-			if err := loopScope.Define(&VarSymbol{
+			if err := a.defineLocalVar(loopScope, &VarSymbol{
 				Name: s.Vars[0],
 				Type: *iterType.KeyType,
 				Pos:  s.Pos,
@@ -908,7 +984,7 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 				return err
 			}
 			if len(s.Vars) == 2 {
-				if err := loopScope.Define(&VarSymbol{
+				if err := a.defineLocalVar(loopScope, &VarSymbol{
 					Name: s.Vars[1],
 					Type: *iterType.ValType,
 					Pos:  s.Pos,
@@ -917,7 +993,7 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 				}
 			}
 		default:
-			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list or dict, got %s", iterType.String())
+			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list, dict, or str, got %s", iterType.String())
 		}
 
 		return a.analyzeLoopBody(s.Body, loopScope)
@@ -953,7 +1029,7 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 	}
 
 	loopScope := NewScope(scope)
-	if err := loopScope.Define(&VarSymbol{
+	if err := a.defineLocalVar(loopScope, &VarSymbol{
 		Name:    s.VarName,
 		Type:    IntType,
 		IsConst: false,
@@ -1028,7 +1104,7 @@ func (a *analyzer) analyzeTryCatchStmt(s *ast.TryCatchStmt, scope *Scope) error 
 	a.tryDepth--
 
 	catchScope := NewScope(scope)
-	if err := catchScope.Define(&VarSymbol{
+	if err := a.defineLocalVar(catchScope, &VarSymbol{
 		Name:    s.CatchVar,
 		Type:    ErrType,
 		IsConst: true,
@@ -1135,6 +1211,8 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 		resolved, err = a.inferFieldAccessExpr(e, scope)
 	case *ast.IndexExpr:
 		resolved, err = a.inferIndexExpr(e, scope)
+	case *ast.SliceExpr:
+		resolved, err = a.inferSliceExpr(e, scope)
 	case *ast.CallExpr:
 		resolved, err = a.inferCallExpr(e, scope)
 	default:
@@ -1191,16 +1269,16 @@ func (a *analyzer) inferBinaryExpr(e *ast.BinaryExpr, scope *Scope) (Type, error
 		if !leftType.Equals(rightType) {
 			return VoidType, newSemaError(e.Pos, "type mismatch for operator %q: %s and %s", e.Op, leftType.String(), rightType.String())
 		}
-		if !leftType.Equals(IntType) && !leftType.Equals(FloatType) {
-			return VoidType, newSemaError(e.Pos, "operator %q requires int or float operands, got %s", e.Op, leftType.String())
+		if !leftType.Equals(IntType) && !leftType.Equals(FloatType) && !leftType.Equals(ByteType) {
+			return VoidType, newSemaError(e.Pos, "operator %q requires int, float, or byte operands, got %s", e.Op, leftType.String())
 		}
 		return leftType, nil
 
 	case token.PERCENT:
-		if !leftType.Equals(IntType) || !rightType.Equals(IntType) {
-			return VoidType, newSemaError(e.Pos, "modulo operator %q requires int operands, got %s and %s", e.Op, leftType.String(), rightType.String())
+		if !leftType.Equals(rightType) || (!leftType.Equals(IntType) && !leftType.Equals(ByteType)) {
+			return VoidType, newSemaError(e.Pos, "modulo operator %q requires int or byte operands, got %s and %s", e.Op, leftType.String(), rightType.String())
 		}
-		return IntType, nil
+		return leftType, nil
 
 	case token.EQ, token.NEQ:
 		if !leftType.Equals(rightType) || leftType.IsVoid() {
@@ -1215,7 +1293,7 @@ func (a *analyzer) inferBinaryExpr(e *ast.BinaryExpr, scope *Scope) (Type, error
 		if !leftType.Equals(rightType) {
 			return VoidType, newSemaError(e.Pos, "cannot compare %s and %s with %q", leftType.String(), rightType.String(), e.Op)
 		}
-		if !leftType.Equals(IntType) && !leftType.Equals(FloatType) && !leftType.Equals(StrType) {
+		if !leftType.Equals(IntType) && !leftType.Equals(FloatType) && !leftType.Equals(StrType) && !leftType.Equals(ByteType) {
 			return VoidType, newSemaError(e.Pos, "relational operator %q is not supported for type %s", e.Op, leftType.String())
 		}
 		return BoolType, nil
@@ -1384,9 +1462,43 @@ func (a *analyzer) inferIndexExpr(e *ast.IndexExpr, scope *Scope) (Type, error) 
 			return VoidType, newSemaError(e.Index.ExprPos(), "dict key must be %s, got %s", objType.KeyType.String(), idxType.String())
 		}
 		return *objType.ValType, nil
+	case KindStr:
+		if !idxType.Equals(IntType) {
+			return VoidType, newSemaError(e.Index.ExprPos(), "str index must be int, got %s", idxType.String())
+		}
+		return ByteType, nil
 	default:
 		return VoidType, newSemaError(e.Pos, "cannot index into type %s", objType.String())
 	}
+}
+
+func (a *analyzer) inferSliceExpr(e *ast.SliceExpr, scope *Scope) (Type, error) {
+	objType, err := a.inferExpr(e.Target, scope)
+	if err != nil {
+		return VoidType, err
+	}
+	if objType.Kind != KindStr && objType.Kind != KindList {
+		return VoidType, newSemaError(e.Pos, "cannot slice type %s (expected str or list)", objType.String())
+	}
+	if e.Start != nil {
+		stType, err := a.inferExpr(e.Start, scope)
+		if err != nil {
+			return VoidType, err
+		}
+		if !stType.Equals(IntType) {
+			return VoidType, newSemaError(e.Start.ExprPos(), "slice start index must be int, got %s", stType.String())
+		}
+	}
+	if e.End != nil {
+		enType, err := a.inferExpr(e.End, scope)
+		if err != nil {
+			return VoidType, err
+		}
+		if !enType.Equals(IntType) {
+			return VoidType, newSemaError(e.End.ExprPos(), "slice end index must be int, got %s", enType.String())
+		}
+	}
+	return objType, nil
 }
 
 func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
@@ -1555,7 +1667,11 @@ func (a *analyzer) validateCallArgs(callPos token.Position, args []ast.CallArg, 
 		if err != nil {
 			return err
 		}
-		if !param.Type.Equals(argType) {
+		if param.Type.Kind == KindAny {
+			if argType.IsVoid() {
+				return newSemaError(arg.Pos, "argument %d (%q) to function %q cannot be void", i+1, param.Name, fnName)
+			}
+		} else if !param.Type.Equals(argType) {
 			return newSemaError(arg.Pos, "argument %d (%q) to function %q has type %s, expected %s",
 				i+1, param.Name, fnName, argType.String(), param.Type.String())
 		}
@@ -1600,23 +1716,6 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	if objIdent, ok := fa.Target.(*ast.IdentExpr); ok {
 		// Cross-module function or struct constructor: modAlias.Symbol(...)
 		if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
-			if impMod.IsStdlib && impMod.ID == "std/json" && fa.Field == "stringify" {
-				if len(e.Args) != 1 {
-					return VoidType, newSemaError(e.Pos, "json.stringify expects 1 argument, got %d", len(e.Args))
-				}
-				if e.Args[0].Name != "" {
-					return VoidType, newSemaError(e.Args[0].Pos, "json.stringify() does not support named arguments (%q)", e.Args[0].Name)
-				}
-				argType, err := a.inferExpr(e.Args[0].Value, scope)
-				if err != nil {
-					return VoidType, err
-				}
-				if argType.IsVoid() {
-					return VoidType, newSemaError(e.Args[0].Pos, "json.stringify argument cannot be void")
-				}
-				a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json.stringify"}
-				return StrType, nil
-			}
 			if structSym, isStruct := impMod.Structs[fa.Field]; isStruct {
 				if !structSym.Public {
 					return VoidType, newSemaError(e.Pos, "type %q in module %q is private", fa.Field, objIdent.Name)
@@ -1641,16 +1740,35 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 			return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
 		}
 
-		if objIdent.Name == "str" && fa.Field == "join" {
-			listStr := Type{Kind: KindList, ElemType: &StrType}
-			if err := a.expectPositionalArgs(e, "str.join", scope, listStr, StrType); err != nil {
-				return VoidType, err
+		if objIdent.Name == "str" {
+			switch fa.Field {
+			case "join":
+				listStr := Type{Kind: KindList, ElemType: &StrType}
+				if err := a.expectPositionalArgs(e, "str.join", scope, listStr, StrType); err != nil {
+					return VoidType, err
+				}
+				a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.join"}
+				return StrType, nil
+			case "fromCharCode":
+				if err := a.expectPositionalArgs(e, "str.fromCharCode", scope, IntType); err != nil {
+					return VoidType, err
+				}
+				a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.fromCharCode"}
+				return StrType, nil
+			case "quote":
+				if err := a.expectPositionalArgs(e, "str.quote", scope, StrType); err != nil {
+					return VoidType, err
+				}
+				a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.quote"}
+				return StrType, nil
+			case "fromBytes":
+				listByte := Type{Kind: KindList, ElemType: &ByteType}
+				if err := a.expectPositionalArgs(e, "str.fromBytes", scope, listByte); err != nil {
+					return VoidType, err
+				}
+				a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.fromBytes"}
+				return StrType, nil
 			}
-			a.prog.CallInfos[e] = &CallInfo{
-				Kind:       CallMethod,
-				MethodName: "str.join",
-			}
-			return StrType, nil
 		}
 	}
 
@@ -1745,23 +1863,45 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 			}
 			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.replace", Receiver: fa.Target}
 			return StrType, nil
+		case "toBytes":
+			if err := a.expectPositionalArgs(e, "str.toBytes", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "str.toBytes", Receiver: fa.Target}
+			return Type{Kind: KindList, ElemType: &ByteType}, nil
 		}
 
-	case KindStruct:
-		if recvType.ModuleID == "std/json" && recvType.Name == "JsonValue" {
-			return a.inferStdJsonMethod(e, fa, scope)
+	case KindInt:
+		if fa.Field == "toByte" {
+			if err := a.expectPositionalArgs(e, "int.toByte", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "int.toByte", Receiver: fa.Target}
+			return ByteType, nil
 		}
-		if recvType.ModuleID == "std/cli" {
-			return a.inferStdCliMethod(e, fa, recvType.Name, scope)
-		}
-		if recvType.ModuleID == "std/regex" && recvType.Name == "Regex" {
-			return a.inferStdRegexMethod(e, fa, scope)
+
+	case KindByte:
+		if fa.Field == "toInt" {
+			if err := a.expectPositionalArgs(e, "byte.toInt", scope); err != nil {
+				return VoidType, err
+			}
+			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "byte.toInt", Receiver: fa.Target}
+			return IntType, nil
 		}
 	}
 
-	// Same-module UFCS fallback (strictly local to current module)
-	fnSym, exists := a.mod.Functions[fa.Field]
-	if !exists || len(fnSym.Params) == 0 || !fnSym.Params[0].Type.Equals(recvType) {
+	// UFCS fallback: check current module first, then public functions in receiver type's defining module
+	var fnSym *FnSymbol
+	if cand, ok := a.mod.Functions[fa.Field]; ok && len(cand.Params) > 0 && cand.Params[0].Type.Equals(recvType) {
+		fnSym = cand
+	} else if recvType.ModuleID != "" && recvType.ModuleID != a.mod.ID {
+		if defMod, ok := a.prog.ModuleByID[recvType.ModuleID]; ok {
+			if cand, ok := defMod.Functions[fa.Field]; ok && cand.Public && len(cand.Params) > 0 && cand.Params[0].Type.Equals(recvType) {
+				fnSym = cand
+			}
+		}
+	}
+	if fnSym == nil {
 		return VoidType, newSemaError(e.Pos, "no method or UFCS function %q for receiver type %s", fa.Field, recvType.String())
 	}
 
@@ -1800,6 +1940,8 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 			return StrType, nil
 		case "bool":
 			return BoolType, nil
+		case "byte":
+			return ByteType, nil
 		case "err":
 			return ErrType, nil
 		}
@@ -1860,144 +2002,6 @@ func (a *analyzer) resolveTypeExpr(t ast.TypeExpr) (Type, error) {
 	return VoidType, newSemaError(t.Pos, "unknown or unsupported type %q", t.String())
 }
 
-func (a *analyzer) inferStdJsonMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
-	jvType := Type{Kind: KindStruct, Name: "JsonValue", ModuleID: "std/json", GoName: "CbStdJsonValue"}
-	switch fa.Field {
-	case "isNull", "asStr", "asInt", "asFloat", "asBool", "asList", "asDict":
-		if err := a.expectPositionalArgs(e, "JsonValue."+fa.Field, scope); err != nil {
-			return VoidType, err
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json." + fa.Field, Receiver: fa.Target}
-		switch fa.Field {
-		case "isNull", "asBool":
-			return BoolType, nil
-		case "asStr":
-			return StrType, nil
-		case "asInt":
-			return IntType, nil
-		case "asFloat":
-			return FloatType, nil
-		case "asList":
-			return Type{Kind: KindList, ElemType: &jvType}, nil
-		case "asDict":
-			return Type{Kind: KindDict, KeyType: &StrType, ValType: &jvType}, nil
-		}
-	case "get", "has":
-		if err := a.expectPositionalArgs(e, "JsonValue."+fa.Field, scope, StrType); err != nil {
-			return VoidType, err
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/json." + fa.Field, Receiver: fa.Target}
-		if fa.Field == "has" {
-			return BoolType, nil
-		}
-		return jvType, nil
-	}
-	return VoidType, newSemaError(e.Pos, "JsonValue has no method %q", fa.Field)
-}
-
-func (a *analyzer) inferStdRegexMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
-	switch fa.Field {
-	case "isMatch":
-		if err := a.expectPositionalArgs(e, "Regex.isMatch", scope, StrType); err != nil {
-			return VoidType, err
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.isMatch", Receiver: fa.Target}
-		return BoolType, nil
-	case "find":
-		if err := a.expectPositionalArgs(e, "Regex.find", scope, StrType); err != nil {
-			return VoidType, err
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.find", Receiver: fa.Target}
-		return StrType, nil
-	case "findAll":
-		if err := a.expectPositionalArgs(e, "Regex.findAll", scope, StrType); err != nil {
-			return VoidType, err
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.findAll", Receiver: fa.Target}
-		return Type{Kind: KindList, ElemType: &StrType}, nil
-	case "replaceAll":
-		if err := a.expectPositionalArgs(e, "Regex.replaceAll", scope, StrType, StrType); err != nil {
-			return VoidType, err
-		}
-		a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/regex.replaceAll", Receiver: fa.Target}
-		return StrType, nil
-	}
-	return VoidType, newSemaError(e.Pos, "Regex has no method %q", fa.Field)
-}
-
-func (a *analyzer) inferStdCliMethod(e *ast.CallExpr, fa *ast.FieldAccessExpr, typeName string, scope *Scope) (Type, error) {
-	argsType := Type{Kind: KindStruct, Name: "ParsedArgs", ModuleID: "std/cli", GoName: "CbStdCliArgs"}
-	if typeName == "Parser" {
-		switch fa.Field {
-		case "addFlag", "addOption", "addArg":
-			expected := 3
-			if fa.Field == "addOption" {
-				expected = 4
-			} else if fa.Field == "addArg" {
-				expected = 2
-			}
-			if len(e.Args) != expected {
-				return VoidType, newSemaError(e.Pos, "Parser.%s() expects %d arguments, got %d", fa.Field, expected, len(e.Args))
-			}
-			for _, arg := range e.Args {
-				if arg.Name != "" {
-					return VoidType, newSemaError(arg.Pos, "Parser.%s() does not support named arguments (%q)", fa.Field, arg.Name)
-				}
-				at, err := a.inferExpr(arg.Value, scope)
-				if err != nil {
-					return VoidType, err
-				}
-				if !at.Equals(StrType) {
-					return VoidType, newSemaError(arg.Pos, "Parser.%s() arguments must be str, got %s", fa.Field, at.String())
-				}
-			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli." + fa.Field, Receiver: fa.Target}
-			return VoidType, nil
-		case "parse":
-			if err := a.expectPositionalArgs(e, "Parser.parse", scope); err != nil {
-				return VoidType, err
-			}
-			if !a.inFallibleContext() {
-				return VoidType, newSemaError(e.Pos, "call to 'can error' method Parser.parse() must be inside a 'try' block or a 'can error' function")
-			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parse", Receiver: fa.Target, CanError: true, HasValue: true}
-			return argsType, nil
-		case "parseArgs":
-			listStr := Type{Kind: KindList, ElemType: &StrType}
-			if err := a.expectPositionalArgs(e, "Parser.parseArgs", scope, listStr); err != nil {
-				return VoidType, err
-			}
-			if !a.inFallibleContext() {
-				return VoidType, newSemaError(e.Pos, "call to 'can error' method Parser.parseArgs() must be inside a 'try' block or a 'can error' function")
-			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.parseArgs", Receiver: fa.Target, CanError: true, HasValue: true}
-			return argsType, nil
-		case "printUsage":
-			if err := a.expectPositionalArgs(e, "Parser.printUsage", scope); err != nil {
-				return VoidType, err
-			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli.printUsage", Receiver: fa.Target}
-			return VoidType, nil
-		}
-		return VoidType, newSemaError(e.Pos, "Parser has no method %q", fa.Field)
-	}
-	if typeName == "ParsedArgs" {
-		switch fa.Field {
-		case "hasFlag", "getOption", "getArg":
-			if err := a.expectPositionalArgs(e, "ParsedArgs."+fa.Field, scope, StrType); err != nil {
-				return VoidType, err
-			}
-			a.prog.CallInfos[e] = &CallInfo{Kind: CallMethod, MethodName: "std/cli." + fa.Field, Receiver: fa.Target}
-			if fa.Field == "hasFlag" {
-				return BoolType, nil
-			}
-			return StrType, nil
-		}
-		return VoidType, newSemaError(e.Pos, "ParsedArgs has no method %q", fa.Field)
-	}
-	return VoidType, newSemaError(e.Pos, "unknown std/cli type %q", typeName)
-}
-
 func isZeroIntLiteral(expr ast.Expr) bool {
 	switch ex := expr.(type) {
 	case *ast.IntLitExpr:
@@ -2016,21 +2020,18 @@ func (a *analyzer) isComparableType(t Type) bool {
 
 func (a *analyzer) isComparableTypeVisited(t Type, visited map[string]bool) bool {
 	switch t.Kind {
-	case KindInt, KindFloat, KindStr, KindBool, KindEnum:
+	case KindInt, KindFloat, KindStr, KindByte, KindBool, KindEnum:
 		return true
-	case KindVoid, KindList, KindDict, KindErr:
+	case KindVoid, KindList, KindDict, KindErr, KindAny:
 		return false
 	case KindStruct:
-		if t.ModuleID == "std/json" || t.ModuleID == "std/cli" || t.ModuleID == "std/regex" {
-			return false
-		}
 		key := "struct:" + t.ModuleID + "." + t.Name
 		if visited[key] {
 			return true
 		}
 		visited[key] = true
 		sym := a.lookupStruct(t)
-		if sym == nil {
+		if sym == nil || sym.IsGoType {
 			return false
 		}
 		for _, f := range sym.Fields {

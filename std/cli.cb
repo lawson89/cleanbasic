@@ -1,0 +1,245 @@
+import "std/os"
+
+type FlagDef
+	name as str
+	short as str
+	desc as str
+end type
+
+type OptionDef
+	name as str
+	short as str
+	desc as str
+	defaultVal as str
+end type
+
+type ArgDef
+	name as str
+	desc as str
+end type
+
+public type Parser
+	name as str
+	version as str
+	description as str
+	flags as list[FlagDef]
+	options as list[OptionDef]
+	args as list[ArgDef]
+end type
+
+public type ParsedArgs
+	helpRequested as bool
+	positionals as list[str]
+	flags as dict[str, bool]
+	options as dict[str, str]
+	args as dict[str, str]
+end type
+
+public fn newParser(name as str, version as str, description as str) as Parser
+	dim p = Parser()
+	p.name = name
+	p.version = version
+	p.description = description
+	return p
+end fn
+
+public fn addFlag(byref p as Parser, name as str, short as str, desc as str)
+	p.flags.push(FlagDef(name, short, desc))
+end fn
+
+public fn addOption(byref p as Parser, name as str, short as str, desc as str, defaultVal as str)
+	p.options.push(OptionDef(name, short, desc, defaultVal))
+end fn
+
+public fn addArg(byref p as Parser, name as str, desc as str)
+	p.args.push(ArgDef(name, desc))
+end fn
+
+public fn printUsage(p as Parser)
+	dim usageLine = "Usage: " & p.name
+	if p.flags.len() > 0 or p.options.len() > 0
+		usageLine = usageLine & " [options]"
+	end if
+	for arg in p.args
+		usageLine = usageLine & " <" & arg.name & ">"
+	end for
+	print(usageLine)
+	if p.description != ""
+		print(p.description)
+	end if
+	if p.flags.len() > 0 or p.options.len() > 0
+		print("Options:")
+		for f in p.flags
+			print($"  -{f.short}, --{f.name}  {f.desc}")
+		end for
+		for o in p.options
+			print($"  -{o.short}, --{o.name} <val>  {o.desc} (default: {o.defaultVal})")
+		end for
+	end if
+end fn
+
+fn findFlagByLong(p as Parser, name as str) as str
+	for f in p.flags
+		if f.name == name
+			return f.name
+		end if
+	end for
+	return ""
+end fn
+
+fn findFlagByShort(p as Parser, short as str) as str
+	for f in p.flags
+		if f.short == short
+			return f.name
+		end if
+	end for
+	return ""
+end fn
+
+fn findOptionByLong(p as Parser, name as str) as str
+	for o in p.options
+		if o.name == name
+			return o.name
+		end if
+	end for
+	return ""
+end fn
+
+fn findOptionByShort(p as Parser, short as str) as str
+	for o in p.options
+		if o.short == short
+			return o.name
+		end if
+	end for
+	return ""
+end fn
+
+public fn parse(p as Parser) as ParsedArgs can error
+	return parseArgs(p, os.args())
+end fn
+
+public fn parseArgs(p as Parser, argv as list[str]) as ParsedArgs can error
+	dim out = ParsedArgs()
+	out.flags = dict[str, bool]()
+	out.options = dict[str, str]()
+	out.args = dict[str, str]()
+	for o in p.options
+		out.options[o.name] = o.defaultVal
+	end for
+
+	dim i = 0
+	while i < argv.len()
+		dim a = argv[i]
+		if a == "--"
+			for j = i + 1 to argv.len() - 1
+				out.positionals.push(argv[j])
+			end for
+			break
+		end if
+		if a == "-h" or a == "--help"
+			out.helpRequested = true
+			return out
+		end if
+		if a.startsWith("--")
+			dim rest = a[2:]
+			dim eqIdx = rest.indexOf("=")
+			if eqIdx >= 0
+				dim optName = rest[:eqIdx]
+				dim optVal = rest[eqIdx + 1:]
+				dim matchedOpt = findOptionByLong(p, optName)
+				if matchedOpt != ""
+					out.options[matchedOpt] = optVal
+					i = i + 1
+					continue
+				end if
+				error("unknown option: --" & optName)
+			end if
+			dim flagName = findFlagByLong(p, rest)
+			if flagName != ""
+				out.flags[flagName] = true
+				i = i + 1
+				continue
+			end if
+			dim optName = findOptionByLong(p, rest)
+			if optName != ""
+				if i + 1 >= argv.len()
+					error("option --" & optName & " requires a value")
+				end if
+				out.options[optName] = argv[i + 1]
+				i = i + 2
+				continue
+			end if
+			error("unknown flag or option: " & a)
+		end if
+		if a.startsWith("-") and a.len() > 1
+			dim shortCode = a[1:]
+			if shortCode.len() == 1
+				dim flagName = findFlagByShort(p, shortCode)
+				if flagName != ""
+					out.flags[flagName] = true
+					i = i + 1
+					continue
+				end if
+				dim optName = findOptionByShort(p, shortCode)
+				if optName != ""
+					if i + 1 >= argv.len()
+						error("option -" & shortCode & " requires a value")
+					end if
+					out.options[optName] = argv[i + 1]
+					i = i + 2
+					continue
+				end if
+				error("unknown flag or option: " & a)
+			end if
+			dim stepConsumed = 1
+			for cIdx, ch in shortCode
+				dim flagName = findFlagByShort(p, ch)
+				if flagName != ""
+					out.flags[flagName] = true
+					continue
+				end if
+				dim optName = findOptionByShort(p, ch)
+				if optName != ""
+					if cIdx + 1 < shortCode.len()
+						out.options[optName] = shortCode[cIdx + 1:]
+						break
+					end if
+					if i + 1 >= argv.len()
+						error("option -" & ch & " requires a value")
+					end if
+					out.options[optName] = argv[i + 1]
+					stepConsumed = 2
+					break
+				end if
+				error("unknown flag or option: -" & ch)
+			end for
+			i = i + stepConsumed
+			continue
+		end if
+		out.positionals.push(a)
+		i = i + 1
+	end while
+
+	if out.positionals.len() < p.args.len()
+		dim missing = p.args[out.positionals.len()].name
+		error("missing required argument: " & missing)
+	end if
+	if p.args.len() > 0
+		for idx = 0 to p.args.len() - 1
+			out.args[p.args[idx].name] = out.positionals[idx]
+		end for
+	end if
+	return out
+end fn
+
+public fn hasFlag(a as ParsedArgs, name as str) as bool
+	return a.flags.get(name, false)
+end fn
+
+public fn getOption(a as ParsedArgs, name as str) as str
+	return a.options.get(name, "")
+end fn
+
+public fn getArg(a as ParsedArgs, name as str) as str
+	return a.args.get(name, "")
+end fn

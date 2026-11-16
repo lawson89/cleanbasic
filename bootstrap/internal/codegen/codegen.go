@@ -3,6 +3,7 @@ package codegen
 import (
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,18 +13,30 @@ import (
 	"cleanbasic/bootstrap/internal/token"
 )
 
-// EmitGo emits a single-file procedural Go program from a semantically analyzed TypedProgram.
+// Options controls Go code emission behavior.
+type Options struct {
+	EmitLineDirectives bool
+}
+
+// EmitGo emits a single-file procedural Go program from a semantically analyzed TypedProgram
+// with //line source directives enabled.
 func EmitGo(prog *sema.TypedProgram) (string, error) {
+	return EmitGoWithOptions(prog, Options{EmitLineDirectives: true})
+}
+
+// EmitGoWithOptions emits a single-file procedural Go program using the specified Options.
+func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 	if prog == nil || prog.Main == nil {
 		return "", fmt.Errorf("nil program")
 	}
 
 	e := &emitter{
-		prog: prog,
+		prog:               prog,
+		emitLineDirectives: opts.EmitLineDirectives,
 	}
 	var bodyBuf strings.Builder
 	for _, mod := range prog.Modules {
-		if mod.IsStdlib || mod.Program == nil {
+		if mod.Program == nil {
 			continue
 		}
 		e.currentMod = mod
@@ -46,44 +59,21 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 	}
 	bodyCode := bodyBuf.String()
 
-	if e.usedStdFs {
-		e.useImport("os")
-		e.useImport("path/filepath")
-		e.usedCbError = true
-	}
-	if e.usedStdOs {
-		e.useImport("os")
-		e.useImport("io")
-		e.usedCbError = true
-	}
-	if e.usedStdRegex {
-		e.useImport("regexp")
-		e.usedCbError = true
-	}
-	if e.usedStdOsExec {
-		e.useImport("bytes")
-		e.useImport("os/exec")
-		e.usedCbError = true
-	}
-	if e.usedStdJson {
-		e.useImport("encoding/json")
-		e.useImport("fmt")
-		e.useImport("strconv")
-		e.usedCbError = true
-	}
-	if e.usedStdCli {
-		e.useImport("fmt")
-		e.useImport("os")
-		e.useImport("strings")
-		e.usedCbError = true
-	}
-
 	var helpers strings.Builder
 	if e.usedCbError {
 		helpers.WriteString("type CbError struct {\n\tmsg  string\n\tcode int64\n\tfile string\n\tline int64\n}\n\nfunc (e CbError) Error() string { return e.msg }\n\n")
 	}
 	if e.usedListGet {
 		helpers.WriteString("func cbListGet[T any](s []T, idx int64) T {\n\tvar zero T\n\tif idx < 0 || int(idx) >= len(s) {\n\t\treturn zero\n\t}\n\treturn s[idx]\n}\n\n")
+	}
+	if e.usedStrGet {
+		helpers.WriteString("func cbStrGet(s string, idx int64) byte {\n\tif idx < 0 || int(idx) >= len(s) {\n\t\treturn 0\n\t}\n\treturn s[idx]\n}\n\n")
+	}
+	if e.usedSliceStr {
+		helpers.WriteString("func cbSliceStr(s string, start, end int64) string {\n\tn := int64(len(s))\n\tif start < 0 {\n\t\tstart = 0\n\t}\n\tif start > n {\n\t\tstart = n\n\t}\n\tif end < 0 {\n\t\tend = 0\n\t}\n\tif end > n {\n\t\tend = n\n\t}\n\tif start >= end {\n\t\treturn \"\"\n\t}\n\treturn s[start:end]\n}\n\n")
+	}
+	if e.usedSliceList {
+		helpers.WriteString("func cbSliceList[T any](s []T, start, end int64) []T {\n\tn := int64(len(s))\n\tif start < 0 {\n\t\tstart = 0\n\t}\n\tif start > n {\n\t\tstart = n\n\t}\n\tif end < 0 {\n\t\tend = 0\n\t}\n\tif end > n {\n\t\tend = n\n\t}\n\tif start >= end {\n\t\treturn nil\n\t}\n\treturn s[start:end]\n}\n\n")
 	}
 	if e.usedDictGet {
 		helpers.WriteString("func cbDictGet[K comparable, V any](m map[K]V, k K, def V) V {\n\tif v, ok := m[k]; ok {\n\t\treturn v\n\t}\n\treturn def\n}\n\n")
@@ -95,18 +85,19 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 		e.useImport("strconv")
 		helpers.WriteString("func cbStrToInt(s string) int64 {\n\tv, _ := strconv.ParseInt(s, 10, 64)\n\treturn v\n}\n\n")
 	}
+	if e.usedStrFromCharCode {
+		helpers.WriteString("func cbStrFromCharCode(code int64) string {\n\treturn string(rune(code))\n}\n\n")
+	}
 
-	e.emitStdlibHelpers(&helpers)
-
-	imports := slices.Sorted(maps.Keys(e.imports))
+	importLines := e.formatImportLines()
 	var out strings.Builder
 	out.WriteString("package main\n\n")
-	if len(imports) == 1 {
-		out.WriteString(fmt.Sprintf("import %q\n\n", imports[0]))
-	} else if len(imports) > 1 {
+	if len(importLines) == 1 {
+		out.WriteString(fmt.Sprintf("import %s\n\n", importLines[0]))
+	} else if len(importLines) > 1 {
 		out.WriteString("import (\n")
-		for _, imp := range imports {
-			out.WriteString(fmt.Sprintf("\t%q\n", imp))
+		for _, imp := range importLines {
+			out.WriteString(fmt.Sprintf("\t%s\n", imp))
 		}
 		out.WriteString(")\n\n")
 	}
@@ -116,31 +107,30 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 }
 
 type emitter struct {
-	prog             *sema.TypedProgram
-	currentMod       *sema.ModuleInfo
-	currentFnSym     *sema.FnSymbol
-	imports          map[string]bool
-	usedListGet      bool
-	usedDictGet      bool
-	usedDictContains bool
-	usedStrToInt     bool
-	usedCbError      bool
-	usedStdFs        bool
-	usedStdOs        bool
-	usedStdOsExec    bool
-	usedStdJson      bool
-	usedStdCli       bool
-	usedStdRegex     bool
-	byRefVars        map[string]bool
-	shadowedByRef    map[string]bool
-	currentFn        *ast.FnDecl
-	currentTryID     int
-	tryCounter       int
-	errCounter       int
-	condCounter      int
-	loopCounter      int
-	tryUsedCatch     map[int]bool
-	liftedExprs      map[ast.Expr]string
+	prog                *sema.TypedProgram
+	emitLineDirectives  bool
+	currentMod          *sema.ModuleInfo
+	currentFnSym        *sema.FnSymbol
+	imports             map[string]bool
+	goImports           map[string]string
+	usedListGet         bool
+	usedStrGet          bool
+	usedSliceStr        bool
+	usedSliceList       bool
+	usedDictGet         bool
+	usedDictContains    bool
+	usedStrToInt        bool
+	usedStrFromCharCode bool
+	usedCbError         bool
+	byRefVars           map[string]bool
+	currentFn           *ast.FnDecl
+	currentTryID        int
+	tryCounter          int
+	errCounter          int
+	condCounter         int
+	loopCounter         int
+	tryUsedCatch        map[int]bool
+	liftedExprs         map[ast.Expr]string
 }
 
 var goReservedIdents = map[string]bool{
@@ -152,7 +142,7 @@ var goReservedIdents = map[string]bool{
 	"fmt": true, "strings": true, "os": true, "io": true, "bytes": true,
 	"strconv": true, "regexp": true, "filepath": true, "json": true, "exec": true,
 	"any": true, "error": true, "string": true, "int64": true, "float64": true,
-	"bool": true, "true": true, "false": true, "nil": true, "len": true,
+	"byte": true, "bool": true, "true": true, "false": true, "nil": true, "len": true,
 	"append": true, "make": true, "new": true, "panic": true, "recover": true,
 	"close": true, "delete": true, "copy": true, "print": true, "println": true,
 }
@@ -168,27 +158,10 @@ func goStructFieldName(name string) string {
 	return "Cb_" + name
 }
 
-func (e *emitter) pushShadowScope() map[string]bool {
-	prev := e.shadowedByRef
-	next := make(map[string]bool, len(prev))
-	for k, v := range prev {
-		next[k] = v
-	}
-	e.shadowedByRef = next
-	return prev
-}
-
-func (e *emitter) emitScopedBlock(stmts []ast.Statement, indent string, sb *strings.Builder, extraShadow ...string) {
-	prev := e.pushShadowScope()
-	for _, name := range extraShadow {
-		if name != "" && e.byRefVars != nil && e.byRefVars[name] {
-			e.shadowedByRef[name] = true
-		}
-	}
+func (e *emitter) emitStmtList(stmts []ast.Statement, indent string, sb *strings.Builder) {
 	for _, st := range stmts {
 		e.emitStmt(sb, st, indent)
 	}
-	e.shadowedByRef = prev
 }
 
 func (e *emitter) useImport(pkg string) {
@@ -198,22 +171,27 @@ func (e *emitter) useImport(pkg string) {
 	e.imports[pkg] = true
 }
 
-func (e *emitter) markStdlibUsage(goName string) {
-	switch {
-	case strings.HasPrefix(goName, "cbStdFs"):
-		e.usedStdFs = true
-	case goName == "cbStdOsExec":
-		e.usedStdOs = true
-		e.usedStdOsExec = true
-	case strings.HasPrefix(goName, "cbStdOs"):
-		e.usedStdOs = true
-	case strings.HasPrefix(goName, "cbStdJson"):
-		e.usedStdJson = true
-	case strings.HasPrefix(goName, "cbStdCli"):
-		e.usedStdCli = true
-	case strings.HasPrefix(goName, "cbStdRegex"):
-		e.usedStdRegex = true
+func (e *emitter) useGoImport(path, alias string) {
+	if e.goImports == nil {
+		e.goImports = make(map[string]string)
 	}
+	key := alias + "\x00" + path
+	if alias != "" {
+		e.goImports[key] = fmt.Sprintf("%s %q", alias, path)
+	} else {
+		e.goImports[key] = fmt.Sprintf("%q", path)
+	}
+}
+
+func (e *emitter) formatImportLines() []string {
+	seen := make(map[string]bool)
+	for pkg := range e.imports {
+		seen[fmt.Sprintf("%q", pkg)] = true
+	}
+	for _, spec := range e.goImports {
+		seen[spec] = true
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
@@ -221,7 +199,20 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 
 	for _, decl := range prog.Decls {
 		switch d := decl.(type) {
+		case *ast.GoImportDecl:
+			e.useGoImport(d.Path, d.Alias)
+
+		case *ast.GoBlockDecl:
+			sb.WriteString(d.Code)
+			if !strings.HasSuffix(d.Code, "\n") {
+				sb.WriteString("\n")
+			}
+			sb.WriteString("\n")
+
 		case *ast.TypeDecl:
+			if d.GoName != "" {
+				continue
+			}
 			var structSym *sema.StructSymbol
 			if e.currentMod != nil {
 				structSym = e.currentMod.Structs[d.Name]
@@ -234,7 +225,7 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
 			for i, f := range d.Fields {
 				fType := e.goSemaType(structSym.Fields[i].Type)
-				sb.WriteString(fmt.Sprintf("\t%s %s `json:\"%s\"`\n", goStructFieldName(f.Name), fType, f.Name))
+				sb.WriteString(fmt.Sprintf("\t%s %s \x60json:%q\x60\n", goStructFieldName(f.Name), fType, f.Name))
 			}
 			sb.WriteString("}\n\n")
 
@@ -273,7 +264,9 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 			sb.WriteString(fmt.Sprintf("var %s%s = %s\n\n", goName, typeStr, e.emitExpr(d.Value)))
 
 		case *ast.FnDecl:
-			if d.Extern {
+			if d.GoTarget != "" {
+				sb.WriteString(e.emitGoBoundFn(d))
+				sb.WriteString("\n")
 				continue
 			}
 			fnCode, err := e.emitFn(d)
@@ -286,6 +279,72 @@ func (e *emitter) emitProgram(prog *ast.Program) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
+	var sb strings.Builder
+	var fnSym *sema.FnSymbol
+	if e.currentMod != nil {
+		fnSym = e.currentMod.Functions[fn.Name]
+	}
+	name := fn.Name
+	if fnSym != nil && fnSym.GoName != "" {
+		name = fnSym.GoName
+	}
+	if name == "main" && (e.currentMod == nil || e.currentMod.IsEntry) {
+		name = "cb_main"
+	} else {
+		name = goIdent(name)
+	}
+
+	var params []string
+	var callArgs []string
+	for i, p := range fn.Params {
+		paramGoType := e.goSemaType(fnSym.Params[i].Type)
+		if p.ByRef {
+			paramGoType = "*" + paramGoType
+		}
+		pGo := goIdent(p.Name)
+		params = append(params, fmt.Sprintf("%s %s", pGo, paramGoType))
+		callArgs = append(callArgs, pGo)
+	}
+
+	retType := ""
+	hasRet := fnSym != nil && !fnSym.ReturnType.IsVoid()
+	if fn.CanError {
+		e.usedCbError = true
+		if hasRet {
+			retType = fmt.Sprintf(" (%s, error)", e.goSemaType(fnSym.ReturnType))
+		} else {
+			retType = " error"
+		}
+	} else if hasRet {
+		retType = " " + e.goSemaType(fnSym.ReturnType)
+	}
+
+	sb.WriteString(fmt.Sprintf("func %s(%s)%s {\n", name, strings.Join(params, ", "), retType))
+	callExpr := fmt.Sprintf("%s(%s)", fn.GoTarget, strings.Join(callArgs, ", "))
+	if fn.CanError {
+		if hasRet {
+			sb.WriteString(fmt.Sprintf("\t_res, _err := %s\n", callExpr))
+			sb.WriteString("\tif _err != nil {\n")
+			sb.WriteString(fmt.Sprintf("\t\treturn %s, CbError{msg: _err.Error()}\n", e.goSemaZeroValue(fnSym.ReturnType)))
+			sb.WriteString("\t}\n")
+			sb.WriteString("\treturn _res, nil\n")
+		} else {
+			sb.WriteString(fmt.Sprintf("\t_err := %s\n", callExpr))
+			sb.WriteString("\tif _err != nil {\n")
+			sb.WriteString("\t\treturn CbError{msg: _err.Error()}\n")
+			sb.WriteString("\t}\n")
+			sb.WriteString("\treturn nil\n")
+		}
+	} else if hasRet {
+		sb.WriteString(fmt.Sprintf("\treturn %s\n", callExpr))
+	} else {
+		sb.WriteString(fmt.Sprintf("\t%s\n", callExpr))
+	}
+	sb.WriteString("}\n")
+	return sb.String()
 }
 
 func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
@@ -305,18 +364,15 @@ func (e *emitter) emitFn(fn *ast.FnDecl) (string, error) {
 	}
 
 	prevByRef := e.byRefVars
-	prevShadow := e.shadowedByRef
 	prevFn := e.currentFn
 	prevFnSym := e.currentFnSym
 	prevTryID := e.currentTryID
 	e.byRefVars = make(map[string]bool)
-	e.shadowedByRef = make(map[string]bool)
 	e.currentFn = fn
 	e.currentFnSym = fnSym
 	e.currentTryID = 0
 	defer func() {
 		e.byRefVars = prevByRef
-		e.shadowedByRef = prevShadow
 		e.currentFn = prevFn
 		e.currentFnSym = prevFnSym
 		e.currentTryID = prevTryID
@@ -380,28 +436,19 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		return "string"
 	case sema.KindBool:
 		return "bool"
+	case sema.KindByte:
+		return "byte"
+	case sema.KindAny:
+		return "any"
 	case sema.KindErr:
 		e.usedCbError = true
 		return "CbError"
 	case sema.KindStruct, sema.KindEnum:
-		switch t.ModuleID {
-		case "std/os":
-			e.usedStdOs = true
-		case "std/json":
-			e.usedStdJson = true
-		case "std/cli":
-			e.usedStdCli = true
-		case "std/regex":
-			e.usedStdRegex = true
-		}
 		name := t.Name
 		if t.GoName != "" {
 			name = t.GoName
 		}
-		if !strings.HasPrefix(t.ModuleID, "std/") {
-			return goIdent(name)
-		}
-		return name
+		return goIdent(name)
 	case sema.KindList:
 		if t.ElemType != nil {
 			return "[]" + e.goSemaType(*t.ElemType)
@@ -427,6 +474,8 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 		return `""`
 	case sema.KindBool:
 		return "false"
+	case sema.KindByte:
+		return "byte(0)"
 	case sema.KindErr:
 		e.usedCbError = true
 		return "CbError{}"
@@ -516,6 +565,11 @@ func (e *emitter) liftFallibleCalls(sb *strings.Builder, expr ast.Expr, indent s
 		t := e.liftFallibleCalls(sb, ex.Target, indent)
 		i := e.liftFallibleCalls(sb, ex.Index, indent)
 		return t || i
+	case *ast.SliceExpr:
+		t := e.liftFallibleCalls(sb, ex.Target, indent)
+		s := e.liftFallibleCalls(sb, ex.Start, indent)
+		en := e.liftFallibleCalls(sb, ex.End, indent)
+		return t || s || en
 	case *ast.CallExpr:
 		if e.prog == nil {
 			return false
@@ -567,6 +621,10 @@ func (e *emitter) liftFallibleCalls(sb *strings.Builder, expr ast.Expr, indent s
 }
 
 func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent string) {
+	if e.emitLineDirectives && stmt.StmtPos().File != "" && stmt.StmtPos().File != "<memory>" && stmt.StmtPos().Line > 0 {
+		sb.WriteString(fmt.Sprintf("//line %s:%d\n", filepath.ToSlash(stmt.StmtPos().File), stmt.StmtPos().Line))
+	}
+
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
 		e.liftFallibleCalls(sb, s.Value, indent)
@@ -575,12 +633,6 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			typeStr = " " + e.goSemaType(vType)
 		}
 		valStr := e.emitExpr(s.Value)
-		if e.byRefVars != nil && e.byRefVars[s.Name] {
-			if e.shadowedByRef == nil {
-				e.shadowedByRef = make(map[string]bool)
-			}
-			e.shadowedByRef[s.Name] = true
-		}
 		varGo := goIdent(s.Name)
 		sb.WriteString(fmt.Sprintf("%svar %s%s = %s\n", indent, varGo, typeStr, valStr))
 		sb.WriteString(fmt.Sprintf("%s_ = %s\n", indent, varGo))
@@ -617,7 +669,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 	case *ast.IfStmt:
 		e.liftFallibleCalls(sb, s.Cond, indent)
 		sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, e.emitExpr(s.Cond)))
-		e.emitScopedBlock(s.ThenBody, indent+"\t", sb)
+		e.emitStmtList(s.ThenBody, indent+"\t", sb)
 		elseIndent := indent
 		extraCloses := 0
 		for _, elif := range s.ElseIfs {
@@ -631,11 +683,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			} else {
 				sb.WriteString(fmt.Sprintf("%s} else if %s {\n", elseIndent, e.emitExpr(elif.Cond)))
 			}
-			e.emitScopedBlock(elif.Body, elseIndent+"\t", sb)
+			e.emitStmtList(elif.Body, elseIndent+"\t", sb)
 		}
 		if s.HasElse {
 			sb.WriteString(fmt.Sprintf("%s} else {\n", elseIndent))
-			e.emitScopedBlock(s.ElseBody, elseIndent+"\t", sb)
+			e.emitStmtList(s.ElseBody, elseIndent+"\t", sb)
 		}
 		sb.WriteString(fmt.Sprintf("%s}\n", elseIndent))
 		for i := 0; i < extraCloses; i++ {
@@ -659,7 +711,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 				sb.WriteString(fmt.Sprintf("%sfor %s := %s; %s <= %s; %s += int64(1) {\n",
 					indent, varGo, e.emitExpr(s.Start), varGo, endVar, varGo))
 				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, varGo))
-				e.emitScopedBlock(s.Body, indent+"\t", sb, s.VarName)
+				e.emitStmtList(s.Body, indent+"\t", sb)
 				sb.WriteString(fmt.Sprintf("%s}\n", indent))
 			} else {
 				stepVar := fmt.Sprintf("_cbStep_%d", lid)
@@ -670,17 +722,45 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					stepVar, varGo, endVar,
 					varGo, stepVar))
 				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, varGo))
-				e.emitScopedBlock(s.Body, indent+"\t", sb, s.VarName)
+				e.emitStmtList(s.Body, indent+"\t", sb)
 				sb.WriteString(fmt.Sprintf("%s}\n", indent))
 			}
 		} else {
 			e.liftFallibleCalls(sb, s.Iterable, indent)
 			iterType := e.prog.ExprTypes[s.Iterable]
-			if iterType.Kind == sema.KindList {
-				v0 := goIdent(s.Vars[0])
-				sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, v0, e.emitExpr(s.Iterable)))
-				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
-			} else if iterType.Kind == sema.KindDict {
+			switch iterType.Kind {
+			case sema.KindList:
+				if len(s.Vars) == 1 {
+					v0 := goIdent(s.Vars[0])
+					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, v0, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
+				} else {
+					e.loopCounter++
+					idxTmp := fmt.Sprintf("_cbIdx_%d", e.loopCounter)
+					v0 := goIdent(s.Vars[0])
+					v1 := goIdent(s.Vars[1])
+					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, v1, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%s\tvar %s int64 = int64(%s)\n", indent, v0, idxTmp))
+					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
+				}
+			case sema.KindStr:
+				e.loopCounter++
+				runeTmp := fmt.Sprintf("_cbRune_%d", e.loopCounter)
+				if len(s.Vars) == 1 {
+					v0 := goIdent(s.Vars[0])
+					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, runeTmp, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%s\tvar %s string = string(%s)\n", indent, v0, runeTmp))
+					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v0))
+				} else {
+					idxTmp := fmt.Sprintf("_cbIdx_%d", e.loopCounter)
+					v0 := goIdent(s.Vars[0])
+					v1 := goIdent(s.Vars[1])
+					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, runeTmp, e.emitExpr(s.Iterable)))
+					sb.WriteString(fmt.Sprintf("%s\tvar %s int64 = int64(%s)\n", indent, v0, idxTmp))
+					sb.WriteString(fmt.Sprintf("%s\tvar %s string = string(%s)\n", indent, v1, runeTmp))
+					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
+				}
+			case sema.KindDict:
 				if len(s.Vars) == 1 {
 					v0 := goIdent(s.Vars[0])
 					sb.WriteString(fmt.Sprintf("%sfor %s := range %s {\n", indent, v0, e.emitExpr(s.Iterable)))
@@ -692,7 +772,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					sb.WriteString(fmt.Sprintf("%s\t_ = %s\n%s\t_ = %s\n", indent, v0, indent, v1))
 				}
 			}
-			e.emitScopedBlock(s.Body, indent+"\t", sb, s.Vars...)
+			e.emitStmtList(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		}
 
@@ -705,11 +785,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 				vals = append(vals, e.emitExpr(v))
 			}
 			sb.WriteString(fmt.Sprintf("%scase %s:\n", indent, strings.Join(vals, ", ")))
-			e.emitScopedBlock(cc.Body, indent+"\t", sb)
+			e.emitStmtList(cc.Body, indent+"\t", sb)
 		}
 		if s.HasElse {
 			sb.WriteString(fmt.Sprintf("%sdefault:\n", indent))
-			e.emitScopedBlock(s.ElseBody, indent+"\t", sb)
+			e.emitStmtList(s.ElseBody, indent+"\t", sb)
 		}
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
 
@@ -719,11 +799,11 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 			sb.WriteString(fmt.Sprintf("%sfor {\n", indent))
 			sb.WriteString(liftBuf.String())
 			sb.WriteString(fmt.Sprintf("%s\tif !(%s) {\n%s\t\tbreak\n%s\t}\n", indent, e.emitExpr(s.Cond), indent, indent))
-			e.emitScopedBlock(s.Body, indent+"\t", sb)
+			e.emitStmtList(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		} else {
 			sb.WriteString(fmt.Sprintf("%sfor %s {\n", indent, e.emitExpr(s.Cond)))
-			e.emitScopedBlock(s.Body, indent+"\t", sb)
+			e.emitStmtList(s.Body, indent+"\t", sb)
 			sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		}
 
@@ -736,7 +816,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		sb.WriteString(fmt.Sprintf("%s_ = _tryErr_%d\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s{\n", indent))
 		e.currentTryID = tryID
-		e.emitScopedBlock(s.TryBody, indent+"\t", sb)
+		e.emitStmtList(s.TryBody, indent+"\t", sb)
 		e.currentTryID = prevTryID
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		if e.tryUsedCatch == nil || !e.tryUsedCatch[tryID] {
@@ -753,7 +833,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		sb.WriteString(fmt.Sprintf("%s\t\t%s = CbError{msg: _tryErr_%d.Error()}\n", indent, catchGo, tryID))
 		sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
 		sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, catchGo))
-		e.emitScopedBlock(s.CatchBody, indent+"\t", sb, s.CatchVar)
+		e.emitStmtList(s.CatchBody, indent+"\t", sb)
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
 		sb.WriteString(fmt.Sprintf("%s_end_try_%d:\n", indent, tryID))
 
@@ -761,7 +841,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		prevTryID := e.currentTryID
 		e.currentTryID = 0
 		sb.WriteString(fmt.Sprintf("%sdefer func() {\n", indent))
-		e.emitScopedBlock(s.Body, indent+"\t", sb)
+		e.emitStmtList(s.Body, indent+"\t", sb)
 		sb.WriteString(fmt.Sprintf("%s}()\n", indent))
 		e.currentTryID = prevTryID
 
@@ -797,7 +877,7 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 				return goIdent(goName)
 			}
 		}
-		if e.byRefVars != nil && e.byRefVars[ex.Name] && (e.shadowedByRef == nil || !e.shadowedByRef[ex.Name]) {
+		if e.byRefVars != nil && e.byRefVars[ex.Name] {
 			return fmt.Sprintf("(*%s)", goIdent(ex.Name))
 		}
 		return goIdent(ex.Name)
@@ -869,7 +949,7 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 			if goName, ok := e.prog.IdentGoNames[ex]; ok {
 				return goIdent(goName)
 			}
-			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok && targetType.Kind == sema.KindStruct && !strings.HasPrefix(targetType.ModuleID, "std/") {
+			if targetType, ok := e.prog.ExprTypes[ex.Target]; ok && targetType.Kind == sema.KindStruct {
 				return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
 			}
 		}
@@ -881,7 +961,28 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 			e.usedListGet = true
 			return fmt.Sprintf("cbListGet(%s, %s)", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
 		}
+		if targetType.Kind == sema.KindStr {
+			e.usedStrGet = true
+			return fmt.Sprintf("cbStrGet(%s, %s)", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
+		}
 		return fmt.Sprintf("%s[%s]", e.emitExpr(ex.Target), e.emitExpr(ex.Index))
+
+	case *ast.SliceExpr:
+		targetType := e.prog.ExprTypes[ex.Target]
+		startStr := "int64(0)"
+		if ex.Start != nil {
+			startStr = e.emitExpr(ex.Start)
+		}
+		endStr := "int64(0x7fffffffffffffff)"
+		if ex.End != nil {
+			endStr = e.emitExpr(ex.End)
+		}
+		if targetType.Kind == sema.KindStr {
+			e.usedSliceStr = true
+			return fmt.Sprintf("cbSliceStr(%s, %s, %s)", e.emitExpr(ex.Target), startStr, endStr)
+		}
+		e.usedSliceList = true
+		return fmt.Sprintf("cbSliceList(%s, %s, %s)", e.emitExpr(ex.Target), startStr, endStr)
 
 	case *ast.CallExpr:
 		if e.liftedExprs != nil {
@@ -898,7 +999,7 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 func (e *emitter) emitArgExpr(expr ast.Expr, byRef bool) string {
 	if byRef {
-		if argId, ok := expr.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] && (e.shadowedByRef == nil || !e.shadowedByRef[argId.Name]) {
+		if argId, ok := expr.(*ast.IdentExpr); ok && e.byRefVars != nil && e.byRefVars[argId.Name] {
 			return goIdent(argId.Name)
 		}
 		return "&" + e.emitExpr(expr)
@@ -924,14 +1025,9 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 			switch ci.Kind {
 			case sema.CallStructCtor:
 				var fields []string
-				isUserStruct := !strings.HasPrefix(ci.Struct.ModuleID, "std/")
 				if ci.NamedArgs {
 					for _, a := range ex.Args {
-						fName := a.Name
-						if isUserStruct {
-							fName = goStructFieldName(a.Name)
-						}
-						fields = append(fields, fmt.Sprintf("%s: %s", fName, e.emitExpr(a.Value)))
+						fields = append(fields, fmt.Sprintf("%s: %s", goStructFieldName(a.Name), e.emitExpr(a.Value)))
 					}
 				} else {
 					for _, a := range ex.Args {
@@ -942,7 +1038,7 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				if ci.Struct.GoName != "" {
 					structGoName = ci.Struct.GoName
 				}
-				if isUserStruct {
+				if !ci.Struct.IsGoType {
 					structGoName = goIdent(structGoName)
 				}
 				return fmt.Sprintf("%s{%s}", structGoName, strings.Join(fields, ", "))
@@ -952,6 +1048,14 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				case "str.join":
 					e.useImport("strings")
 					return fmt.Sprintf("strings.Join(%s, %s)", e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
+				case "str.fromCharCode":
+					e.usedStrFromCharCode = true
+					return fmt.Sprintf("cbStrFromCharCode(%s)", e.emitExpr(ex.Args[0].Value))
+				case "str.quote":
+					e.useImport("strconv")
+					return fmt.Sprintf("strconv.Quote(%s)", e.emitExpr(ex.Args[0].Value))
+				case "str.fromBytes":
+					return fmt.Sprintf("string(%s)", e.emitExpr(ex.Args[0].Value))
 				case "list.len", "dict.len", "str.len":
 					return fmt.Sprintf("int64(len(%s))", e.emitExpr(ci.Receiver))
 				case "list.push":
@@ -977,6 +1081,8 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				case "str.toInt":
 					e.usedStrToInt = true
 					return fmt.Sprintf("cbStrToInt(%s)", e.emitExpr(ci.Receiver))
+				case "str.toBytes":
+					return fmt.Sprintf("[]byte(%s)", e.emitExpr(ci.Receiver))
 				case "str.split":
 					e.useImport("strings")
 					return fmt.Sprintf("strings.Split(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value))
@@ -995,37 +1101,14 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 				case "str.replace":
 					e.useImport("strings")
 					return fmt.Sprintf("strings.ReplaceAll(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
-				case "std/regex.isMatch", "std/regex.find", "std/regex.findAll":
-					e.usedStdRegex = true
-					method := strings.TrimPrefix(ci.MethodName, "std/regex.")
-					return fmt.Sprintf("%s.%s(%s)", e.emitExpr(ci.Receiver), method, e.emitExpr(ex.Args[0].Value))
-				case "std/regex.replaceAll":
-					e.usedStdRegex = true
-					return fmt.Sprintf("%s.replaceAll(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0].Value), e.emitExpr(ex.Args[1].Value))
-				case "std/json.stringify":
-					e.usedStdJson = true
-					return fmt.Sprintf("cbStdJsonStringify(%s)", e.emitExpr(ex.Args[0].Value))
-				case "std/json.isNull", "std/json.asStr", "std/json.asInt", "std/json.asFloat", "std/json.asBool", "std/json.asList", "std/json.asDict":
-					e.usedStdJson = true
-					method := strings.TrimPrefix(ci.MethodName, "std/json.")
-					return fmt.Sprintf("%s.%s()", e.emitExpr(ci.Receiver), method)
-				case "std/json.get", "std/json.has":
-					e.usedStdJson = true
-					method := strings.TrimPrefix(ci.MethodName, "std/json.")
-					return fmt.Sprintf("%s.%s(%s)", e.emitExpr(ci.Receiver), method, e.emitExpr(ex.Args[0].Value))
-				case "std/cli.addFlag", "std/cli.addOption", "std/cli.addArg", "std/cli.parse", "std/cli.parseArgs", "std/cli.printUsage", "std/cli.hasFlag", "std/cli.getOption", "std/cli.getArg":
-					e.usedStdCli = true
-					method := strings.TrimPrefix(ci.MethodName, "std/cli.")
-					var mArgs []string
-					for _, a := range ex.Args {
-						mArgs = append(mArgs, e.emitExpr(a.Value))
-					}
-					return fmt.Sprintf("%s.%s(%s)", e.emitExpr(ci.Receiver), method, strings.Join(mArgs, ", "))
+				case "int.toByte":
+					return fmt.Sprintf("byte(%s)", e.emitExpr(ci.Receiver))
+				case "byte.toInt":
+					return fmt.Sprintf("int64(%s)", e.emitExpr(ci.Receiver))
 				}
 
 			case sema.CallFunc:
 				if ci.Fn != nil {
-					e.markStdlibUsage(ci.Fn.GoName)
 					var args []string
 					for i, a := range ex.Args {
 						byRef := i < len(ci.Fn.Params) && ci.Fn.Params[i].ByRef
@@ -1088,6 +1171,8 @@ func (e *emitter) exprHasFallibleCall(expr ast.Expr) bool {
 		return e.exprHasFallibleCall(ex.Target)
 	case *ast.IndexExpr:
 		return e.exprHasFallibleCall(ex.Target) || e.exprHasFallibleCall(ex.Index)
+	case *ast.SliceExpr:
+		return e.exprHasFallibleCall(ex.Target) || e.exprHasFallibleCall(ex.Start) || e.exprHasFallibleCall(ex.End)
 	case *ast.CallExpr:
 		if ci, ok := e.prog.CallInfos[ex]; ok {
 			if ci.Kind == sema.CallError || ci.CanError {
