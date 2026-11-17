@@ -27,7 +27,6 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 				FieldMap: make(map[string]FieldSymbol),
 				Public:   d.Public,
 				IsGoType: isGoType,
-				Pos:      d.Pos,
 			}
 		case *ast.EnumDecl:
 			if err := a.predeclareType(d.Name, d.Pos); err != nil {
@@ -39,7 +38,6 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 				ModuleID:   a.mod.ID,
 				VariantSet: make(map[string]bool),
 				Public:     d.Public,
-				Pos:        d.Pos,
 			}
 		}
 	}
@@ -123,7 +121,7 @@ func (a *analyzer) resolveTypeDecl(d *ast.TypeDecl) error {
 			return err
 		}
 		d.Fields[i].Type = fType
-		fs := FieldSymbol{Name: f.Name, Type: fType, Pos: f.Pos}
+		fs := FieldSymbol{Name: f.Name, Type: fType}
 		sym.Fields = append(sym.Fields, fs)
 		sym.FieldMap[f.Name] = fs
 	}
@@ -140,7 +138,7 @@ func (a *analyzer) checkRecursiveStructFields() error {
 		if sym == nil || sym.IsGoType {
 			continue
 		}
-		for _, f := range sym.Fields {
+		for _, f := range td.Fields {
 			if a.structReaches(f.Type, sym, make(map[string]bool)) {
 				return newSemaError(
 					f.Pos,
@@ -190,7 +188,6 @@ func (a *analyzer) resolveEnumDecl(d *ast.EnumDecl) error {
 		if sym.VariantSet[v] {
 			return newSemaError(d.Pos, "duplicate variant %q in enum %q", v, d.Name)
 		}
-		sym.Variants = append(sym.Variants, v)
 		sym.VariantSet[v] = true
 	}
 	return nil
@@ -253,7 +250,6 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 		ReturnType: retType,
 		CanError:   fn.CanError,
 		Public:     fn.Public,
-		Decl:       fn,
 		Pos:        fn.Pos,
 	}
 	return nil

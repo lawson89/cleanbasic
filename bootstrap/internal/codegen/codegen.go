@@ -23,7 +23,7 @@ func EmitGo(prog *sema.TypedProgram) (string, error) {
 
 // EmitGoWithOptions emits a single-file procedural Go program using the specified Options.
 func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
-	if prog == nil || prog.Main == nil {
+	if prog == nil || prog.EntryModule == nil {
 		return "", fmt.Errorf("nil program")
 	}
 
@@ -96,7 +96,7 @@ var goReservedIdents = map[string]bool{
 	"any": true, "error": true, "string": true, "int64": true, "float64": true,
 	"byte": true, "bool": true, "true": true, "false": true, "nil": true, "len": true,
 	"append": true, "make": true, "new": true, "panic": true, "recover": true,
-	"close": true, "delete": true, "copy": true, "print": true, "println": true,
+	"close": true, "delete": true, "copy": true, "println": true,
 }
 
 func goIdent(name string) string {
@@ -169,8 +169,8 @@ func (e *emitter) emitProgram(prog *ast.Program) string {
 			}
 			goName = goIdent(goName)
 			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
-			for i, f := range d.Fields {
-				fType := e.goSemaType(structSym.Fields[i].Type)
+			for _, f := range d.Fields {
+				fType := e.goSemaType(f.Type)
 				sb.WriteString(fmt.Sprintf("\t%s %s\n", goStructFieldName(f.Name), fType))
 			}
 			sb.WriteString("}\n\n")

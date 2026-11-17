@@ -233,11 +233,6 @@ func (e *emitter) effectiveCallArgs(ex *ast.CallExpr, ci *sema.CallInfo) []ast.E
 }
 
 func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
-	if id, ok := ex.Callee.(*ast.IdentExpr); ok && id.Name == "print" {
-		e.useImport("fmt")
-		return fmt.Sprintf("fmt.Println(%s)", e.emitExpr(ex.Args[0]))
-	}
-
 	if ci := ex.CallInfo; ci != nil {
 		switch ci.Kind {
 		case sema.CallStructCtor:
@@ -260,6 +255,10 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 		case sema.CallFunc, sema.CallUFCS:
 			if ci.Fn != nil {
 				rawArgs := e.effectiveCallArgs(ex, ci)
+				if ci.Fn.Name == "print" {
+					e.useImport("fmt")
+					return fmt.Sprintf("fmt.Println(%s)", e.emitExpr(rawArgs[0]))
+				}
 				args := make([]string, 0, len(rawArgs))
 				for i, argExpr := range rawArgs {
 					byRef := i < len(ci.Fn.Params) && ci.Fn.Params[i].ByRef

@@ -769,3 +769,31 @@ func TestEmitGoAlignedSimplifications(t *testing.T) {
 		t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
 	}
 }
+
+func TestEmitGoUFCSPrint(t *testing.T) {
+	src := strings.Join([]string{
+		"fn main() as int",
+		`    "hello".print()`,
+		"    return 0",
+		"end fn",
+	}, "\n")
+
+	prog, err := sema.AnalyzeSource(src, "ufcs_print_test.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+
+	if !strings.Contains(goCode, `fmt.Println("hello")`) {
+		t.Errorf("expected fmt.Println call in generated Go:\n%s", goCode)
+	}
+
+	got := runGeneratedGo(t, goCode)
+	if got != "hello" {
+		t.Errorf("output = %q, want %q", got, "hello")
+	}
+}

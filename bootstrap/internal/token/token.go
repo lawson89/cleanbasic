@@ -129,14 +129,6 @@ type Token struct {
 	Pos    Position
 }
 
-// String returns a readable representation of the token for debugging and errors.
-func (t Token) String() string {
-	if t.Kind == EOF || t.Kind == NEWLINE {
-		return fmt.Sprintf("%s(%s)", t.Kind, t.Pos.String())
-	}
-	return fmt.Sprintf("%s(%q at %s)", t.Kind, t.Lexeme, t.Pos.String())
-}
-
 var singleWordKeywords = map[string]Kind{
 	"true":     TRUE,
 	"false":    FALSE,

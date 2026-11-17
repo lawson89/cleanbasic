@@ -122,7 +122,6 @@ func (s *Scope) Lookup(name string) (*VarSymbol, bool) {
 
 // TypedProgram holds the AST and module symbol tables for an analyzed CleanBasic program.
 type TypedProgram struct {
-	Main        *ast.Program
 	Modules     []*ModuleInfo
 	EntryModule *ModuleInfo
 	ModuleByID  map[string]*ModuleInfo
@@ -165,7 +164,6 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 	}
 
 	tp := &TypedProgram{
-		Main:        prog,
 		Modules:     topoOrder,
 		EntryModule: entryMod,
 		ModuleByID:  byID,
@@ -183,7 +181,6 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 		// Register built-in single-argument print(msg as str) function in each module
 		mod.Functions["print"] = &FnSymbol{
 			Name:       "print",
-			GoName:     "print",
 			Params:     []ParamSymbol{{Name: "msg", Type: StrType}},
 			ReturnType: VoidType,
 		}

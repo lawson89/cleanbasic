@@ -157,7 +157,6 @@ type FnSymbol struct {
 	ReturnType Type
 	CanError   bool
 	Public     bool
-	Decl       *FnDecl
 	Pos        token.Position
 }
 
@@ -165,7 +164,6 @@ type FnSymbol struct {
 type FieldSymbol struct {
 	Name string
 	Type Type
-	Pos  token.Position
 }
 
 // StructSymbol represents a user-defined struct type.
@@ -177,7 +175,6 @@ type StructSymbol struct {
 	FieldMap map[string]FieldSymbol
 	Public   bool
 	IsGoType bool
-	Pos      token.Position
 }
 
 // EnumSymbol represents a user-defined enum type.
@@ -185,10 +182,8 @@ type EnumSymbol struct {
 	Name       string
 	GoName     string
 	ModuleID   string
-	Variants   []string
 	VariantSet map[string]bool
 	Public     bool
-	Pos        token.Position
 }
 
 // CallKind identifies how a CallExpr was resolved during semantic analysis.

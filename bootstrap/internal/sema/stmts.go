@@ -176,6 +176,18 @@ func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
 	return nil
 }
 
+func unwrapMutableDictTarget(expr ast.Expr) ast.Expr {
+	for {
+		idxExpr, ok := expr.(*ast.IndexExpr)
+		if ok && expr.ExprType().Kind == KindDict && idxExpr.Target.ExprType().Kind == KindDict {
+			expr = idxExpr.Target
+			continue
+		}
+		break
+	}
+	return expr
+}
+
 func (a *analyzer) checkMutableTarget(expr ast.Expr, scope *Scope) error {
 	switch t := expr.(type) {
 	case *ast.IdentExpr:
@@ -272,15 +284,7 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		if targetObjType := target.Target.ExprType(); targetObjType.Kind == KindStr {
 			return newSemaError(s.Pos, "cannot assign to string index (strings are immutable)")
 		}
-		mutableBase := target.Target
-		for {
-			idxExpr, ok := mutableBase.(*ast.IndexExpr)
-			if ok && mutableBase.ExprType().Kind == KindDict && idxExpr.Target.ExprType().Kind == KindDict {
-				mutableBase = idxExpr.Target
-				continue
-			}
-			break
-		}
+		mutableBase := unwrapMutableDictTarget(target.Target)
 		if err := a.checkMutableTarget(mutableBase, scope); err != nil {
 			return err
 		}

@@ -25,7 +25,7 @@ func TestAnalyzeCoreCases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadAndAnalyze(%s) failed: %v", tc, err)
 			}
-			if prog == nil || prog.Main == nil {
+			if prog == nil || prog.EntryModule == nil {
 				t.Fatalf("LoadAndAnalyze(%s) returned nil program", tc)
 			}
 			if _, ok := prog.EntryModule.Functions["main"]; !ok {
@@ -62,7 +62,16 @@ end fn
 	}
 
 	// Verify inferred types for local VarDecls inside compute
-	fnDecl := prog.EntryModule.Functions["compute"].Decl
+	var fnDecl *ast.FnDecl
+	for _, decl := range prog.EntryModule.Program.Decls {
+		if fn, ok := decl.(*ast.FnDecl); ok && fn.Name == "compute" {
+			fnDecl = fn
+			break
+		}
+	}
+	if fnDecl == nil {
+		t.Fatal("missing compute function declaration")
+	}
 	expectedVars := map[string]Type{
 		"sum":    IntType,
 		"scaled": FloatType,
