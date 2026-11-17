@@ -76,14 +76,17 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 		}
 	}
 
-	// Pass 2: Analyze top-level constants in declaration order.
+	// Pass 2: Analyze top-level constants and variables in declaration order.
 	for _, decl := range prog.Decls {
-		constDecl, ok := decl.(*ast.ConstDecl)
-		if !ok {
-			continue
-		}
-		if err := a.analyzeTopLevelConst(constDecl); err != nil {
-			return err
+		switch d := decl.(type) {
+		case *ast.ConstDecl:
+			if err := a.analyzeTopLevelConst(d); err != nil {
+				return err
+			}
+		case *ast.VarDecl:
+			if err := a.analyzeTopLevelVar(d); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -289,6 +292,60 @@ func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
 		GoName:  a.mod.symbolGoName(d.Name),
 		Type:    finalType,
 		IsConst: true,
+		Public:  d.Public,
+		Pos:     d.Pos,
+	}
+	if err := a.mod.GlobalVars.Define(sym); err != nil {
+		return err
+	}
+	d.Type = &finalType
+	return nil
+}
+
+func (a *analyzer) analyzeTopLevelVar(d *ast.VarDecl) error {
+	if existingFn, exists := a.mod.Functions[d.Name]; exists {
+		return newSemaError(d.Pos, "variable %q conflicts with function declared at %s", d.Name, existingFn.Pos.String())
+	}
+
+	var finalType Type
+	if d.Value != nil {
+		valType, err := a.inferExpr(d.Value, a.mod.GlobalVars)
+		if err != nil {
+			return err
+		}
+		if valType.IsVoid() {
+			return newSemaError(d.Pos, "cannot initialize variable %q with void expression", d.Name)
+		}
+		finalType = valType
+		if d.Type != nil {
+			declaredType, err := a.resolveType(*d.Type)
+			if err != nil {
+				return err
+			}
+			if !declaredType.Equals(valType) {
+				return newSemaError(d.Pos, "type mismatch in variable %q declaration: expected %s, got %s", d.Name, declaredType.String(), valType.String())
+			}
+			finalType = declaredType
+		}
+	} else {
+		if d.Type == nil {
+			return newSemaError(d.Pos, "variable %q requires either 'as Type' or '= Expr'", d.Name)
+		}
+		declaredType, err := a.resolveType(*d.Type)
+		if err != nil {
+			return err
+		}
+		if declaredType.IsVoid() {
+			return newSemaError(d.Pos, "variable %q cannot have void type", d.Name)
+		}
+		finalType = declaredType
+	}
+
+	sym := &VarSymbol{
+		Name:    d.Name,
+		GoName:  a.mod.symbolGoName(d.Name),
+		Type:    finalType,
+		IsConst: false,
 		Public:  d.Public,
 		Pos:     d.Pos,
 	}

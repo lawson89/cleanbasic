@@ -101,7 +101,7 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		if ex.GoName != "" {
 			return goIdent(ex.GoName)
 		}
-		if e.byRefVars != nil && e.byRefVars[ex.Name] {
+		if ex.ByRef {
 			return fmt.Sprintf("(*%s)", goIdent(ex.Name))
 		}
 		return goIdent(ex.Name)
@@ -206,11 +206,8 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 func (e *emitter) emitArgExpr(expr ast.Expr, byRef bool) string {
 	if byRef {
-		if id, ok := expr.(*ast.IdentExpr); ok {
-			if e.byRefVars != nil && e.byRefVars[id.Name] {
-				return goIdent(id.Name)
-			}
-			return "&" + goIdent(id.Name)
+		if id, ok := expr.(*ast.IdentExpr); ok && id.ByRef {
+			return goIdent(id.Name)
 		}
 		return "&" + e.emitExpr(expr)
 	}

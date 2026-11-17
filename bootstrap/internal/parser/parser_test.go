@@ -318,3 +318,44 @@ end fn
 		}
 	}
 }
+
+func TestParseTopLevelAndZeroInitVarDecl(t *testing.T) {
+	src := strings.Join([]string{
+		"dim gCount = 1",
+		"public dim gName as str = \"cb\"",
+		"dim gItems as list[str]",
+		"public dim gCache as dict[str, int]",
+		"fn main() as int",
+		"    dim x as int",
+		"    dim ch as mailbox[int]",
+		"    return x",
+		"end fn",
+	}, "\n")
+	prog, err := Parse(src, "top_var.cb")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(prog.Decls) != 5 {
+		t.Fatalf("got %d decls, want 5", len(prog.Decls))
+	}
+	v0, ok := prog.Decls[0].(*ast.VarDecl)
+	if !ok || v0.Public || v0.Name != "gCount" || v0.Value == nil {
+		t.Fatalf("unexpected decl[0]: %#v", prog.Decls[0])
+	}
+	v1, ok := prog.Decls[1].(*ast.VarDecl)
+	if !ok || !v1.Public || v1.Name != "gName" || v1.Type == nil || v1.Value == nil {
+		t.Fatalf("unexpected decl[1]: %#v", prog.Decls[1])
+	}
+	v2, ok := prog.Decls[2].(*ast.VarDecl)
+	if !ok || v2.Public || v2.Type == nil || v2.Value != nil {
+		t.Fatalf("unexpected decl[2]: %#v", prog.Decls[2])
+	}
+	v3, ok := prog.Decls[3].(*ast.VarDecl)
+	if !ok || !v3.Public || v3.Type == nil || v3.Value != nil {
+		t.Fatalf("unexpected decl[3]: %#v", prog.Decls[3])
+	}
+
+	if _, err := Parse("fn main()\n    dim bad\nend fn\n", "bad_var.cb"); err == nil {
+		t.Fatalf("expected parse error for 'dim bad' without type or initializer")
+	}
+}

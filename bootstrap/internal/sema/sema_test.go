@@ -486,26 +486,34 @@ end fn
 		}
 	})
 
+	t.Run("byref shadowing allowed in inner scopes", func(t *testing.T) {
+		src := strings.Join([]string{
+			"fn f(byref x as int)",
+			"    x = x + 1",
+			"    if true",
+			"        dim x = 10",
+			"        x = x + 1",
+			"    end if",
+			"    for x = 1 to 2",
+			"        print(x.toStr())",
+			"    end for",
+			"    try",
+			"        print(x.toStr())",
+			"    catch x",
+			"        print(x.msg)",
+			"    end try",
+			"end fn",
+		}, "\n")
+		if _, err := AnalyzeSource(src, "byref_shadow_ok.cb"); err != nil {
+			t.Fatalf("expected byref shadowing to succeed, got: %v", err)
+		}
+	})
+
 	errCases := []struct {
 		name    string
 		src     string
 		wantErr string
 	}{
-		{
-			name:    "byref shadowed by dim",
-			src:     "fn f(byref x as int)\n    dim x = 1\nend fn\n",
-			wantErr: "cannot shadow byref parameter \"x\"",
-		},
-		{
-			name:    "byref shadowed by for loop var",
-			src:     "fn f(byref x as int)\n    for x = 1 to 3\n        print(x)\n    end for\nend fn\n",
-			wantErr: "cannot shadow byref parameter \"x\"",
-		},
-		{
-			name:    "byref shadowed by catch var",
-			src:     "fn f(byref x as int)\n    try\n        print(x.toStr())\n    catch x\n        print(x.msg)\n    end try\nend fn\n",
-			wantErr: `cannot shadow byref parameter "x"`,
-		},
 		{
 			name: "string index assignment rejected",
 			src: `fn main()
@@ -544,11 +552,10 @@ end fn
 	}
 }
 func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
-	t.Run("start_job_rejects_byref", func(t *testing.T) {
+	t.Run("start_job_allows_byref", func(t *testing.T) {
 		src := "fn mut(byref x as int)\n    x = x + 1\nend fn\nfn main()\n    dim a = 1\n    start job mut(a)\nend fn\n"
-		_, err := AnalyzeSource(src, "byref_job.cb")
-		if err == nil || !strings.Contains(err.Error(), "that takes 'byref' parameters") {
-			t.Fatalf("expected byref start job error, got: %v", err)
+		if _, err := AnalyzeSource(src, "byref_job.cb"); err != nil {
+			t.Fatalf("expected start job with byref to succeed, got: %v", err)
 		}
 	})
 
@@ -775,4 +782,68 @@ end fn
 			}
 		})
 	}
+}
+
+func TestTopLevelAndZeroInitVarDeclSema(t *testing.T) {
+	writeFiles := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		for rel, content := range files {
+			full := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+				t.Fatalf("mkdir failed: %v", err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+				t.Fatalf("write failed: %v", err)
+			}
+		}
+		return filepath.Join(dir, "main.cb")
+	}
+
+	t.Run("cross-module public dim read and mutate", func(t *testing.T) {
+		entry := writeFiles(t, map[string]string{
+			"state.cb": strings.Join([]string{
+				"public dim counter = 0",
+				"public dim tags as list[str]",
+				"public const LIMIT = 10",
+				"dim secret = 42",
+			}, "\n"),
+			"main.cb": strings.Join([]string{
+				`import "state.cb"`,
+				"fn bump(byref n as int)",
+				"    n = n + 1",
+				"end fn",
+				"fn main() as int",
+				"    state.counter = state.counter + 1",
+				"    bump(state.counter)",
+				`    state.tags.push("ok")`,
+				"    dim localInt as int",
+				"    dim localDict as dict[str, int]",
+				`    localDict["a"] = localInt`,
+				"    return state.counter",
+				"end fn",
+			}, "\n"),
+		})
+		if _, err := LoadAndAnalyze(entry); err != nil {
+			t.Fatalf("LoadAndAnalyze failed: %v", err)
+		}
+	})
+
+	t.Run("private module dim and public const mutation rejected", func(t *testing.T) {
+		entryPrivate := writeFiles(t, map[string]string{
+			"state.cb": "dim secret = 42\n",
+			"main.cb":  `import "state.cb"` + "\nfn main() as int\n    return state.secret\nend fn\n",
+		})
+		if _, err := LoadAndAnalyze(entryPrivate); err == nil || !strings.Contains(err.Error(), "is private") {
+			t.Fatalf("expected private variable error, got: %v", err)
+		}
+
+		entryConst := writeFiles(t, map[string]string{
+			"state.cb": "public const LIMIT = 10\n",
+			"main.cb":  `import "state.cb"` + "\nfn main()\n    state.LIMIT = 20\nend fn\n",
+		})
+		if _, err := LoadAndAnalyze(entryConst); err == nil || !strings.Contains(err.Error(), "cannot mutate constant") {
+			t.Fatalf("expected constant mutation error, got: %v", err)
+		}
+	})
 }

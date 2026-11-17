@@ -6,6 +6,7 @@
 // EXPECT_OUT: pool sum=60
 // EXPECT_OUT: drain=100,200,300
 // EXPECT_OUT: done=true
+// EXPECT_OUT: byref_job=42
 
 type TreeNode
     val as int
@@ -36,6 +37,11 @@ end fn
 
 fn quickWorker(x as int, outBox as mailbox[int])
     outBox.post(x + 1)
+end fn
+
+fn byrefJobWorker(byref n as TreeNode, done as mailbox[bool])
+    n.val = 42
+    done.post(true)
 end fn
 
 fn main() as int
@@ -116,6 +122,12 @@ fn main() as int
     start job quickWorker(41, qOutBox)
     dim qOut = qOutBox.get()
     print("done=" + (qOut == 42).toStr())
+
+    dim byrefNode = TreeNode()
+    dim byrefDone as mailbox[bool]
+    start job byrefJobWorker(byrefNode, byrefDone)
+    byrefDone.get()
+    print("byref_job=" + byrefNode.val.toStr())
 
     return 0
 end fn

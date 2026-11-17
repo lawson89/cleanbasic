@@ -314,14 +314,17 @@ func (d *FnDecl) declNode()               {}
 
 // --- Statements ---
 
-// VarDecl represents: dim Name [as Type] = Value
+// VarDecl represents: [public] dim Name [as Type] [= Value]
 type VarDecl struct {
-	Pos   token.Position
-	Name  string
-	Type  *Type // nil if inferred; resolved in place by sema
-	Value Expr
+	Pos    token.Position
+	Public bool
+	Name   string
+	Type   *Type // nil if inferred; resolved in place by sema
+	Value  Expr  // nil if zero-initialized via 'dim Name as Type'
 }
 
+func (s *VarDecl) DeclPos() token.Position { return s.Pos }
+func (s *VarDecl) declNode()               {}
 func (s *VarDecl) StmtPos() token.Position { return s.Pos }
 func (s *VarDecl) stmtNode()               {}
 
@@ -466,6 +469,7 @@ type IdentExpr struct {
 	Pos      token.Position
 	Name     string
 	GoName   string
+	ByRef    bool
 	SemaType Type
 }
 

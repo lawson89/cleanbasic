@@ -30,6 +30,7 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 		if sym.GoName != "" {
 			e.GoName = sym.GoName
 		}
+		e.ByRef = sym.ByRef
 		resolved = sym.Type
 	case *ast.UnaryExpr:
 		resolved, err = a.inferUnaryExpr(e, scope)
@@ -233,10 +234,13 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 		if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
 			sym, found := impMod.GlobalVars.Lookup(e.Field)
 			if !found {
-				return VoidType, newSemaError(e.Pos, "module %q has no constant %q", objIdent.Name, e.Field)
+				return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, e.Field)
 			}
 			if !sym.Public {
-				return VoidType, newSemaError(e.Pos, "constant %q in module %q is private", e.Field, objIdent.Name)
+				if sym.IsConst {
+					return VoidType, newSemaError(e.Pos, "constant %q in module %q is private", e.Field, objIdent.Name)
+				}
+				return VoidType, newSemaError(e.Pos, "variable %q in module %q is private", e.Field, objIdent.Name)
 			}
 			e.GoName = sym.GoName
 			return sym.Type, nil
@@ -429,6 +433,11 @@ func (a *analyzer) checkAddressableLValue(expr ast.Expr, scope *Scope) error {
 	case *ast.IdentExpr:
 		return a.checkMutableTarget(t, scope)
 	case *ast.FieldAccessExpr:
+		if objIdent, ok := t.Target.(*ast.IdentExpr); ok {
+			if _, isMod := a.mod.Imports[objIdent.Name]; isMod {
+				return a.checkMutableTarget(t, scope)
+			}
+		}
 		if t.Target.ExprType().Kind != KindStruct {
 			return newSemaError(t.Pos, "field access target is not an addressable struct")
 		}

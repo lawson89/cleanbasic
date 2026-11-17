@@ -147,11 +147,6 @@ func (a *analyzer) analyzeStartJobStmt(s *ast.StartJobStmt, scope *Scope) error 
 	if ci.Fn.CanError {
 		return newSemaError(s.Pos, "cannot use 'start job' with fallible function %q (handle errors inside the worker function)", ci.Fn.Name)
 	}
-	for _, p := range ci.Fn.Params {
-		if p.ByRef {
-			return newSemaError(s.Pos, "cannot use 'start job' with function %q that takes 'byref' parameters", ci.Fn.Name)
-		}
-	}
 	return nil
 }
 
@@ -163,21 +158,36 @@ func (a *analyzer) inferRootExpr(expr ast.Expr, scope *Scope) (Type, error) {
 }
 
 func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
-	valType, err := a.inferRootExpr(s.Value, scope)
-	if err != nil {
-		return err
-	}
-	if valType.IsVoid() {
-		return newSemaError(s.Pos, "cannot initialize variable %q with void expression", s.Name)
-	}
-	finalType := valType
-	if s.Type != nil {
+	var finalType Type
+	if s.Value != nil {
+		valType, err := a.inferRootExpr(s.Value, scope)
+		if err != nil {
+			return err
+		}
+		if valType.IsVoid() {
+			return newSemaError(s.Pos, "cannot initialize variable %q with void expression", s.Name)
+		}
+		finalType = valType
+		if s.Type != nil {
+			declaredType, err := a.resolveType(*s.Type)
+			if err != nil {
+				return err
+			}
+			if !declaredType.Equals(valType) {
+				return newSemaError(s.Pos, "type mismatch in declaration of %q: expected %s, got %s", s.Name, declaredType.String(), valType.String())
+			}
+			finalType = declaredType
+		}
+	} else {
+		if s.Type == nil {
+			return newSemaError(s.Pos, "variable %q requires either 'as Type' or '= Expr'", s.Name)
+		}
 		declaredType, err := a.resolveType(*s.Type)
 		if err != nil {
 			return err
 		}
-		if !declaredType.Equals(valType) {
-			return newSemaError(s.Pos, "type mismatch in declaration of %q: expected %s, got %s", s.Name, declaredType.String(), valType.String())
+		if declaredType.IsVoid() {
+			return newSemaError(s.Pos, "variable %q cannot have void type", s.Name)
 		}
 		finalType = declaredType
 	}
@@ -188,22 +198,11 @@ func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
 		IsConst: false,
 		Pos:     s.Pos,
 	}
-	if err := a.defineLocalVar(scope, sym); err != nil {
+	if err := scope.Define(sym); err != nil {
 		return err
 	}
 	s.Type = &finalType
 	return nil
-}
-
-func (a *analyzer) defineLocalVar(scope *Scope, sym *VarSymbol) error {
-	if a.currentFn != nil {
-		for _, p := range a.currentFn.Params {
-			if p.ByRef && p.Name == sym.Name {
-				return newSemaError(sym.Pos, "cannot shadow byref parameter %q", sym.Name)
-			}
-		}
-	}
-	return scope.Define(sym)
 }
 
 func (a *analyzer) checkMutableTarget(expr ast.Expr, scope *Scope) error {
@@ -218,6 +217,21 @@ func (a *analyzer) checkMutableTarget(expr ast.Expr, scope *Scope) error {
 		}
 		return nil
 	case *ast.FieldAccessExpr:
+		if objIdent, ok := t.Target.(*ast.IdentExpr); ok {
+			if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
+				sym, found := impMod.GlobalVars.Lookup(t.Field)
+				if !found {
+					return newSemaError(t.Pos, "module %q has no variable %q", objIdent.Name, t.Field)
+				}
+				if !sym.Public {
+					return newSemaError(t.Pos, "variable %q in module %q is private", t.Field, objIdent.Name)
+				}
+				if sym.IsConst {
+					return newSemaError(t.Pos, "cannot mutate constant %q (declared at %s)", t.Field, sym.Pos.String())
+				}
+				return nil
+			}
+		}
 		return a.checkMutableTarget(t.Target, scope)
 	case *ast.IndexExpr:
 		return a.checkMutableTarget(t.Target, scope)
@@ -242,13 +256,17 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 			return newSemaError(s.Pos, "cannot reassign constant %q (declared at %s)", target.Name, sym.Pos.String())
 		}
 		target.SetExprType(sym.Type)
+		if sym.GoName != "" {
+			target.GoName = sym.GoName
+		}
+		target.ByRef = sym.ByRef
 		if !sym.Type.Equals(valType) {
 			return newSemaError(s.Pos, "type mismatch in assignment to %q: expected %s, got %s", target.Name, sym.Type.String(), valType.String())
 		}
 		return nil
 
 	case *ast.FieldAccessExpr:
-		if err := a.checkMutableTarget(target.Target, scope); err != nil {
+		if err := a.checkMutableTarget(target, scope); err != nil {
 			return err
 		}
 		if targetType, err := a.inferExpr(target.Target, scope); err == nil && targetType.Kind == KindErr {
@@ -391,7 +409,7 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 		}
 
 		for i, name := range s.Vars {
-			if err := a.defineLocalVar(loopScope, &VarSymbol{
+			if err := loopScope.Define(&VarSymbol{
 				Name:    name,
 				Type:    varTypes[i],
 				IsConst: true,
@@ -421,7 +439,7 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 	}
 
 	loopScope := NewScope(scope)
-	if err := a.defineLocalVar(loopScope, &VarSymbol{
+	if err := loopScope.Define(&VarSymbol{
 		Name:    s.VarName,
 		Type:    IntType,
 		IsConst: true,
@@ -496,7 +514,7 @@ func (a *analyzer) analyzeTryCatchStmt(s *ast.TryCatchStmt, scope *Scope) error 
 	a.tryDepth--
 
 	catchScope := NewScope(scope)
-	if err := a.defineLocalVar(catchScope, &VarSymbol{
+	if err := catchScope.Define(&VarSymbol{
 		Name:    s.CatchVar,
 		Type:    ErrType,
 		IsConst: true,

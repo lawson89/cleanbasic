@@ -29,13 +29,14 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 ```
 Program         ::= TopLevelDecl*
 
-TopLevelDecl    ::= ImportDecl | GoImportDecl | GoBlockDecl | ConstDecl | TypeDecl | EnumDecl | FnDecl
+TopLevelDecl    ::= ImportDecl | GoImportDecl | GoBlockDecl | ConstDecl | TopVarDecl | TypeDecl | EnumDecl | FnDecl
 
 ImportDecl      ::= "import" StringLiteral ["as" Identifier] NEWLINE
 GoImportDecl    ::= "go import" StringLiteral ["as" Identifier] NEWLINE
 GoBlockDecl     ::= "go" NEWLINE <verbatim Go code> "end go" NEWLINE
 
 ConstDecl       ::= ["public"] "const" Identifier ["as" Type] "=" Expr NEWLINE
+TopVarDecl      ::= ["public"] "dim" Identifier (["as" Type] "=" Expr | "as" Type) NEWLINE
 
 EnumDecl        ::= ["public"] "enum" Identifier NEWLINE Identifier* "end enum" NEWLINE
 
@@ -55,7 +56,7 @@ Statement       ::= VarDecl | Assignment | ExprStmt
                   | IfStmt | ForStmt | WhileStmt | SelectStmt
                   | TryCatchStmt | DeferStmt | StartJobStmt | ReturnStmt | BreakStmt | ContinueStmt
 
-VarDecl         ::= "dim" Identifier ["as" Type] "=" Expr NEWLINE
+VarDecl         ::= "dim" Identifier (["as" Type] "=" Expr | "as" Type) NEWLINE
 Assignment      ::= Expr "=" Expr NEWLINE
 ExprStmt        ::= Expr NEWLINE
 
@@ -163,7 +164,7 @@ end fn
 
 CleanBasic enforces strict bottom-up type inference:
 
-* **Inferred Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression.
+* **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim ch as mailbox[int]`), zero-initializing primitives/structs/lists and initializing `dict` to an empty writable map and `mailbox` to an unbuffered channel. Top-level `[public] dim` declarations are also supported for module-level mutable state.
 
 * **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers always use typed constructors (`dim scores = dict[str, int]()`, `dim items = list[str]()`).
 
@@ -254,7 +255,7 @@ end fn
 
 * **2-Variable `for-in` Loops & `byref` Addressability/Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. All `for-in` loop variables are immutable (`IsConst: true`).
 
-* **Built-In `print` & Receiver Methods:** `print(msg as str)` accepts a single `str` argument (`fmt.Println(msg)`). String/list/int helpers are receiver methods: `list[str].join(sep as str) as str`, `str.quote() as str`, `int.toChar() as str`, and fallible `str.toInt() as int can error` / `str.toFloat() as float can error`. Mutable variables, struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Local `dim`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
+* **Built-In `print` & Receiver Methods:** `print(msg as str)` accepts a single `str` argument (`fmt.Println(msg)`). String/list/int helpers are receiver methods: `list[str].join(sep as str) as str`, `str.quote() as str`, `int.toChar() as str`, and fallible `str.toInt() as int can error` / `str.toFloat() as float can error`. Mutable variables (including `public dim` module variables), struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Inner-scope `dim`, `for` loop variables, and `catch` variables may freely shadow an enclosing function's `byref` parameter.
 
 ```
 fn demoContainers() as int
@@ -322,7 +323,7 @@ CleanBasic provides structured, data-race-safe concurrency built around typed me
   * `box.close()` (`close(box)`), `box.len() as int` (`int64(len(box))`), and `for msg in box ... end for` (`for msg := range box`).
 * **Background Jobs (`start job` Statement):**
   * `start job fnCall(...)` is a standalone statement that lowers 1:1 to `go fnCall(...)`.
-  * Target must be a user or module function/UFCS call; `can error` functions and `byref` parameters are rejected at compile time. Results and completion signals are communicated via `mailbox[T]`.
+  * Target must be a user or module function/UFCS call; `can error` functions are rejected at compile time, while `byref` parameters are allowed (`&arg` is passed and Go's escape analysis promotes the variable as needed). Results and completion signals are communicated via `mailbox[T]`.
 
 ### 7. Pure Value Structs & Recursive Trees (`list[T]`)
 

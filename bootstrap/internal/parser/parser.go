@@ -199,6 +199,8 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 	switch p.cur().Kind {
 	case token.CONST:
 		return p.parseConstDecl(startTok.Pos, isPublic)
+	case token.DIM:
+		return p.parseVarDeclWithPos(startTok.Pos, isPublic)
 	case token.TYPE:
 		return p.parseTypeDecl(startTok.Pos, isPublic)
 	case token.ENUM:
@@ -209,7 +211,7 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 		tok := p.cur()
 		return nil, &ParseError{
 			Pos:     tok.Pos,
-			Message: fmt.Sprintf("unexpected token %s (%q) at top level; expected import, go import, go, const, type, enum, or fn", tok.Kind, tok.Lexeme),
+			Message: fmt.Sprintf("unexpected token %s (%q) at top level; expected import, go import, go, const, dim, type, enum, or fn", tok.Kind, tok.Lexeme),
 		}
 	}
 }
@@ -610,9 +612,13 @@ func (p *Parser) parseStatement() (ast.Statement, error) {
 	}
 }
 
-// VarDecl ::= "dim" Identifier ["as" Type] "=" Expr NEWLINE
+// VarDecl ::= "dim" Identifier ["as" Type] ["=" Expr] NEWLINE
 func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {
-	kwTok := p.advance()
+	return p.parseVarDeclWithPos(p.cur().Pos, false)
+}
+
+func (p *Parser) parseVarDeclWithPos(pos token.Position, isPublic bool) (*ast.VarDecl, error) {
+	p.advance() // consume 'dim'
 
 	nameTok, err := p.expectIdent("in variable declaration")
 	if err != nil {
@@ -623,17 +629,21 @@ func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(token.ASSIGN, "in variable declaration"); err != nil {
-		return nil, err
+
+	var val ast.Expr
+	if p.match(token.ASSIGN) {
+		val, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	} else if explicitType == nil {
+		return nil, errAt(p.cur().Pos, "variable declaration %q requires either 'as Type' or '= Expr'", nameTok.Lexeme)
 	}
-	val, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
+
 	if err := p.expectNewline("variable declaration"); err != nil {
 		return nil, err
 	}
-	return &ast.VarDecl{Pos: kwTok.Pos, Name: nameTok.Lexeme, Type: explicitType, Value: val}, nil
+	return &ast.VarDecl{Pos: pos, Public: isPublic, Name: nameTok.Lexeme, Type: explicitType, Value: val}, nil
 }
 
 // Assignment ::= Expr "=" Expr NEWLINE

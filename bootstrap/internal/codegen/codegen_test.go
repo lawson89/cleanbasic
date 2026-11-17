@@ -720,3 +720,52 @@ func TestEmitFallibleNumericParsingAndReceiverMethods(t *testing.T) {
 		t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
 	}
 }
+
+func TestEmitGoAlignedSimplifications(t *testing.T) {
+	src := strings.Join([]string{
+		"dim gTotal = 10",
+		"dim gScores as dict[str, int]",
+		"",
+		"fn shadowAndBump(byref x as int)",
+		"    x = x + 5",
+		"    if true",
+		"        dim x = 100",
+		"        x = x + 1",
+		"    end if",
+		"    for x = 1 to 2",
+		"    end for",
+		"end fn",
+		"",
+		"fn jobMutator(byref n as int, done as mailbox[bool])",
+		"    n = n + 32",
+		"    done.post(true)",
+		"end fn",
+		"",
+		"fn main() as int",
+		"    dim localZero as int",
+		"    dim localDict as dict[str, int]",
+		`    localDict["k"] = 7`,
+		`    gScores["a"] = 3`,
+		"    shadowAndBump(gTotal)",
+		"    dim done as mailbox[bool]",
+		"    dim sharedVal = 10",
+		"    start job jobMutator(sharedVal, done)",
+		"    done.get()",
+		`    print(gTotal.toStr() + ":" + gScores["a"].toStr() + ":" + localZero.toStr() + ":" + localDict["k"].toStr() + ":" + sharedVal.toStr())`,
+		"    return 0",
+		"end fn",
+	}, "\n")
+	prog, err := sema.AnalyzeSource(src, "simplifications.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	got := runGeneratedGo(t, goCode)
+	want := "15:3:0:7:42"
+	if got != want {
+		t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
+	}
+}

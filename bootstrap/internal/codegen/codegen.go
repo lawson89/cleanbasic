@@ -78,7 +78,6 @@ type emitter struct {
 	goImports          map[string]string
 	usedDictGet        bool
 	usedDictContains   bool
-	byRefVars          map[string]bool
 	currentFn          *ast.FnDecl
 	currentTryID       int
 	tryCounter         int
@@ -210,6 +209,17 @@ func (e *emitter) emitProgram(prog *ast.Program) string {
 			}
 			sb.WriteString(fmt.Sprintf("var %s%s = %s\n\n", goName, typeStr, e.emitExpr(d.Value)))
 
+		case *ast.VarDecl:
+			goName := d.Name
+			if e.currentMod != nil {
+				if sym, ok := e.currentMod.GlobalVars.Lookup(d.Name); ok && sym.GoName != "" {
+					goName = sym.GoName
+				}
+			}
+			goName = goIdent(goName)
+			e.emitZeroOrInitVarDecl(&sb, goName, d, "", "")
+			sb.WriteString("\n")
+
 		case *ast.FnDecl:
 			if d.GoTarget != "" {
 				sb.WriteString(e.emitGoBoundFn(d))
@@ -281,16 +291,13 @@ func (e *emitter) emitFn(fn *ast.FnDecl) string {
 		name = e.fnGoName(fnSym)
 	}
 
-	prevByRef := e.byRefVars
 	prevFn := e.currentFn
 	prevFnSym := e.currentFnSym
 	prevTryID := e.currentTryID
-	e.byRefVars = make(map[string]bool)
 	e.currentFn = fn
 	e.currentFnSym = fnSym
 	e.currentTryID = 0
 	defer func() {
-		e.byRefVars = prevByRef
 		e.currentFn = prevFn
 		e.currentFnSym = prevFnSym
 		e.currentTryID = prevTryID
@@ -300,7 +307,6 @@ func (e *emitter) emitFn(fn *ast.FnDecl) string {
 	for i, p := range fn.Params {
 		paramGoType := e.goSemaType(fnSym.Params[i].Type)
 		if p.ByRef {
-			e.byRefVars[p.Name] = true
 			paramGoType = "*" + paramGoType
 		}
 		params = append(params, fmt.Sprintf("%s %s", goIdent(p.Name), paramGoType))

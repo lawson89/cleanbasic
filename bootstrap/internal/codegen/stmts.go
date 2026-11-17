@@ -9,6 +9,30 @@ import (
 	"cleanbasic/bootstrap/internal/sema"
 )
 
+func (e *emitter) emitZeroOrInitVarDecl(sb *strings.Builder, varGo string, d *ast.VarDecl, valStr string, indent string) {
+	if d.Value != nil {
+		if valStr == "" {
+			valStr = e.emitExpr(d.Value)
+		}
+		typeStr := ""
+		if d.Type != nil && !d.Type.IsVoid() {
+			typeStr = " " + e.goSemaType(*d.Type)
+		}
+		sb.WriteString(fmt.Sprintf("%svar %s%s = %s\n", indent, varGo, typeStr, valStr))
+		return
+	}
+
+	goType := e.goSemaType(*d.Type)
+	switch d.Type.Kind {
+	case ast.KindDict:
+		sb.WriteString(fmt.Sprintf("%svar %s %s = %s{}\n", indent, varGo, goType, goType))
+	case ast.KindMailbox:
+		elemGo := e.goSemaType(d.Type.Elem())
+		sb.WriteString(fmt.Sprintf("%svar %s %s = make(chan %s)\n", indent, varGo, goType, elemGo))
+	default:
+		sb.WriteString(fmt.Sprintf("%svar %s %s\n", indent, varGo, goType))
+	}
+}
 func (e *emitter) emitStmtList(stmts []ast.Statement, indent string, sb *strings.Builder) {
 	for _, st := range stmts {
 		e.emitStmt(sb, st, indent)
@@ -76,13 +100,12 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
-		valStr := e.emitRhs(sb, s.Value, indent)
-		typeStr := ""
-		if s.Type != nil && !s.Type.IsVoid() {
-			typeStr = " " + e.goSemaType(*s.Type)
+		valStr := ""
+		if s.Value != nil {
+			valStr = e.emitRhs(sb, s.Value, indent)
 		}
 		varGo := goIdent(s.Name)
-		sb.WriteString(fmt.Sprintf("%svar %s%s = %s\n", indent, varGo, typeStr, valStr))
+		e.emitZeroOrInitVarDecl(sb, varGo, s, valStr, indent)
 		sb.WriteString(fmt.Sprintf("%s_ = %s\n", indent, varGo))
 
 	case *ast.Assignment:

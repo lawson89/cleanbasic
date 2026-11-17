@@ -8,6 +8,10 @@
 // EXPECT_OUT: short-circuit: r1=false,r2=true,calls=0
 // EXPECT_OUT: branch: else if fallible=true
 // EXPECT_OUT: keywords: sum=25,var=5
+// EXPECT_OUT: globals_and_zero: 15,3,0,7
+
+dim gCounter = 10
+dim gMap as dict[str, int]
 
 type GoKeywords
     func as int
@@ -52,6 +56,14 @@ end fn
 fn checkPositive(s as str) as bool can error
     dim v = s.toInt()
     return v > 0
+end fn
+
+fn bumpWithShadow(byref x as int)
+    x = x + 5
+    if true
+        dim x = 99
+        x = x + 1
+    end if
 end fn
 
 fn testGoKeywords(func as int, map as int, chan as int, byref var as int, fmt as int, package as int, string as str) as int
@@ -173,6 +185,14 @@ fn main() as int
     dim var = 4
     dim kwSum = testGoKeywords(1, 2, 3, var, 5, 6, "abcd")
     print("keywords: sum=" + kwSum.toStr() + ",var=" + var.toStr())
+
+    // 6. Top-level dim, zero-init dim, and byref shadowing
+    bumpWithShadow(gCounter)
+    gMap["a"] = 3
+    dim zeroInt as int
+    dim zeroDict as dict[str, int]
+    zeroDict["b"] = 7
+    print("globals_and_zero: " + gCounter.toStr() + "," + gMap["a"].toStr() + "," + zeroInt.toStr() + "," + zeroDict["b"].toStr())
 
     return 0
 end fn
