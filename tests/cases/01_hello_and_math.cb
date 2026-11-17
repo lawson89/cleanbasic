@@ -13,6 +13,6 @@ fn main() as int
     print("arithmetic: " + msg)
 
     dim ok = (x == 3) and not (x > 10) or false
-    print("logic: ", ok)
+    print("logic: " + ok.toStr())
     return 0
 end fn

@@ -46,8 +46,8 @@ fn main() as int
     dim s2 = Shape(ShapeKind.Rect, 0, 4, 6)
     dim s3 = Shape(ShapeKind.Empty, 0, 0, 0)
 
-    print("circle area: ", calcArea(s1))
-    print("rect area: ", calcArea(s2))
-    print("empty area: ", calcArea(s3))
+    print("circle area: " + calcArea(s1).toStr())
+    print("rect area: " + calcArea(s2).toStr())
+    print("empty area: " + calcArea(s3).toStr())
     return 0
 end fn

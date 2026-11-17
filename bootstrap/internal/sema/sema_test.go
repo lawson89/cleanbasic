@@ -503,8 +503,8 @@ end fn
 		},
 		{
 			name:    "byref shadowed by catch var",
-			src:     "fn f(byref x as int)\n    try\n        print(x)\n    catch x\n        print(x.msg)\n    end try\nend fn\n",
-			wantErr: "cannot shadow byref parameter \"x\"",
+			src:     "fn f(byref x as int)\n    try\n        print(x.toStr())\n    catch x\n        print(x.msg)\n    end try\nend fn\n",
+			wantErr: `cannot shadow byref parameter "x"`,
 		},
 		{
 			name: "string index assignment rejected",
@@ -634,7 +634,7 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			"    return 1",
 			"end fn",
 			"fn worker(x as int)",
-			"    print(x)",
+			"    print(x.toStr())",
 			"end fn",
 			"fn main()",
 			"    start job worker(failArg())",
@@ -699,5 +699,80 @@ func TestByteLiteralSema(t *testing.T) {
 	badSrc := "fn main() as int\n    dim x as int = 'a'\n    return x\nend fn\n"
 	if _, err := AnalyzeSource(badSrc, "bad_byte_sema.cb"); err == nil {
 		t.Fatalf("expected type mismatch error assigning byte literal to int")
+	}
+}
+
+func TestPreSelfHostingSimplificationsSema(t *testing.T) {
+	errCases := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "print rejects non-str arg",
+			src:     "fn main()\n    print(42)\nend fn\n",
+			wantErr: "expected str",
+		},
+		{
+			name: "print rejects multiple args",
+			src: `fn main()
+    print("a", "b")
+end fn
+`,
+			wantErr: "expects 1 argument(s), got 2",
+		},
+		{
+			name: "list[int].join rejected",
+			src: `fn main()
+    dim xs = [1, 2]
+    print(xs.join(","))
+end fn
+`,
+			wantErr: `no method or UFCS function "join"`,
+		},
+		{
+			name: "str.toInt outside try/can error rejected",
+			src: `fn main()
+    dim n = "42".toInt()
+end fn
+`,
+			wantErr: "must be inside a 'try' block or a 'can error' function",
+		},
+		{
+			name: "str.toFloat nested in expr rejected",
+			src: `fn main()
+    try
+        dim x = "1.5".toFloat() + 1.0
+    catch e
+        print(e.msg)
+    end try
+end fn
+`,
+			wantErr: "may only appear as a top-level statement expression",
+		},
+		{
+			name:    "for-in single var is immutable",
+			src:     "fn main()\n    for x in [1, 2]\n        x = 3\n    end for\nend fn\n",
+			wantErr: `cannot reassign constant "x"`,
+		},
+		{
+			name: "for-in index and value vars are immutable",
+			src: `fn main()
+    for i, v in ["a", "b"]
+        v = "c"
+    end for
+end fn
+`,
+			wantErr: `cannot reassign constant "v"`,
+		},
+	}
+
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := AnalyzeSource(tc.src, tc.name+".cb")
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, tc.wantErr)
+			}
+		})
 	}
 }

@@ -18,13 +18,6 @@ const (
 }
 
 `
-
-	cbStrToIntRuntimeHelper = `func cbStrToInt(s string) int64 {
-	v, _ := strconv.ParseInt(s, 10, 64)
-	return v
-}
-
-`
 )
 
 func (e *emitter) emitRuntimeHelpers() string {
@@ -34,10 +27,6 @@ func (e *emitter) emitRuntimeHelpers() string {
 	}
 	if e.usedDictContains {
 		helpers.WriteString(cbDictContainsRuntimeHelper)
-	}
-	if e.usedStrToInt {
-		e.useImport("strconv")
-		helpers.WriteString(cbStrToIntRuntimeHelper)
 	}
 	return helpers.String()
 }

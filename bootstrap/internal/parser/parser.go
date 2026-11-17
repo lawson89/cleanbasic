@@ -103,15 +103,6 @@ func (p *Parser) expectIdent(context string) (token.Token, error) {
 	return token.Token{}, errAt(tok.Pos, "expected identifier %s, got %s (%q)", context, tok.Kind, tok.Lexeme)
 }
 
-func (p *Parser) expectFieldOrMethodIdent(context string) (token.Token, error) {
-	tok := p.cur()
-	if slices.Contains([]token.Kind{token.IDENT, token.STR, token.BYTE, token.LIST, token.DICT, token.ERR, token.MAILBOX}, tok.Kind) {
-		p.advance()
-		return tok, nil
-	}
-	return token.Token{}, errAt(tok.Pos, "expected identifier %s, got %s (%q)", context, tok.Kind, tok.Lexeme)
-}
-
 func (p *Parser) skipNewlines() {
 	for p.cur().Kind == token.NEWLINE {
 		p.advance()
@@ -1107,7 +1098,7 @@ func (p *Parser) parsePostfixExpr() (ast.Expr, error) {
 		switch p.cur().Kind {
 		case token.DOT:
 			dotTok := p.advance()
-			fieldTok, err := p.expectFieldOrMethodIdent("after '.'")
+			fieldTok, err := p.expectIdent("after '.'")
 			if err != nil {
 				return nil, err
 			}
@@ -1203,16 +1194,12 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 		p.advance()
 		return &ast.BoolLitExpr{Pos: tok.Pos, Value: tok.Kind == token.TRUE}, nil
 
-	case token.IDENT, token.STR:
+	case token.IDENT:
 		p.advance()
 		return &ast.IdentExpr{Pos: tok.Pos, Name: tok.Lexeme}, nil
 
 	case token.LIST, token.DICT, token.MAILBOX:
-		if p.peek(1).Kind == token.LBRACKET {
-			return p.parseTypedEmptyCtor()
-		}
-		p.advance()
-		return &ast.IdentExpr{Pos: tok.Pos, Name: tok.Lexeme}, nil
+		return p.parseTypedEmptyCtor()
 
 	case token.LPAREN:
 		p.advance()

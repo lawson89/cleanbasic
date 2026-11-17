@@ -78,7 +78,6 @@ type emitter struct {
 	goImports          map[string]string
 	usedDictGet        bool
 	usedDictContains   bool
-	usedStrToInt       bool
 	byRefVars          map[string]bool
 	currentFn          *ast.FnDecl
 	currentTryID       int

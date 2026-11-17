@@ -291,6 +291,24 @@ func TestParseByteLiterals(t *testing.T) {
 	}
 	bl, ok := cDecl.Value.(*ast.ByteLitExpr)
 	if !ok || bl.Value != '\r' {
-		t.Fatalf("expected ByteLitExpr('\\r'), got %#v", cDecl.Value)
+		t.Fatalf("expected ByteLitExpr('\r'), got %#v", cDecl.Value)
+	}
+}
+
+func TestParseRejectsTypeKeywordsAsExprIdents(t *testing.T) {
+	badSources := []string{
+		`fn main()
+    dim s = str.join(["a"], ",")
+end fn
+`,
+		"fn main()\n    dim x = list\nend fn\n",
+		"fn main()\n    dim x = dict\nend fn\n",
+		"fn main()\n    dim x = mailbox\nend fn\n",
+		"fn main()\n    dim x = obj.str\nend fn\n",
+	}
+	for _, src := range badSources {
+		if _, err := Parse(src, "bad_kw_expr.cb"); err == nil {
+			t.Errorf("expected syntax error for %q, got nil", src)
+		}
 	}
 }

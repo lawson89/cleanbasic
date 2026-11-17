@@ -158,7 +158,6 @@ type FnSymbol struct {
 	CanError   bool
 	Public     bool
 	GoTarget   string
-	IsVariadic bool
 	Decl       *FnDecl
 	Pos        token.Position
 }

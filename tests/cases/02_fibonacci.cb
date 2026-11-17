@@ -34,8 +34,8 @@ end fn
 
 fn main() as int
     dim target = 10
-    print("Iterative Fib(", target, ") = ", fibIterative(target))
-    print("Recursive Fib(", target, ") = ", fibRecursive(target))
+    print("Iterative Fib(" + target.toStr() + ") = " + fibIterative(target).toStr())
+    print("Recursive Fib(" + target.toStr() + ") = " + fibRecursive(target).toStr())
 
     dim count = 1
     dim total = 0
@@ -43,7 +43,7 @@ fn main() as int
         total = total + count
         count = count + 1
     end while
-    print("While sum = ", total)
+    print("While sum = " + total.toStr())
 
     return 0
 end fn

@@ -27,7 +27,7 @@ func TestEmitGoPrimitiveMappingAndLowering(t *testing.T) {
 		"    dim ok = true",
 		"    dim b as byte = 7.toByte()",
 		"    dim greeting = \"res=\" + res.toStr() + \":\" + ratio.toStr() + \":\" + b.toStr() + \":\" + \"hi\".toStr()",
-		fmt.Sprintf("    print(greeting, %q, ratio, %q, ok)", " ratio=", " ok="),
+		"    print(greeting + \" ratio=\" + ratio.toStr() + \" ok=\" + ok.toStr())",
 		"    return 0",
 		"end fn",
 	}, "\n")
@@ -54,7 +54,7 @@ func TestEmitGoPrimitiveMappingAndLowering(t *testing.T) {
 		"strconv.FormatFloat(ratio, 'g', -1, 64)",
 		"strconv.FormatInt(int64(b), 10)",
 		fmt.Sprintf("%q", "hi"),
-		fmt.Sprintf("fmt.Println(fmt.Sprint(greeting) + fmt.Sprint(%q) + fmt.Sprint(ratio) + fmt.Sprint(%q) + fmt.Sprint(ok))", " ratio=", " ok="),
+		"fmt.Println(",
 		"func cb_main() int64",
 		"os.Exit(int(code))",
 	}
@@ -203,19 +203,19 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 		"end fn",
 		"",
 		"fn main() as int",
-		"    print(nonVoidEndingInTry(3))",
-		"    print(nonVoidEndingInTry(-7))",
+		"    print(nonVoidEndingInTry(3).toStr())",
+		"    print(nonVoidEndingInTry(-7).toStr())",
 		"    try",
 		"        dim c0 = checkElseIf(0)",
-		"        print(c0)",
+		"        print(c0.toStr())",
 		"        dim c3 = checkElseIf(3)",
-		"        print(c3)",
+		"        print(c3.toStr())",
 		"        dim c1 = checkElseIf(1)",
-		"        print(c1)",
+		"        print(c1.toStr())",
 		"        dim ls = loopAndSelect(2)",
-		"        print(ls)",
+		"        print(ls.toStr())",
 		"        dim cNeg = checkElseIf(-1)",
-		"        print(cNeg)",
+		"        print(cNeg.toStr())",
 		"    catch e",
 		"        print(e.msg)",
 		"    end try",
@@ -334,19 +334,19 @@ import "std/regex"
 fn main()
 	dim p = fs.join("dir", "hello.cb")
 	print(fs.base(p) + ":" + fs.dir(p) + ":" + fs.ext(p))
-	print(fs.isDir("."))
+	print(fs.isDir(".").toStr())
 
 	dim s = "hello_world.cb"
 	print(s.startsWith("hello").toStr() + ":" + s.endsWith(".cb").toStr() + ":" + s.indexOf("world").toStr() + ":" + s.indexOf("nope").toStr() + ":" + s.replace("_", "-"))
 
 	try
 		dim cwd = os.cwd()
-		print(cwd.len() > 0)
+		print((cwd.len() > 0).toStr())
 
 		dim re = regex.compile("[0-9]+")
-		print(re.isMatch("ab12cd").toStr() + ":" + re.find("ab12cd34") + ":" + str.join(re.findAll("ab12cd34"), ",") + ":" + re.replaceAll("ab12cd34", "X"))
+		print(re.isMatch("ab12cd").toStr() + ":" + re.find("ab12cd34") + ":" + re.findAll("ab12cd34").join(",") + ":" + re.replaceAll("ab12cd34", "X"))
 		dim m = regex.match("^foo", "foobar")
-		print(m)
+		print(m.toStr())
 	catch e
 		print("err:" + e.msg)
 	end try
@@ -500,7 +500,7 @@ func TestEmitGoReviewRegressions(t *testing.T) {
 		`    p.addFlag("line-number", "n", "line numbers")`,
 		"    try",
 		`        dim args = p.parseArgs(["-in", "--", "-v", "file.txt"])`,
-		`        print("cli=" + args.hasFlag("ignore-case").toStr() + ":" + args.hasFlag("line-number").toStr() + ":" + str.join(args.positionals, ","))`,
+		`        print("cli=" + args.hasFlag("ignore-case").toStr() + ":" + args.hasFlag("line-number").toStr() + ":" + args.positionals.join(","))`,
 		"    catch e",
 		`        print("cli-err:" + e.msg)`,
 		"    end try",
@@ -575,7 +575,7 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 		"    dim box = mailbox[int](4)",
 		"    start job worker(box)",
 		"    box.post(42)",
-		"    print(n.children[0].val)",
+		"    print(n.children[0].val.toStr())",
 		"end fn",
 	}, "\n")
 	prog, err := sema.AnalyzeSource(src, "cg_test.cb")
@@ -610,13 +610,13 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 		"    dim cap = getCap()",
 		"    dim box = mailbox[int](cap)",
 		"    start job worker(cap)",
-		"    print(box.count())",
+		"    print(box.len().toStr())",
 		"end fn",
 		"fn main() as int",
 		"    try",
 		"        runCase()",
 		"    catch e",
-		"        print(e)",
+		"        print(e.msg)",
 		"    end try",
 		"    return 0",
 		"end fn",
@@ -670,6 +670,52 @@ func TestEmitAddressableByRefArgs(t *testing.T) {
 	}
 	got := runGeneratedGo(t, goCode)
 	want := "21:2:6:10"
+	if got != want {
+		t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
+	}
+}
+
+func TestEmitFallibleNumericParsingAndReceiverMethods(t *testing.T) {
+	src := strings.Join([]string{
+		"fn main() as int",
+		"    try",
+		`        dim n = "42".toInt()`,
+		`        dim f = "3.5".toFloat()`,
+		`        dim xs = ["a", "b"]`,
+		`        dim mb = mailbox[int](2)`,
+		`        mb.post(10)`,
+		`        print(n.toStr() + ":" + f.toStr() + ":" + xs.join("-") + ":" + "hi".quote() + ":" + 65.toChar() + ":" + mb.len().toStr())`,
+		"    catch e",
+		`        print("unexpected:" + e.msg)`,
+		"    end try",
+		"    try",
+		`        dim badInt = "nope".toInt()`,
+		`        print(badInt.toStr())`,
+		"    catch e",
+		`        print("badInt-caught")`,
+		"    end try",
+		"    try",
+		`        dim badFloat = "not-float".toFloat()`,
+		`        print(badFloat.toStr())`,
+		"    catch e",
+		`        print("badFloat-caught")`,
+		"    end try",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	prog, err := sema.AnalyzeSource(src, "fallible_parse.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	if strings.Contains(goCode, "cbStrToInt") {
+		t.Errorf("did not expect cbStrToInt helper in generated Go:\n%s", goCode)
+	}
+	got := runGeneratedGo(t, goCode)
+	want := "42:3.5:a-b:\"hi\":A:1\nbadInt-caught\nbadFloat-caught"
 	if got != want {
 		t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
 	}

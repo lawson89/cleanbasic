@@ -33,7 +33,7 @@ fn main() as int
     dim raw = "  alpha,beta,42  "
     dim trimmed = raw.trim()
     dim parts = trimmed.split(",")
-    dim joined = str.join([parts[0], parts[1]], "-")
+    dim joined = [parts[0], parts[1]].join("-")
     if trimmed.contains("beta")
         print("prelude: " + joined + ":" + parts[2])
     end if

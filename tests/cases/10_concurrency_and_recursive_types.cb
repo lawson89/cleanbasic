@@ -72,7 +72,7 @@ fn main() as int
     dim mb = mailbox[int](2)
     mb.post(10)
     mb.post(20)
-    print("count=" + mb.count().toStr() + " val=" + mb.get().toStr())
+    print("count=" + mb.len().toStr() + " val=" + mb.get().toStr())
     mb.get()
     mb.close()
 
@@ -110,7 +110,7 @@ fn main() as int
     for msg in q
         parts.push(msg.toStr())
     end for
-    print("drain=" + str.join(parts, ","))
+    print("drain=" + parts.join(","))
 
     dim qOutBox = mailbox[int](1)
     start job quickWorker(41, qOutBox)

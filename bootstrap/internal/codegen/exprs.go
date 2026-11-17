@@ -12,15 +12,15 @@ import (
 
 func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 	switch ci.MethodName {
-	case "str.join":
+	case "list.join":
 		e.useImport("strings")
-		return fmt.Sprintf("strings.Join(%s, %s)", e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
-	case "str.fromCharCode":
-		return fmt.Sprintf("string(rune(%s))", e.emitExpr(ex.Args[0]))
+		return fmt.Sprintf("strings.Join(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
+	case "int.toChar":
+		return fmt.Sprintf("string(rune(%s))", e.emitExpr(ci.Receiver))
 	case "str.quote":
 		e.useImport("strconv")
-		return fmt.Sprintf("strconv.Quote(%s)", e.emitExpr(ex.Args[0]))
-	case "list.len", "dict.len", "str.len", "mailbox.count":
+		return fmt.Sprintf("strconv.Quote(%s)", e.emitExpr(ci.Receiver))
+	case "list.len", "dict.len", "str.len", "mailbox.len":
 		return fmt.Sprintf("int64(len(%s))", e.emitExpr(ci.Receiver))
 	case "list.push":
 		recv := e.emitExpr(ci.Receiver)
@@ -45,8 +45,11 @@ func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 	case "str.toStr":
 		return e.emitExpr(ci.Receiver)
 	case "str.toInt":
-		e.usedStrToInt = true
-		return fmt.Sprintf("cbStrToInt(%s)", e.emitExpr(ci.Receiver))
+		e.useImport("strconv")
+		return fmt.Sprintf("strconv.ParseInt(%s, 10, 64)", e.emitExpr(ci.Receiver))
+	case "str.toFloat":
+		e.useImport("strconv")
+		return fmt.Sprintf("strconv.ParseFloat(%s, 64)", e.emitExpr(ci.Receiver))
 	case "str.split":
 		e.useImport("strings")
 		return fmt.Sprintf("strings.Split(%s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
@@ -235,14 +238,7 @@ func (e *emitter) effectiveCallArgs(ex *ast.CallExpr, ci *sema.CallInfo) []ast.E
 func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 	if id, ok := ex.Callee.(*ast.IdentExpr); ok && id.Name == "print" {
 		e.useImport("fmt")
-		var parts []string
-		for _, a := range ex.Args {
-			parts = append(parts, fmt.Sprintf("fmt.Sprint(%s)", e.emitExpr(a)))
-		}
-		if len(parts) == 0 {
-			return "fmt.Println()"
-		}
-		return fmt.Sprintf("fmt.Println(%s)", strings.Join(parts, " + "))
+		return fmt.Sprintf("fmt.Println(%s)", e.emitExpr(ex.Args[0]))
 	}
 
 	if ci := ex.CallInfo; ci != nil {

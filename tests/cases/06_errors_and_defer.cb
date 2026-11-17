@@ -13,7 +13,7 @@ fn connect(ip as str) as Connection can error
 end fn
 
 fn closeConnection(conn as Connection)
-    print("defer cleanup: conn=", conn.id)
+    print("defer cleanup: conn=" + conn.id.toStr())
 end fn
 
 fn processNetwork(ip as str) as int can error
@@ -32,16 +32,16 @@ end fn
 fn main() as int
     try
         dim v1 = processNetwork("")
-        print("unreachable: ", v1)
+        print("unreachable: " + v1.toStr())
     catch e
         print("caught expected error: " + e.msg)
     end try
 
     try
         dim v2 = processNetwork("192.168.1.1")
-        print("success: ", v2)
+        print("success: " + v2.toStr())
     catch e
-        print("unexpected: ", e.msg)
+        print("unexpected: " + e.msg)
         return 1
     end try
 

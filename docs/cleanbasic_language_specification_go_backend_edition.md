@@ -252,7 +252,9 @@ end fn
 
 * **Native Go Slicing:** `x[start:end]`, `x[start:]`, `x[:end]`, and `x[:]` on `str` and `list[T]` compile directly to native Go slicing `x[start:end]` (standard Go bounds rules apply) and evaluate as r-values.
 
-* **2-Variable `for-in` Loops & `byref` Addressability/Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. Mutable variables, struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Local `dim`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
+* **2-Variable `for-in` Loops & `byref` Addressability/Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. All `for-in` loop variables are immutable (`IsConst: true`).
+
+* **Built-In `print` & Receiver Methods:** `print(msg as str)` accepts a single `str` argument (`fmt.Println(msg)`). String/list/int helpers are receiver methods: `list[str].join(sep as str) as str`, `str.quote() as str`, `int.toChar() as str`, and fallible `str.toInt() as int can error` / `str.toFloat() as float can error`. Mutable variables, struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Local `dim`, `for` loop variables, and `catch` variables cannot shadow an enclosing function's `byref` parameter.
 
 ```
 fn demoContainers() as int
@@ -265,7 +267,7 @@ fn demoContainers() as int
     end for
 
     for x in nums
-        print("Item: ", x)
+        print("Item: " + x.toStr())
     end for
 
     dim aliceScore = scores["alice"]
@@ -317,7 +319,7 @@ CleanBasic provides structured, data-race-safe concurrency built around typed me
 * **Typed Mailboxes (`mailbox[T]`):** Lowered 1:1 to Go `chan T`. Created with `mailbox[T]()` (`make(chan T)`, unbuffered) or `mailbox[T](cap)` (`make(chan T, cap)`).
   * `box.post(msg as T)` — sends `msg` (`box <- msg`, infallible).
   * `box.get() as T` — blocking receive (`(<-box)`, infallible).
-  * `box.close()` (`close(box)`), `box.count() as int` (`int64(len(box))`), and `for msg in box ... end for` (`for msg := range box`).
+  * `box.close()` (`close(box)`), `box.len() as int` (`int64(len(box))`), and `for msg in box ... end for` (`for msg := range box`).
 * **Background Jobs (`start job` Statement):**
   * `start job fnCall(...)` is a standalone statement that lowers 1:1 to `go fnCall(...)`.
   * Target must be a user or module function/UFCS call; `can error` functions and `byref` parameters are rejected at compile time. Results and completion signals are communicated via `mailbox[T]`.

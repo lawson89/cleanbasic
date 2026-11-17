@@ -15,21 +15,26 @@ func (a *analyzer) finishBuiltinCall(e *ast.CallExpr, recvExpr ast.Expr, methodN
 	return retType, nil
 }
 
-func (a *analyzer) inferStaticStrCall(e *ast.CallExpr, method string, scope *Scope) (Type, bool, error) {
-	listStr := Type{Kind: KindList, SubTypes: []Type{StrType}}
-	switch method {
-	case "join":
-		t, err := a.finishBuiltinCall(e, nil, "str.join", StrType, scope, listStr, StrType)
-		return t, true, err
-	case "fromCharCode":
-		t, err := a.finishBuiltinCall(e, nil, "str.fromCharCode", StrType, scope, IntType)
-		return t, true, err
-	case "quote":
-		t, err := a.finishBuiltinCall(e, nil, "str.quote", StrType, scope, StrType)
-		return t, true, err
-	default:
-		return VoidType, false, nil
+func (a *analyzer) finishFallibleBuiltinCall(e *ast.CallExpr, recvExpr ast.Expr, methodName string, retType Type, scope *Scope, params ...Type) (Type, error) {
+	if err := a.expectPositionalArgs(e, methodName, scope, params...); err != nil {
+		return VoidType, err
 	}
+	if e != a.startJobCall {
+		if !a.inFallibleContext() {
+			return VoidType, newSemaError(e.Pos, "call to 'can error' method %q must be inside a 'try' block or a 'can error' function", methodName)
+		}
+		if e != a.allowedFallibleExpr {
+			return VoidType, newSemaError(e.Pos, "call to 'can error' method %q may only appear as a top-level statement expression", methodName)
+		}
+	}
+	e.CallInfo = &CallInfo{
+		Kind:       CallMethod,
+		MethodName: methodName,
+		Receiver:   recvExpr,
+		CanError:   true,
+		HasValue:   !retType.IsVoid(),
+	}
+	return retType, nil
 }
 
 func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, recvType Type, method string, scope *Scope) (Type, bool, error) {
@@ -45,6 +50,11 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 			}
 			t, err := a.finishBuiltinCall(e, recvExpr, "list.push", VoidType, scope, recvType.Elem())
 			return t, true, err
+		case "join":
+			if recvType.Elem().Equals(StrType) {
+				t, err := a.finishBuiltinCall(e, recvExpr, "list.join", StrType, scope, StrType)
+				return t, true, err
+			}
 		}
 	case KindDict:
 		switch method {
@@ -81,8 +91,14 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 		case "toStr":
 			t, err := a.finishBuiltinCall(e, recvExpr, "str.toStr", StrType, scope)
 			return t, true, err
+		case "quote":
+			t, err := a.finishBuiltinCall(e, recvExpr, "str.quote", StrType, scope)
+			return t, true, err
 		case "toInt":
-			t, err := a.finishBuiltinCall(e, recvExpr, "str.toInt", IntType, scope)
+			t, err := a.finishFallibleBuiltinCall(e, recvExpr, "str.toInt", IntType, scope)
+			return t, true, err
+		case "toFloat":
+			t, err := a.finishFallibleBuiltinCall(e, recvExpr, "str.toFloat", FloatType, scope)
 			return t, true, err
 		case "split":
 			listStr := Type{Kind: KindList, SubTypes: []Type{StrType}}
@@ -108,6 +124,9 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 		switch method {
 		case "toByte":
 			t, err := a.finishBuiltinCall(e, recvExpr, "int.toByte", ByteType, scope)
+			return t, true, err
+		case "toChar":
+			t, err := a.finishBuiltinCall(e, recvExpr, "int.toChar", StrType, scope)
 			return t, true, err
 		case "toStr":
 			t, err := a.finishBuiltinCall(e, recvExpr, "int.toStr", StrType, scope)
@@ -143,8 +162,8 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 		case "close":
 			t, err := a.finishBuiltinCall(e, recvExpr, "mailbox.close", VoidType, scope)
 			return t, true, err
-		case "count":
-			t, err := a.finishBuiltinCall(e, recvExpr, "mailbox.count", IntType, scope)
+		case "len":
+			t, err := a.finishBuiltinCall(e, recvExpr, "mailbox.len", IntType, scope)
 			return t, true, err
 		}
 	}

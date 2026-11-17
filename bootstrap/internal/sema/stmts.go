@@ -392,9 +392,10 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 
 		for i, name := range s.Vars {
 			if err := a.defineLocalVar(loopScope, &VarSymbol{
-				Name: name,
-				Type: varTypes[i],
-				Pos:  s.Pos,
+				Name:    name,
+				Type:    varTypes[i],
+				IsConst: true,
+				Pos:     s.Pos,
 			}); err != nil {
 				return err
 			}

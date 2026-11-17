@@ -62,7 +62,7 @@ fn main() as int
 	for i, v in [10, 20, 30]
 		listParts.push(i.toStr() + "=" + v.toStr())
 	end for
-	print("loopList=" + str.join(listParts, ","))
+	print("loopList=" + listParts.join(","))
 
 	dim runes1 = list[str]()
 	for ch in "abé"
@@ -72,11 +72,11 @@ fn main() as int
 	for bi, ch in "abé"
 		runes2.push(bi.toStr() + ":" + ch)
 	end for
-	print("loopStr=" + str.join(runes1, ",") + "|" + str.join(runes2, ","))
+	print("loopStr=" + runes1.join(",") + "|" + runes2.join(","))
 
 	dim a = 3
 	dim c = 4
-	print("interp=sum=" + (a + c).toStr() + ",q=" + str.quote("hi") + ",len=" + s.len().toStr())
+	print("interp=sum=" + (a + c).toStr() + ",q=" + "hi".quote() + ",len=" + s.len().toStr())
 
 	dim cleaned = fs.clean("a/./b")
 	try
@@ -84,7 +84,7 @@ fn main() as int
 		dim absTmp = fs.abs(tmp)
 		dim isAbsNonEmpty = absTmp.len() > 0
 		fs.removeAll(tmp)
-		print("fsExtra=" + cleaned + ":" + isAbsNonEmpty.toStr() + ":" + (not fs.exists(tmp)).toStr() + ":" + (str.fromCharCode(65) == "B").toStr())
+		print("fsExtra=" + cleaned + ":" + isAbsNonEmpty.toStr() + ":" + (not fs.exists(tmp)).toStr() + ":" + (65.toChar() == "B").toStr())
 	catch e
 		os.eprintln("unexpected fs error: " + e.msg)
 		return 1

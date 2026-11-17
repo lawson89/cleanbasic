@@ -74,7 +74,7 @@ fn searchText(cfg as GrepConfig, label as str, content as str) as int
         if cfg.showFilename
             print(label + ":" + matches.toStr())
         else
-            print(matches)
+            print(matches.toStr())
         end if
     end if
     return matches

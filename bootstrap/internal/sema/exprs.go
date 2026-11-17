@@ -366,19 +366,6 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 		return VoidType, newSemaError(calleeIdent.Pos, "undefined function %q", calleeIdent.Name)
 	}
 
-	if fnSym.IsVariadic {
-		for _, arg := range e.Args {
-			argType, err := a.inferExpr(arg, scope)
-			if err != nil {
-				return VoidType, err
-			}
-			if argType.IsVoid() {
-				return VoidType, newSemaError(arg.ExprPos(), "argument to %q cannot be void", fnSym.Name)
-			}
-		}
-		return fnSym.ReturnType, nil
-	}
-
 	if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 		return VoidType, err
 	}
@@ -538,11 +525,6 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 			return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
 		}
 
-		if objIdent.Name == "str" {
-			if retType, handled, err := a.inferStaticStrCall(e, fa.Field, scope); handled || err != nil {
-				return retType, err
-			}
-		}
 	}
 
 	recvType, err := a.inferExpr(fa.Target, scope)

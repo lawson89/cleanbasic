@@ -95,7 +95,7 @@ fn main() as int
     try
         dim re = regex.compile("[0-9]+")
         dim directMatch = regex.match("^a[0-9]+", "a12b34")
-        print("regex=" + re.isMatch("a12b34").toStr() + ":" + re.find("a12b34") + ":" + str.join(re.findAll("a12b34"), ",") + ":" + re.replaceAll("a12b34", "X") + ":" + directMatch.toStr())
+        print("regex=" + re.isMatch("a12b34").toStr() + ":" + re.find("a12b34") + ":" + re.findAll("a12b34").join(",") + ":" + re.replaceAll("a12b34", "X") + ":" + directMatch.toStr())
     catch e
         print("regex error: " + e.msg)
         return 1
