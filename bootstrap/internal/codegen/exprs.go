@@ -99,12 +99,12 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 	switch ex := expr.(type) {
 	case *ast.IdentExpr:
 		if ex.GoName != "" {
-			return goIdent(ex.GoName)
+			return ex.GoName
 		}
 		if ex.ByRef {
-			return fmt.Sprintf("(*%s)", goIdent(ex.Name))
+			return fmt.Sprintf("(*%s)", ex.Name)
 		}
-		return goIdent(ex.Name)
+		return ex.Name
 
 	case *ast.IntLitExpr:
 		return fmt.Sprintf("int64(%s)", ex.Raw)
@@ -171,14 +171,11 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 	case *ast.FieldAccessExpr:
 		if ex.GoName != "" {
-			return goIdent(ex.GoName)
+			return ex.GoName
 		}
 		targetType := ex.Target.ExprType()
 		if targetType.Kind == sema.KindErr && ex.Field == "msg" {
 			return fmt.Sprintf("%s.Error()", e.emitExpr(ex.Target))
-		}
-		if targetType.Kind == sema.KindStruct {
-			return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), goStructFieldName(ex.Field))
 		}
 		return fmt.Sprintf("%s.%s", e.emitExpr(ex.Target), ex.Field)
 
@@ -207,7 +204,7 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 func (e *emitter) emitArgExpr(expr ast.Expr, byRef bool) string {
 	if byRef {
 		if id, ok := expr.(*ast.IdentExpr); ok && id.ByRef {
-			return goIdent(id.Name)
+			return id.Name
 		}
 		return "&" + e.emitExpr(expr)
 	}
@@ -222,7 +219,7 @@ func (e *emitter) fnGoName(fn *sema.FnSymbol) string {
 	if name == "main" {
 		return "cb_main"
 	}
-	return goIdent(name)
+	return name
 }
 
 func (e *emitter) effectiveCallArgs(ex *ast.CallExpr, ci *sema.CallInfo) []ast.Expr {
@@ -243,9 +240,6 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 			structGoName := ci.Struct.Name
 			if ci.Struct.GoName != "" {
 				structGoName = ci.Struct.GoName
-			}
-			if !ci.Struct.IsGoType {
-				structGoName = goIdent(structGoName)
 			}
 			return fmt.Sprintf("%s{%s}", structGoName, strings.Join(fields, ", "))
 

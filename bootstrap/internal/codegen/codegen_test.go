@@ -250,10 +250,10 @@ func TestEmitGoModulesStdlibAndConcurrency(t *testing.T) {
 			t.Fatalf("EmitGo failed: %v", err)
 		}
 		for _, want := range []string{
-			"cb_entities_hero__Stats",
-			"cb_combat_actions__Stats",
-			"cb_entities_hero__heal",
-			"cb_combat_actions__strike",
+			"entities_hero__Stats",
+			"combat_actions__Stats",
+			"entities_hero__heal",
+			"combat_actions__strike",
 		} {
 			if !strings.Contains(goCode, want) {
 				t.Errorf("expected mangled symbol %q in generated Go:\n%s", want, goCode)
@@ -274,7 +274,7 @@ func TestEmitGoModulesStdlibAndConcurrency(t *testing.T) {
 			"cbStdFsReadFile",
 			"cbStdOsExec",
 
-			"cb_std_cli__newParser",
+			"std_cli__newParser",
 		} {
 			if !strings.Contains(goCode, want) {
 				t.Errorf("expected stdlib helper %q in generated Go", want)
@@ -439,7 +439,7 @@ func runGeneratedGo(t *testing.T, goCode string) string {
 	return strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
 }
 
-func TestEmitGoIdentifierEscapingAndShortCircuit(t *testing.T) {
+func TestEmitGoShortCircuitAndStdlibInterop(t *testing.T) {
 	src := strings.Join([]string{
 
 		`import "std/regex"`,
@@ -447,7 +447,7 @@ func TestEmitGoIdentifierEscapingAndShortCircuit(t *testing.T) {
 		"",
 		"type User",
 		"    name as str",
-		"    func as int",
+		"    level as int",
 		"end type",
 		"",
 		"fn boom() as bool can error",
@@ -487,11 +487,11 @@ func TestEmitGoIdentifierEscapingAndShortCircuit(t *testing.T) {
 		`    print(sum.toStr() + ":" + endCalls.toStr())`,
 		"",
 		`    dim u = User("Ada", 7)`,
-		`    print(u.name + ":" + u.func.toStr())`,
-		"    dim fmt = 10",
-		"    dim map = 20",
-		"    updateByRef(fmt)",
-		`    print("vars=" + fmt.toStr() + ":" + map.toStr())`,
+		`    print(u.name + ":" + u.level.toStr())`,
+		"    dim score = 10",
+		"    dim bonus = 20",
+		"    updateByRef(score)",
+		`    print("vars=" + score.toStr() + ":" + bonus.toStr())`,
 		"",
 		"    dim r = regex.Regex()",
 		`    print("re=" + r.isMatch("abc").toStr())`,
@@ -586,7 +586,7 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	for _, want := range []string{"Cb_children []TreeNode", "make(chan int64, int64(4))", "go worker("} {
+	for _, want := range []string{"children []TreeNode", "make(chan int64, int64(4))", "go worker("} {
 		if !strings.Contains(goCode, want) {
 			t.Errorf("expected generated Go code to contain %q, got:\n%s", want, goCode)
 		}

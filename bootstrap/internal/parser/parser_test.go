@@ -359,3 +359,44 @@ func TestParseTopLevelAndZeroInitVarDecl(t *testing.T) {
 		t.Fatalf("expected parse error for 'dim bad' without type or initializer")
 	}
 }
+
+func TestParseRejectsGoReservedWords(t *testing.T) {
+	invalidCases := []struct {
+		name string
+		src  string
+		word string
+	}{
+		{"go keyword var", "fn main()\n    dim func = 1\nend fn\n", "func"},
+		{"go keyword map", "fn main()\n    dim map = 1\nend fn\n", "map"},
+		{"go keyword chan", "fn main()\n    dim chan = 1\nend fn\n", "chan"},
+		{"go keyword struct", "type struct\n    x as int\nend type\n", "struct"},
+		{"go keyword field", "type Foo\n    switch as int\nend type\n", "switch"},
+		{"go keyword param", "fn f(range as int)\nend fn\n", "range"},
+		{"go keyword member", "fn main()\n    dim x = obj.func\nend fn\n", "func"},
+		{"go keyword type", "fn main()\n    dim x as var\nend fn\n", "var"},
+		{"go predeclared fmt", "fn main()\n    dim fmt = 1\nend fn\n", "fmt"},
+		{"go predeclared len", "fn main()\n    dim len = 1\nend fn\n", "len"},
+		{"go predeclared string", "fn main()\n    dim string = \"a\"\nend fn\n", "string"},
+		{"go predeclared type name", "fn main()\n    dim x as string\nend fn\n", "string"},
+		{"go predeclared error", "fn main()\n    dim error = 1\nend fn\n", "error"},
+		{"go predeclared nil", "fn main()\n    dim nil = 1\nend fn\n", "nil"},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.src, "reserved.cb")
+			if err == nil {
+				t.Fatalf("expected parse error for %s, got nil", tc.name)
+			}
+			want := "cannot use Go reserved word \"" + tc.word + "\" as an identifier"
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected error containing %q, got: %v", want, err)
+			}
+		})
+	}
+
+	validSrc := "fn main()\n    dim s = \"abc\"\n    dim n = s.len()\n    dim box as mailbox[int]\n    box.close()\nend fn\n"
+	if _, err := Parse(validSrc, "valid_builtins.cb"); err != nil {
+		t.Fatalf("expected built-in .len() and .close() methods to parse cleanly, got: %v", err)
+	}
+}

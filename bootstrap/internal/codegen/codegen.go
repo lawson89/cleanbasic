@@ -83,31 +83,6 @@ type emitter struct {
 	loopCounter        int
 }
 
-var goReservedIdents = map[string]bool{
-	"func": true, "var": true, "map": true, "chan": true, "package": true,
-	"interface": true, "go": true, "fallthrough": true, "range": true, "default": true,
-	"switch": true, "struct": true, "defer": true, "goto": true, "select": true,
-	"case": true, "type": true, "const": true, "return": true, "break": true,
-	"continue": true, "for": true, "if": true, "else": true, "import": true,
-	"fmt": true, "strings": true, "os": true, "io": true, "bytes": true,
-	"strconv": true, "regexp": true, "filepath": true, "json": true, "exec": true,
-	"any": true, "error": true, "string": true, "int64": true, "float64": true,
-	"byte": true, "bool": true, "true": true, "false": true, "nil": true, "len": true,
-	"append": true, "make": true, "new": true, "panic": true, "recover": true,
-	"close": true, "delete": true, "copy": true, "println": true,
-}
-
-func goIdent(name string) string {
-	if goReservedIdents[name] {
-		return "cb_id_" + name
-	}
-	return name
-}
-
-func goStructFieldName(name string) string {
-	return "Cb_" + name
-}
-
 func (e *emitter) useImport(pkg string) {
 	if e.imports == nil {
 		e.imports = make(map[string]bool)
@@ -165,11 +140,10 @@ func (e *emitter) emitProgram(prog *ast.Program) string {
 			if structSym != nil && structSym.GoName != "" {
 				goName = structSym.GoName
 			}
-			goName = goIdent(goName)
 			sb.WriteString(fmt.Sprintf("type %s struct {\n", goName))
 			for _, f := range d.Fields {
 				fType := e.goSemaType(f.Type)
-				sb.WriteString(fmt.Sprintf("\t%s %s\n", goStructFieldName(f.Name), fType))
+				sb.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, fType))
 			}
 			sb.WriteString("}\n\n")
 
@@ -182,7 +156,6 @@ func (e *emitter) emitProgram(prog *ast.Program) string {
 			if enumSym != nil && enumSym.GoName != "" {
 				goName = enumSym.GoName
 			}
-			goName = goIdent(goName)
 			sb.WriteString(fmt.Sprintf("type %s int64\n\nconst (\n", goName))
 			for i, v := range d.Variants {
 				if i == 0 {
@@ -200,7 +173,6 @@ func (e *emitter) emitProgram(prog *ast.Program) string {
 					goName = sym.GoName
 				}
 			}
-			goName = goIdent(goName)
 			typeStr := ""
 			if d.Type != nil && !d.Type.IsVoid() {
 				typeStr = " " + e.goSemaType(*d.Type)
@@ -214,7 +186,6 @@ func (e *emitter) emitProgram(prog *ast.Program) string {
 					goName = sym.GoName
 				}
 			}
-			goName = goIdent(goName)
 			e.emitZeroOrInitVarDecl(&sb, goName, d, "", "")
 			sb.WriteString("\n")
 
@@ -237,7 +208,7 @@ func (e *emitter) emitFnHeader(fn *ast.FnDecl) (string, *sema.FnSymbol, []string
 	if e.currentMod != nil {
 		fnSym = e.currentMod.Functions[fn.Name]
 	}
-	name := goIdent(fn.Name)
+	name := fn.Name
 	if fnSym != nil {
 		name = e.fnGoName(fnSym)
 	}
@@ -249,7 +220,7 @@ func (e *emitter) emitFnHeader(fn *ast.FnDecl) (string, *sema.FnSymbol, []string
 		if p.ByRef {
 			paramGoType = "*" + paramGoType
 		}
-		pGo := goIdent(p.Name)
+		pGo := p.Name
 		params = append(params, fmt.Sprintf("%s %s", pGo, paramGoType))
 		callArgs = append(callArgs, pGo)
 	}
@@ -348,7 +319,7 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		if t.GoName != "" {
 			name = t.GoName
 		}
-		return goIdent(name)
+		return name
 	case sema.KindList:
 		if len(t.SubTypes) == 1 {
 			return "[]" + e.goSemaType(t.SubTypes[0])

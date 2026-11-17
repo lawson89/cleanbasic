@@ -87,9 +87,51 @@ func (p *Parser) expect(kind token.Kind, context string) (token.Token, error) {
 	return tok, nil
 }
 
+var goKeywords = map[string]bool{
+	"chan":        true,
+	"default":     true,
+	"fallthrough": true,
+	"func":        true,
+	"goto":        true,
+	"interface":   true,
+	"map":         true,
+	"package":     true,
+	"range":       true,
+	"struct":      true,
+	"switch":      true,
+	"var":         true,
+}
+
+var goReservedWords = map[string]bool{
+	"chan": true, "default": true, "fallthrough": true, "func": true,
+	"goto": true, "interface": true, "map": true, "package": true,
+	"range": true, "struct": true, "switch": true, "var": true,
+	"any": true, "append": true, "close": true, "copy": true,
+	"delete": true, "error": true, "errors": true, "float64": true,
+	"fmt": true, "int64": true, "len": true, "make": true,
+	"new": true, "nil": true, "panic": true, "println": true,
+	"recover": true, "rune": true, "strconv": true, "string": true,
+	"strings": true,
+}
+
 func (p *Parser) expectIdent(context string) (token.Token, error) {
 	tok := p.cur()
 	if tok.Kind == token.IDENT {
+		if goReservedWords[tok.Lexeme] {
+			return token.Token{}, errAt(tok.Pos, "cannot use Go reserved word %q as an identifier", tok.Lexeme)
+		}
+		p.advance()
+		return tok, nil
+	}
+	return token.Token{}, errAt(tok.Pos, "expected identifier %s, got %s (%q)", context, tok.Kind, tok.Lexeme)
+}
+
+func (p *Parser) expectMemberIdent(context string) (token.Token, error) {
+	tok := p.cur()
+	if tok.Kind == token.IDENT {
+		if goKeywords[tok.Lexeme] {
+			return token.Token{}, errAt(tok.Pos, "cannot use Go reserved word %q as an identifier", tok.Lexeme)
+		}
 		p.advance()
 		return tok, nil
 	}
@@ -541,6 +583,9 @@ func (p *Parser) parseType() (ast.Type, error) {
 		}, nil
 
 	case token.IDENT:
+		if goReservedWords[tok.Lexeme] {
+			return ast.Type{}, errAt(tok.Pos, "cannot use Go reserved word %q as an identifier", tok.Lexeme)
+		}
 		p.advance()
 		name := tok.Lexeme
 		for p.match(token.DOT) {
@@ -1101,7 +1146,7 @@ func (p *Parser) parsePostfixExpr() (ast.Expr, error) {
 		switch p.cur().Kind {
 		case token.DOT:
 			dotTok := p.advance()
-			fieldTok, err := p.expectIdent("after '.'")
+			fieldTok, err := p.expectMemberIdent("after '.'")
 			if err != nil {
 				return nil, err
 			}

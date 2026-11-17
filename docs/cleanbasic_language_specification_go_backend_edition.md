@@ -138,7 +138,7 @@ Every `.cb` file is implicitly a module. Everything is private by default; the `
 
 * **Default & Explicit Aliases (`as`):** `import "entities/hero.cb"` binds the alias `hero`. Use `import "input/button.cb" as inputBtn` to disambiguate colliding filenames.
 
-* **Go Identifier Mangling & Native Go Interop:** Declarations emit with collision-free mangled Go identifiers (`cb_<sanitizedModuleId>__<name>`, e.g., `cb_entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting native `error` returns for `can error` bindings).
+* **Go Identifier Mapping & Native Go Interop:** Entry-module declarations and struct fields emit 1:1 with their exact CleanBasic names (Go keywords and reserved Go identifiers are rejected by the parser); imported module declarations emit with module-qualified names (`<sanitizedModuleId>__<name>`, e.g., `entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting native `error` returns for `can error` bindings).
 
 * **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `byte`, `list`, `dict`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
 

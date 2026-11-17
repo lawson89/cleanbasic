@@ -970,3 +970,33 @@ func TestTopLevelAndZeroInitVarDeclSema(t *testing.T) {
 		}
 	})
 }
+
+func TestModuleNamingAndLeadingDigitSanitization(t *testing.T) {
+	sanitizeCases := []struct {
+		id   string
+		want string
+	}{
+		{"std/os", "std_os"},
+		{"entities/hero", "entities_hero"},
+		{"01_helper", "_01_helper"},
+		{"sub/02-util", "sub_02_util"},
+	}
+	for _, tc := range sanitizeCases {
+		if got := sanitizeModuleID(tc.id); got != tc.want {
+			t.Errorf("sanitizeModuleID(%q) = %q, want %q", tc.id, got, tc.want)
+		}
+	}
+
+	entryMod := newModuleInfo("main", "main.cb", true, nil)
+	if got := entryMod.symbolGoName("Token"); got != "Token" {
+		t.Errorf("entry symbolGoName = %q, want %q", got, "Token")
+	}
+
+	helperMod := newModuleInfo("01_helper", "01_helper.cb", false, nil)
+	if helperMod.SanitizedID != "_01_helper" {
+		t.Errorf("helperMod.SanitizedID = %q, want %q", helperMod.SanitizedID, "_01_helper")
+	}
+	if got := helperMod.symbolGoName("parse"); got != "_01_helper__parse" {
+		t.Errorf("imported symbolGoName = %q, want %q", got, "_01_helper__parse")
+	}
+}

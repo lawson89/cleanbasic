@@ -53,14 +53,18 @@ func sanitizeModuleID(id string) string {
 			sb.WriteByte('_')
 		}
 	}
-	return sb.String()
+	out := sb.String()
+	if len(out) > 0 && out[0] >= '0' && out[0] <= '9' {
+		return "_" + out
+	}
+	return out
 }
 
 func (m *ModuleInfo) symbolGoName(name string) string {
 	if m.IsEntry {
 		return name
 	}
-	return fmt.Sprintf("cb_%s__%s", m.SanitizedID, name)
+	return fmt.Sprintf("%s__%s", m.SanitizedID, name)
 }
 
 type moduleLoader struct {

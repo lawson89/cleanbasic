@@ -22,7 +22,7 @@ func cbStdOsExit(code int64) {
 	os.Exit(int(code))
 }
 
-func cbStdOsExec(cmd string, args []string) (cb_std_os__ExecResult, error) {
+func cbStdOsExec(cmd string, args []string) (std_os__ExecResult, error) {
 	c := exec.Command(cmd, args...)
 	var outBuf, errBuf bytes.Buffer
 	c.Stdout = &outBuf
@@ -35,10 +35,10 @@ func cbStdOsExec(cmd string, args []string) (cb_std_os__ExecResult, error) {
 			err = nil
 		}
 	}
-	return cb_std_os__ExecResult{
-		Cb_exitCode: exitCode,
-		Cb_stdout:   outBuf.String(),
-		Cb_stderr:   errBuf.String(),
+	return std_os__ExecResult{
+		exitCode: exitCode,
+		stdout:   outBuf.String(),
+		stderr:   errBuf.String(),
 	}, err
 }
 

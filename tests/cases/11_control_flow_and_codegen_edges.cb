@@ -7,21 +7,10 @@
 // EXPECT_OUT: defer error: caught|err,d2,d1
 // EXPECT_OUT: short-circuit: r1=false,r2=true,calls=0
 // EXPECT_OUT: branch: else if fallible=true
-// EXPECT_OUT: keywords: sum=25,var=5
 // EXPECT_OUT: globals_and_zero: 15,3,0,7
 
 dim gCounter = 10
 dim gMap as dict[str, int]
-
-type GoKeywords
-    func as int
-    map as int
-    chan as int
-    var as int
-    fmt as int
-    package as int
-    string as str
-end type
 
 fn bumpBound(byref calls as int) as int
     calls = calls + 1
@@ -64,12 +53,6 @@ fn bumpWithShadow(byref x as int)
         dim x = 99
         x = x + 1
     end if
-end fn
-
-fn testGoKeywords(func as int, map as int, chan as int, byref var as int, fmt as int, package as int, string as str) as int
-    dim kw = GoKeywords(func, map, chan, var, fmt, package, string)
-    var = var + 1
-    return kw.func + kw.map + kw.chan + kw.var + kw.fmt + kw.package + kw.string.len()
 end fn
 
 fn main() as int
@@ -181,12 +164,7 @@ fn main() as int
         return 1
     end try
 
-    // 5. Go reserved keyword escaping
-    dim var = 4
-    dim kwSum = testGoKeywords(1, 2, 3, var, 5, 6, "abcd")
-    print("keywords: sum=" + kwSum.toStr() + ",var=" + var.toStr())
-
-    // 6. Top-level dim, zero-init dim, and byref shadowing
+    // 5. Top-level dim, zero-init dim, and byref shadowing
     bumpWithShadow(gCounter)
     gMap["a"] = 3
     dim zeroInt as int
