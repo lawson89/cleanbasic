@@ -428,12 +428,8 @@ func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *
 	return retType, nil
 }
 
-func (a *analyzer) checkAddressableLValue(expr ast.Expr, scope *Scope) error {
-	return a.checkMutableTarget(expr, scope)
-}
-
 func (a *analyzer) checkByRefArg(val ast.Expr, argIdx int, paramName, fnName string, scope *Scope) error {
-	if err := a.checkAddressableLValue(val, scope); err != nil {
+	if err := a.checkMutableTarget(val, scope); err != nil {
 		return newSemaError(val.ExprPos(), "argument %d (%q) to byref parameter of %q: %v", argIdx, paramName, fnName, err)
 	}
 	return nil
@@ -541,7 +537,7 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	}
 
 	if fnSym.Params[0].ByRef {
-		if err := a.checkAddressableLValue(fa.Target, scope); err != nil {
+		if err := a.checkMutableTarget(fa.Target, scope); err != nil {
 			return VoidType, newSemaError(fa.Target.ExprPos(), "receiver for byref UFCS function %q: %v", fnSym.Name, err)
 		}
 	}

@@ -42,14 +42,7 @@ func Parse(src string, filename string) (*ast.Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := New(tokens, filename)
-	return p.ParseProgram()
-}
-
-// ParseTokens parses a pre-tokenized stream into an *ast.Program.
-func ParseTokens(tokens []token.Token, filename string) (*ast.Program, error) {
-	p := New(tokens, filename)
-	return p.ParseProgram()
+	return New(tokens, filename).ParseProgram()
 }
 
 func (p *Parser) cur() token.Token { return p.peek(0) }

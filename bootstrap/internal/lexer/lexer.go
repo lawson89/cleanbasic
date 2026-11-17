@@ -293,22 +293,15 @@ func (l *Lexer) scanEscapeSequence() (byte, error) {
 }
 
 func (l *Lexer) isRestOfLineEmptyOrComment() bool {
-
-	savedPos := l.pos
-	savedLine := l.line
-	savedCol := l.col
-	defer func() {
-		l.pos = savedPos
-		l.line = savedLine
-		l.col = savedCol
-	}()
-
-	l.skipHorizontalWhitespace()
-	if l.pos >= len(l.src) {
+	i := l.pos
+	for i < len(l.src) && (l.src[i] == ' ' || l.src[i] == '\t') {
+		i++
+	}
+	if i >= len(l.src) {
 		return true
 	}
-	ch := l.peek()
-	return ch == '\n' || ch == '\r' || (ch == '/' && l.peekNext() == '/')
+	ch := l.src[i]
+	return ch == '\n' || ch == '\r' || (ch == '/' && i+1 < len(l.src) && l.src[i+1] == '/')
 }
 
 func (l *Lexer) scanGoBlock(startPos token.Position) (token.Token, error) {
@@ -485,16 +478,6 @@ func (l *Lexer) scanNextToken() (token.Token, error) {
 	}
 }
 
-func (l *Lexer) skipHorizontalWhitespace() {
-	for l.pos < len(l.src) {
-		ch := l.peek()
-		if ch == ' ' || ch == '\t' {
-			l.advance()
-		} else {
-			break
-		}
-	}
-}
 func coalesceKeywords(raw []token.Token) []token.Token {
 	out := make([]token.Token, 0, len(raw))
 	i := 0

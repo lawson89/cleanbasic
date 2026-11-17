@@ -158,38 +158,9 @@ func (a *analyzer) inferRootExpr(expr ast.Expr, scope *Scope) (Type, error) {
 }
 
 func (a *analyzer) analyzeVarDecl(s *ast.VarDecl, scope *Scope) error {
-	var finalType Type
-	if s.Value != nil {
-		valType, err := a.inferRootExpr(s.Value, scope)
-		if err != nil {
-			return err
-		}
-		if valType.IsVoid() {
-			return newSemaError(s.Pos, "cannot initialize variable %q with void expression", s.Name)
-		}
-		finalType = valType
-		if s.Type != nil {
-			declaredType, err := a.resolveType(*s.Type)
-			if err != nil {
-				return err
-			}
-			if !declaredType.Equals(valType) {
-				return newSemaError(s.Pos, "type mismatch in declaration of %q: expected %s, got %s", s.Name, declaredType.String(), valType.String())
-			}
-			finalType = declaredType
-		}
-	} else {
-		if s.Type == nil {
-			return newSemaError(s.Pos, "variable %q requires either 'as Type' or '= Expr'", s.Name)
-		}
-		declaredType, err := a.resolveType(*s.Type)
-		if err != nil {
-			return err
-		}
-		if declaredType.IsVoid() {
-			return newSemaError(s.Pos, "variable %q cannot have void type", s.Name)
-		}
-		finalType = declaredType
+	finalType, err := a.resolveVarDeclType("variable", s.Name, s.Pos, s.Type, s.Value, true, scope)
+	if err != nil {
+		return err
 	}
 
 	sym := &VarSymbol{

@@ -234,8 +234,7 @@ func (e *emitter) emitProgram(prog *ast.Program) string {
 	return sb.String()
 }
 
-func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
-	var sb strings.Builder
+func (e *emitter) emitFnHeader(fn *ast.FnDecl) (string, *sema.FnSymbol, []string) {
 	var fnSym *sema.FnSymbol
 	if e.currentMod != nil {
 		fnSym = e.currentMod.Functions[fn.Name]
@@ -269,7 +268,16 @@ func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
 		retType = " " + e.goSemaType(fnSym.ReturnType)
 	}
 
-	sb.WriteString(fmt.Sprintf("func %s(%s)%s {\n", name, strings.Join(params, ", "), retType))
+	header := fmt.Sprintf("func %s(%s)%s {", name, strings.Join(params, ", "), retType)
+	return header, fnSym, callArgs
+}
+
+func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
+	var sb strings.Builder
+	header, fnSym, callArgs := e.emitFnHeader(fn)
+	hasRet := fnSym != nil && !fnSym.ReturnType.IsVoid()
+
+	sb.WriteString(header + "\n")
 	callExpr := fmt.Sprintf("%s(%s)", fn.GoTarget, strings.Join(callArgs, ", "))
 	if fn.CanError || hasRet {
 		sb.WriteString(fmt.Sprintf("\treturn %s\n", callExpr))
@@ -282,14 +290,7 @@ func (e *emitter) emitGoBoundFn(fn *ast.FnDecl) string {
 
 func (e *emitter) emitFn(fn *ast.FnDecl) string {
 	var sb strings.Builder
-	var fnSym *sema.FnSymbol
-	if e.currentMod != nil {
-		fnSym = e.currentMod.Functions[fn.Name]
-	}
-	name := goIdent(fn.Name)
-	if fnSym != nil {
-		name = e.fnGoName(fnSym)
-	}
+	header, fnSym, _ := e.emitFnHeader(fn)
 
 	prevFn := e.currentFn
 	prevFnSym := e.currentFnSym
@@ -303,27 +304,7 @@ func (e *emitter) emitFn(fn *ast.FnDecl) string {
 		e.currentTryID = prevTryID
 	}()
 
-	var params []string
-	for i, p := range fn.Params {
-		paramGoType := e.goSemaType(fnSym.Params[i].Type)
-		if p.ByRef {
-			paramGoType = "*" + paramGoType
-		}
-		params = append(params, fmt.Sprintf("%s %s", goIdent(p.Name), paramGoType))
-	}
-
-	retType := ""
-	if fn.CanError {
-		if fnSym != nil && !fnSym.ReturnType.IsVoid() {
-			retType = fmt.Sprintf(" (%s, error)", e.goSemaType(fnSym.ReturnType))
-		} else {
-			retType = " error"
-		}
-	} else if fnSym != nil && !fnSym.ReturnType.IsVoid() {
-		retType = " " + e.goSemaType(fnSym.ReturnType)
-	}
-
-	sb.WriteString(fmt.Sprintf("func %s(%s)%s {\n", name, strings.Join(params, ", "), retType))
+	sb.WriteString(header + "\n")
 	for _, st := range fn.Body {
 		e.emitStmt(&sb, st, "\t")
 	}

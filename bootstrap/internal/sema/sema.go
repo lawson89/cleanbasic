@@ -122,7 +122,6 @@ func (s *Scope) Lookup(name string) (*VarSymbol, bool) {
 
 // TypedProgram holds the AST and module symbol tables for an analyzed CleanBasic program.
 type TypedProgram struct {
-	EntryFile   string
 	Main        *ast.Program
 	Modules     []*ModuleInfo
 	EntryModule *ModuleInfo
@@ -166,7 +165,6 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 	}
 
 	tp := &TypedProgram{
-		EntryFile:   prog.File,
 		Main:        prog,
 		Modules:     topoOrder,
 		EntryModule: entryMod,

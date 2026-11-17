@@ -27,7 +27,6 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 				FieldMap: make(map[string]FieldSymbol),
 				Public:   d.Public,
 				IsGoType: isGoType,
-				Decl:     d,
 				Pos:      d.Pos,
 			}
 		case *ast.EnumDecl:
@@ -40,7 +39,6 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 				ModuleID:   a.mod.ID,
 				VariantSet: make(map[string]bool),
 				Public:     d.Public,
-				Decl:       d,
 				Pos:        d.Pos,
 			}
 		}
@@ -255,47 +253,85 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 		ReturnType: retType,
 		CanError:   fn.CanError,
 		Public:     fn.Public,
-		GoTarget:   fn.GoTarget,
 		Decl:       fn,
 		Pos:        fn.Pos,
 	}
 	return nil
 }
 
-func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
-	if existingFn, exists := a.mod.Functions[d.Name]; exists {
-		return newSemaError(d.Pos, "constant %q conflicts with function declared at %s", d.Name, existingFn.Pos.String())
-	}
-
-	valType, err := a.inferExpr(d.Value, a.mod.GlobalVars)
-	if err != nil {
-		return err
-	}
-	if valType.IsVoid() {
-		return newSemaError(d.Pos, "cannot initialize constant %q with void expression", d.Name)
-	}
-
-	finalType := valType
-	if d.Type != nil {
-		declaredType, err := a.resolveType(*d.Type)
+func (a *analyzer) resolveVarDeclType(label string, name string, pos token.Position, declType *Type, val ast.Expr, allowFallible bool, scope *Scope) (Type, error) {
+	if val != nil {
+		var valType Type
+		var err error
+		if allowFallible {
+			valType, err = a.inferRootExpr(val, scope)
+		} else {
+			valType, err = a.inferExpr(val, scope)
+		}
 		if err != nil {
-			return err
+			return VoidType, err
 		}
-		if !declaredType.Equals(valType) {
-			return newSemaError(d.Pos, "type mismatch in constant %q declaration: expected %s, got %s", d.Name, declaredType.String(), valType.String())
+		if valType.IsVoid() {
+			return VoidType, newSemaError(pos, "%s %q initializer has void type", label, name)
 		}
-		finalType = declaredType
+		finalType := valType
+		if declType != nil {
+			declaredType, err := a.resolveType(*declType)
+			if err != nil {
+				return VoidType, err
+			}
+			if !declaredType.Equals(valType) {
+				return VoidType, newSemaError(pos, "%s %q declared as %s, got %s", label, name, declaredType.String(), valType.String())
+			}
+			finalType = declaredType
+		}
+		return finalType, nil
+	}
+
+	if declType == nil {
+		return VoidType, newSemaError(pos, "%s %q requires either 'as Type' or '= Expr'", label, name)
+	}
+	declaredType, err := a.resolveType(*declType)
+	if err != nil {
+		return VoidType, err
+	}
+	if declaredType.IsVoid() {
+		return VoidType, newSemaError(pos, "%s %q cannot have void type", label, name)
+	}
+	return declaredType, nil
+}
+
+func (a *analyzer) registerTopLevelVar(name string, pos token.Position, isPublic bool, isConst bool, declType *Type, val ast.Expr) (Type, error) {
+	label := "variable"
+	if isConst {
+		label = "constant"
+	}
+	if existingFn, exists := a.mod.Functions[name]; exists {
+		return VoidType, newSemaError(pos, "%s %q conflicts with function declared at %s", label, name, existingFn.Pos.String())
+	}
+
+	finalType, err := a.resolveVarDeclType(label, name, pos, declType, val, false, a.mod.GlobalVars)
+	if err != nil {
+		return VoidType, err
 	}
 
 	sym := &VarSymbol{
-		Name:    d.Name,
-		GoName:  a.mod.symbolGoName(d.Name),
+		Name:    name,
+		GoName:  a.mod.symbolGoName(name),
 		Type:    finalType,
-		IsConst: true,
-		Public:  d.Public,
-		Pos:     d.Pos,
+		IsConst: isConst,
+		Public:  isPublic,
+		Pos:     pos,
 	}
 	if err := a.mod.GlobalVars.Define(sym); err != nil {
+		return VoidType, err
+	}
+	return finalType, nil
+}
+
+func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
+	finalType, err := a.registerTopLevelVar(d.Name, d.Pos, d.Public, true, d.Type, d.Value)
+	if err != nil {
 		return err
 	}
 	d.Type = &finalType
@@ -303,53 +339,8 @@ func (a *analyzer) analyzeTopLevelConst(d *ast.ConstDecl) error {
 }
 
 func (a *analyzer) analyzeTopLevelVar(d *ast.VarDecl) error {
-	if existingFn, exists := a.mod.Functions[d.Name]; exists {
-		return newSemaError(d.Pos, "variable %q conflicts with function declared at %s", d.Name, existingFn.Pos.String())
-	}
-
-	var finalType Type
-	if d.Value != nil {
-		valType, err := a.inferExpr(d.Value, a.mod.GlobalVars)
-		if err != nil {
-			return err
-		}
-		if valType.IsVoid() {
-			return newSemaError(d.Pos, "cannot initialize variable %q with void expression", d.Name)
-		}
-		finalType = valType
-		if d.Type != nil {
-			declaredType, err := a.resolveType(*d.Type)
-			if err != nil {
-				return err
-			}
-			if !declaredType.Equals(valType) {
-				return newSemaError(d.Pos, "type mismatch in variable %q declaration: expected %s, got %s", d.Name, declaredType.String(), valType.String())
-			}
-			finalType = declaredType
-		}
-	} else {
-		if d.Type == nil {
-			return newSemaError(d.Pos, "variable %q requires either 'as Type' or '= Expr'", d.Name)
-		}
-		declaredType, err := a.resolveType(*d.Type)
-		if err != nil {
-			return err
-		}
-		if declaredType.IsVoid() {
-			return newSemaError(d.Pos, "variable %q cannot have void type", d.Name)
-		}
-		finalType = declaredType
-	}
-
-	sym := &VarSymbol{
-		Name:    d.Name,
-		GoName:  a.mod.symbolGoName(d.Name),
-		Type:    finalType,
-		IsConst: false,
-		Public:  d.Public,
-		Pos:     d.Pos,
-	}
-	if err := a.mod.GlobalVars.Define(sym); err != nil {
+	finalType, err := a.registerTopLevelVar(d.Name, d.Pos, d.Public, false, d.Type, d.Value)
+	if err != nil {
 		return err
 	}
 	d.Type = &finalType
@@ -361,18 +352,12 @@ func (a *analyzer) resolveType(t Type) (Type, error) {
 	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindStruct, KindEnum:
 		return t, nil
 	case KindList, KindMailbox:
-		if len(t.SubTypes) != 1 {
-			return VoidType, newSemaError(t.Pos, "%s type requires an element type", t.Kind)
-		}
 		elem, err := a.resolveType(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
 		return Type{Pos: t.Pos, Kind: t.Kind, SubTypes: []Type{elem}}, nil
 	case KindDict:
-		if len(t.SubTypes) != 2 {
-			return VoidType, newSemaError(t.Pos, "dict type requires key and value types")
-		}
 		kt, err := a.resolveType(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err

@@ -157,7 +157,6 @@ type FnSymbol struct {
 	ReturnType Type
 	CanError   bool
 	Public     bool
-	GoTarget   string
 	Decl       *FnDecl
 	Pos        token.Position
 }
@@ -178,7 +177,6 @@ type StructSymbol struct {
 	FieldMap map[string]FieldSymbol
 	Public   bool
 	IsGoType bool
-	Decl     *TypeDecl
 	Pos      token.Position
 }
 
@@ -190,7 +188,6 @@ type EnumSymbol struct {
 	Variants   []string
 	VariantSet map[string]bool
 	Public     bool
-	Decl       *EnumDecl
 	Pos        token.Position
 }
 
@@ -538,7 +535,7 @@ func (e *BoolLitExpr) ExprType() Type          { return e.SemaType }
 func (e *BoolLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *BoolLitExpr) exprNode()               {}
 
-// ListLitExpr represents a list literal: [e1, e2, ...] (or [] in explicitly typed contexts).
+// ListLitExpr represents a list literal: [e1, e2, ...].
 type ListLitExpr struct {
 	Pos      token.Position
 	Elements []Expr
@@ -557,7 +554,7 @@ type DictEntryExpr struct {
 	Value Expr
 }
 
-// DictLitExpr represents a dictionary literal: {k1: v1, ...} (or {} in explicitly typed contexts).
+// DictLitExpr represents a dictionary literal: {k1: v1, ...}.
 type DictLitExpr struct {
 	Pos      token.Position
 	Entries  []DictEntryExpr
