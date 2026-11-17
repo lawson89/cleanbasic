@@ -1,0 +1,7 @@
+// EXPECT_ERR: cannot reassign constant
+const LIMIT = 5
+
+fn main() as int
+    LIMIT = 6
+    return 0
+end fn

@@ -1,0 +1,5 @@
+// EXPECT_ERR: unterminated string literal
+fn main() as int
+    dim s = "unterminated
+    return 0
+end fn

@@ -1,0 +1,6 @@
+// EXPECT_ERR: type mismatch in assignment
+fn main() as int
+    dim x = 10
+    x = "wrong"
+    return 0
+end fn

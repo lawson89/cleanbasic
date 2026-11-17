@@ -9,13 +9,13 @@ import (
 	"cleanbasic/bootstrap/internal/ast"
 )
 
-func TestAnalyzeCase01AndCase02(t *testing.T) {
+func TestAnalyzeCoreCases(t *testing.T) {
 	cases := []string{
 		filepath.Join("..", "..", "..", "tests", "cases", "01_hello_and_math.cb"),
 		filepath.Join("..", "..", "..", "tests", "cases", "02_fibonacci.cb"),
 		filepath.Join("..", "..", "..", "tests", "cases", "03_structs_and_ufcs.cb"),
 		filepath.Join("..", "..", "..", "tests", "cases", "04_containers_and_strings.cb"),
-		filepath.Join("..", "..", "..", "tests", "cases", "05_enums_and_unions.cb"),
+		filepath.Join("..", "..", "..", "tests", "cases", "05_enums_and_select.cb"),
 		filepath.Join("..", "..", "..", "tests", "cases", "06_errors_and_defer.cb"),
 	}
 
@@ -388,7 +388,7 @@ end fn
 	}
 }
 
-func TestReviewRegressionSema(t *testing.T) {
+func TestSemaMutabilityReturnAndCycleRules(t *testing.T) {
 	writeFiles := func(t *testing.T, files map[string]string) string {
 		t.Helper()
 		dir := t.TempDir()
@@ -448,7 +448,7 @@ func TestReviewRegressionSema(t *testing.T) {
 	}
 }
 
-func TestTier1SemaFeatures(t *testing.T) {
+func TestSemaBytesSlicesAndBuiltins(t *testing.T) {
 	writeFiles := func(t *testing.T, files map[string]string) string {
 		t.Helper()
 		dir := t.TempDir()

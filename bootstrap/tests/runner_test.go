@@ -63,65 +63,81 @@ func TestCleanBasicCases(t *testing.T) {
 			continue
 		}
 
-		t.Run(name, func(t *testing.T) {
-			rawBytes, err := os.ReadFile(entryFile)
-			if err != nil {
-				t.Fatalf("failed to read %s: %v", entryFile, err)
+		runCaseSubtest(t, name, entryFile)
+	}
+
+	errorsDir := filepath.Join(casesDir, "errors")
+	if errEntries, err := os.ReadDir(errorsDir); err == nil {
+		for _, errEntry := range errEntries {
+			if errEntry.IsDir() || !strings.HasSuffix(errEntry.Name(), ".cb") {
+				continue
 			}
-			src := string(rawBytes)
-			exp := parseTestDirectives(src)
-
-			if exp.skip {
-				t.Skip("skipped via SKIP_GO directive")
-			}
-
-			tmpDir := t.TempDir()
-			outGoPath := filepath.Join(tmpDir, "main.go")
-
-			// 1. Transpile CleanBasic -> Go
-			goCode, compileErr := transpileFile(entryFile, outGoPath)
-
-			// Handle expected compile-time error tests
-			if len(exp.expectedErr) > 0 {
-				if compileErr == nil {
-					t.Fatalf("expected compile error containing %v, but compilation succeeded", exp.expectedErr)
-				}
-				errMsg := compileErr.Error()
-				for _, wantErr := range exp.expectedErr {
-					if !strings.Contains(errMsg, wantErr) {
-						t.Errorf("compile error %q did not contain expected substring %q", errMsg, wantErr)
-					}
-				}
-				return
-			}
-
-			if compileErr != nil {
-				t.Fatalf("unexpected compile error:\n%v", compileErr)
-			}
-
-			// 2. Run the generated main.go via `go run`
-			cmd := exec.Command("go", "run", outGoPath)
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-
-			if runErr := cmd.Run(); runErr != nil {
-				t.Fatalf("generated Go code failed to run: %v\n--- STDERR ---\n%s\n--- GENERATED GO ---\n%s",
-					runErr, stderr.String(), goCode)
-			}
-
-			// 3. Verify STDOUT lines against EXPECT_OUT directives
-			actualOut := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
-			wantOut := strings.Join(exp.expectedOut, "\n")
-
-			if actualOut != wantOut {
-				t.Errorf("stdout mismatch:\n--- WANT ---\n%s\n--- GOT ---\n%s\n--- GENERATED GO ---\n%s",
-					wantOut, actualOut, goCode)
-			}
-		})
+			errFile := filepath.Join(errorsDir, errEntry.Name())
+			runCaseSubtest(t, "errors/"+errEntry.Name(), errFile)
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("failed to read %s: %v", errorsDir, err)
 	}
 }
 
+func runCaseSubtest(t *testing.T, subtestName, entryFile string) {
+	t.Run(subtestName, func(t *testing.T) {
+		rawBytes, err := os.ReadFile(entryFile)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", entryFile, err)
+		}
+		src := string(rawBytes)
+		exp := parseTestDirectives(src)
+
+		if exp.skip {
+			t.Skip("skipped via SKIP_GO directive")
+		}
+
+		tmpDir := t.TempDir()
+		outGoPath := filepath.Join(tmpDir, "main.go")
+
+		// 1. Transpile CleanBasic -> Go
+		goCode, compileErr := transpileFile(entryFile, outGoPath)
+
+		// Handle expected compile-time error tests
+		if len(exp.expectedErr) > 0 {
+			if compileErr == nil {
+				t.Fatalf("expected compile error containing %v, but compilation succeeded", exp.expectedErr)
+			}
+			errMsg := compileErr.Error()
+			for _, wantErr := range exp.expectedErr {
+				if !strings.Contains(errMsg, wantErr) {
+					t.Errorf("compile error %q did not contain expected substring %q", errMsg, wantErr)
+				}
+			}
+			return
+		}
+
+		if compileErr != nil {
+			t.Fatalf("unexpected compile error:\n%v", compileErr)
+		}
+
+		// 2. Run the generated main.go via go run
+		cmd := exec.Command("go", "run", outGoPath)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		if runErr := cmd.Run(); runErr != nil {
+			t.Fatalf("generated Go code failed to run: %v\n--- STDERR ---\n%s\n--- GENERATED GO ---\n%s",
+				runErr, stderr.String(), goCode)
+		}
+
+		// 3. Verify STDOUT lines against EXPECT_OUT directives
+		actualOut := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+		wantOut := strings.Join(exp.expectedOut, "\n")
+
+		if actualOut != wantOut {
+			t.Errorf("stdout mismatch:\n--- WANT ---\n%s\n--- GOT ---\n%s\n--- GENERATED GO ---\n%s",
+				wantOut, actualOut, goCode)
+		}
+	})
+}
 func transpileFile(entryPath, outGoPath string) (string, error) {
 	// If -compiler=<bin> is provided, shell out to the compiled binary (e.g., Stage 1 self-hosted cb1)
 	if *compilerBin != "" {

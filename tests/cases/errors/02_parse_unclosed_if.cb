@@ -1,0 +1,4 @@
+// EXPECT_ERR: expected end if
+fn main() as int
+    if true
+        print("missing end if")

@@ -1,0 +1,178 @@
+// EXPECT_OUT: parse ok: 42,-17,3.25
+// EXPECT_OUT: toInt err caught: true
+// EXPECT_OUT: toFloat err caught: true
+// EXPECT_OUT: loops: while=8,for=9,boundCalls=1,dictSum=60,keyChars=14
+// EXPECT_OUT: defer normal: 20|normal,d2,d1
+// EXPECT_OUT: defer early: 10|early,d2,d1
+// EXPECT_OUT: defer error: caught|err,d2,d1
+// EXPECT_OUT: short-circuit: r1=false,r2=true,calls=0
+// EXPECT_OUT: branch: else if fallible=true
+// EXPECT_OUT: keywords: sum=25,var=5
+
+type GoKeywords
+    func as int
+    map as int
+    chan as int
+    var as int
+    fmt as int
+    package as int
+    string as str
+end type
+
+fn bumpBound(byref calls as int) as int
+    calls = calls + 1
+    return 6
+end fn
+
+fn deferScenario(mode as int, byref trace as list[str]) as int can error
+    defer
+        trace.push("d1")
+    end defer
+    defer
+        trace.push("d2")
+    end defer
+
+    if mode == 1
+        trace.push("early")
+        return 10
+    else if mode == 2
+        trace.push("err")
+        error("boom")
+    end if
+
+    trace.push("normal")
+    return 20
+end fn
+
+fn sideEffect(byref calls as int) as bool
+    calls = calls + 1
+    return true
+end fn
+
+fn checkPositive(s as str) as bool can error
+    dim v = s.toInt()
+    return v > 0
+end fn
+
+fn testGoKeywords(func as int, map as int, chan as int, byref var as int, fmt as int, package as int, string as str) as int
+    dim kw = GoKeywords(func, map, chan, var, fmt, package, string)
+    var = var + 1
+    return kw.func + kw.map + kw.chan + kw.var + kw.fmt + kw.package + kw.string.len()
+end fn
+
+fn main() as int
+    // 1. Fallible str.toInt() and str.toFloat()
+    try
+        dim a = "42".toInt()
+        dim b = "-17".toInt()
+        dim c = "3.25".toFloat()
+        print("parse ok: " + a.toStr() + "," + b.toStr() + "," + c.toStr())
+    catch e
+        print("unexpected parse error: " + e.msg)
+        return 1
+    end try
+
+    try
+        dim badInt = "abc".toInt()
+        print("unreachable: " + badInt.toStr())
+    catch e
+        print("toInt err caught: " + (e.msg.len() > 0).toStr())
+    end try
+
+    try
+        dim badFloat = "not_a_float".toFloat()
+        print("unreachable: " + badFloat.toStr())
+    catch e
+        print("toFloat err caught: " + (e.msg.len() > 0).toStr())
+    end try
+
+    // 2. Loop control flow (while/for break/continue, single bound eval, dict iteration)
+    dim w = 0
+    dim wSum = 0
+    while w < 10
+        w = w + 1
+        if w == 2
+            continue
+        end if
+        if w == 5
+            break
+        end if
+        wSum = wSum + w
+    end while
+
+    dim boundCalls = 0
+    dim fSum = 0
+    for i = 0 to bumpBound(boundCalls)
+        if i == 1
+            continue
+        end if
+        if i == 5
+            break
+        end if
+        fSum = fSum + i
+    end for
+
+    dim scores = {"alpha": 10, "beta": 20, "gamma": 30}
+    dim dictSum = 0
+    dim keyChars = 0
+    for k, v in scores
+        dictSum = dictSum + v
+        keyChars = keyChars + k.len()
+    end for
+    print("loops: while=" + wSum.toStr() + ",for=" + fSum.toStr() + ",boundCalls=" + boundCalls.toStr() + ",dictSum=" + dictSum.toStr() + ",keyChars=" + keyChars.toStr())
+
+    // 3. Defer LIFO ordering across normal return, early return, and error unwinding
+    dim tNormal = list[str]()
+    try
+        dim resNormal = deferScenario(0, tNormal)
+        print("defer normal: " + resNormal.toStr() + "|" + tNormal.join(","))
+    catch e
+        print("unexpected: " + e.msg)
+        return 1
+    end try
+
+    dim tEarly = list[str]()
+    try
+        dim resEarly = deferScenario(1, tEarly)
+        print("defer early: " + resEarly.toStr() + "|" + tEarly.join(","))
+    catch e
+        print("unexpected: " + e.msg)
+        return 1
+    end try
+
+    dim tErr = list[str]()
+    try
+        dim resErr = deferScenario(2, tErr)
+        print("unreachable: " + resErr.toStr())
+    catch e
+        print("defer error: caught|" + tErr.join(","))
+    end try
+
+    // 4. Short-circuit boolean evaluation and else-if with fallible call
+    dim scCalls = 0
+    dim r1 = false and sideEffect(scCalls)
+    dim r2 = true or sideEffect(scCalls)
+    print("short-circuit: r1=" + r1.toStr() + ",r2=" + r2.toStr() + ",calls=" + scCalls.toStr())
+
+    try
+        dim branchMode = 1
+        if branchMode == 0
+            print("branch: if")
+        else if branchMode == 1
+            dim posOk = checkPositive("7")
+            print("branch: else if fallible=" + posOk.toStr())
+        else
+            print("branch: else")
+        end if
+    catch e
+        print("unexpected: " + e.msg)
+        return 1
+    end try
+
+    // 5. Go reserved keyword escaping
+    dim var = 4
+    dim kwSum = testGoKeywords(1, 2, 3, var, 5, 6, "abcd")
+    print("keywords: sum=" + kwSum.toStr() + ",var=" + var.toStr())
+
+    return 0
+end fn

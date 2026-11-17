@@ -1,0 +1,9 @@
+// EXPECT_ERR: must be inside a 'try' block or a 'can error' function
+fn risky() as int can error
+    return 1
+end fn
+
+fn main() as int
+    dim x = risky()
+    return x
+end fn

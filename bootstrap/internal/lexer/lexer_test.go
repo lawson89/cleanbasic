@@ -197,14 +197,20 @@ end go
 	}
 }
 
-func TestLexAllTestCases(t *testing.T) {
+func TestTokenizeCorpusCases(t *testing.T) {
 	casesDir := filepath.Join("..", "..", "..", "tests", "cases")
 	count := 0
 	err := filepath.WalkDir(casesDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".cb") {
+		if d.IsDir() {
+			if d.Name() == "errors" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".cb") {
 			return nil
 		}
 		count++
@@ -227,7 +233,7 @@ func TestLexAllTestCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to walk %s: %v", casesDir, err)
 	}
-	if count < 6 {
-		t.Fatalf("expected at least 6 .cb test cases, found %d", count)
+	if count < 11 {
+		t.Fatalf("expected at least 11 .cb test cases (01 through 11), found %d", count)
 	}
 }

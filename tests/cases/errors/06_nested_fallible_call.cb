@@ -1,0 +1,13 @@
+// EXPECT_ERR: may only appear as a top-level statement expression
+fn f() as int can error
+    return 1
+end fn
+
+fn g() as int can error
+    dim x = 1 + f()
+    return x
+end fn
+
+fn main() as int
+    return 0
+end fn

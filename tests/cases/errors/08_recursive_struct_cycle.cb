@@ -1,0 +1,9 @@
+// EXPECT_ERR: recursive struct field
+type Node
+    val as int
+    next as Node
+end type
+
+fn main() as int
+    return 0
+end fn

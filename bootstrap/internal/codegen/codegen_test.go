@@ -92,11 +92,11 @@ func TestEmitGoOmitsUnusedFmtImport(t *testing.T) {
 	}
 }
 
-func TestEmitGoPhase3Cases(t *testing.T) {
+func TestEmitGoStructsContainersEnumsAndErrors(t *testing.T) {
 	cases := []string{
 		"../../../tests/cases/03_structs_and_ufcs.cb",
 		"../../../tests/cases/04_containers_and_strings.cb",
-		"../../../tests/cases/05_enums_and_unions.cb",
+		"../../../tests/cases/05_enums_and_select.cb",
 		"../../../tests/cases/06_errors_and_defer.cb",
 	}
 	for _, path := range cases {
@@ -153,7 +153,7 @@ func TestEmitGoDeferLIFO(t *testing.T) {
 	}
 }
 
-func TestEmitGoPhase4EdgeCases(t *testing.T) {
+func TestEmitGoDeferLIFOAndControlFlowEdges(t *testing.T) {
 	src := strings.Join([]string{
 		"fn mightFail(n as int) as int can error",
 		"    if n < 0",
@@ -239,7 +239,7 @@ func TestEmitGoPhase4EdgeCases(t *testing.T) {
 	}
 }
 
-func TestEmitGoPhase5MultiFileAndStdlib(t *testing.T) {
+func TestEmitGoModulesStdlibAndConcurrency(t *testing.T) {
 	t.Run("multi-file mangling", func(t *testing.T) {
 		prog, err := sema.LoadAndAnalyze("../../../tests/cases/07_multi_file_modules/main.cb")
 		if err != nil {
@@ -262,7 +262,7 @@ func TestEmitGoPhase5MultiFileAndStdlib(t *testing.T) {
 	})
 
 	t.Run("stdlib helpers on demand", func(t *testing.T) {
-		prog, err := sema.LoadAndAnalyze("../../../tests/cases/08_stdlib_fs_os_cli.cb")
+		prog, err := sema.LoadAndAnalyze("../../../tests/cases/08_stdlib.cb")
 		if err != nil {
 			t.Fatalf("LoadAndAnalyze failed: %v", err)
 		}
@@ -439,7 +439,7 @@ func runGeneratedGo(t *testing.T, goCode string) string {
 	return strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
 }
 
-func TestEmitGoReviewRegressions(t *testing.T) {
+func TestEmitGoIdentifierEscapingAndShortCircuit(t *testing.T) {
 	src := strings.Join([]string{
 
 		`import "std/regex"`,
