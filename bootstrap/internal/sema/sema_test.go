@@ -322,6 +322,8 @@ fn main() as int
 
     try
         dim cwd as str = os.cwd()
+        dim exePath as str = os.executable()
+        dim relPath as str = fs.rel("a", joined)
         dim stdinText as str = os.readStdin()
         dim re as regex.Regex = regex.compile("[0-9]+")
         dim m1 as bool = re.isMatch("abc123")
@@ -329,7 +331,7 @@ fn main() as int
         dim f1 as str = re.find("a12b34")
         dim fAll as list[str] = re.findAll("a12b34")
         dim rAll as str = re.replaceAll("a12b34", "#")
-        if cwd == "" and stdinText == "" and m1 and m2 and f1 == "" and fAll.len() == 0 and rAll == ""
+        if cwd == "" and exePath == "" and relPath == "" and stdinText == "" and m1 and m2 and f1 == "" and fAll.len() == 0 and rAll == ""
             return 0
         end if
     catch e
@@ -414,11 +416,122 @@ func TestSemaMutabilityReturnAndCycleRules(t *testing.T) {
 		}
 	})
 
+	t.Run("valid dict and list mutations", func(t *testing.T) {
+		src := `type Box
+    val as int
+end type
+
+fn main() as int
+    dim d = dict[str, int]()
+    d["a"] = 1
+    dim nested = dict[str, dict[str, int]]()
+    nested["outer"] = {"inner": 2}
+    nested["outer"]["inner"] = 3
+    nested["outer"].remove("inner")
+
+    dim boxes = [Box(1)]
+    boxes[0].val = 2
+
+    dim lists = [[1, 2]]
+    lists[0].push(3)
+    return 0
+end fn
+`
+		if _, err := AnalyzeSource(src, "valid_mutations.cb"); err != nil {
+			t.Fatalf("AnalyzeSource failed: %v", err)
+		}
+	})
+
 	errCases := []struct {
 		name    string
 		src     string
 		wantErr string
 	}{
+		{
+			name: "dict index struct field mutation rejected",
+			src: `type Box
+    val as int
+end type
+fn main() as int
+    dim d = {"a": Box(1)}
+    d["a"].val = 2
+    return 0
+end fn
+`,
+			wantErr: "cannot mutate dict[str, Box] index expression in-place",
+		},
+		{
+			name: "dict index list element mutation rejected",
+			src: `fn main() as int
+    dim d = {"a": [1, 2]}
+    d["a"][0] = 3
+    return 0
+end fn
+`,
+			wantErr: "cannot mutate dict[str, list[int]] index expression in-place",
+		},
+		{
+			name: "dict index list push rejected",
+			src: `fn main() as int
+    dim d = {"a": [1, 2]}
+    d["a"].push(3)
+    return 0
+end fn
+`,
+			wantErr: "cannot mutate dict[str, list[int]] index expression in-place",
+		},
+		{
+			name: "dict index struct list field push rejected",
+			src: `type Holder
+    items as list[int]
+end type
+fn main() as int
+    dim d = {"a": Holder([1])}
+    d["a"].items.push(2)
+    return 0
+end fn
+`,
+			wantErr: "cannot mutate dict[str, Holder] index expression in-place",
+		},
+		{
+			name: "dict index struct list field element assignment rejected",
+			src: `type Holder
+    items as list[int]
+end type
+fn main() as int
+    dim d = {"a": Holder([1])}
+    d["a"].items[0] = 2
+    return 0
+end fn
+`,
+			wantErr: "cannot mutate dict[str, Holder] index expression in-place",
+		},
+		{
+			name: "byref on err.msg rejected",
+			src: `fn takeRef(byref s as str)
+    s = "changed"
+end fn
+fn main() as int
+    dim e as err
+    takeRef(e.msg)
+    return 0
+end fn
+`,
+			wantErr: "field access target is not an addressable struct",
+		},
+		{
+			name: "byref on dict index rejected",
+			src: `fn takeRef(byref n as int)
+    n = 2
+end fn
+fn main() as int
+    dim d = {"a": 1}
+    takeRef(d["a"])
+    return 0
+end fn
+`,
+			wantErr: "cannot mutate dict[str, int] index expression in-place",
+		},
 		{
 			name:    "equality on list rejected",
 			src:     "fn main() as int\n    dim ok = [1, 2] == [1, 2]\n    return 0\nend fn\n",

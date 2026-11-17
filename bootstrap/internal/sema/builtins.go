@@ -68,7 +68,16 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 			t, err := a.finishBuiltinCall(e, recvExpr, "dict.contains", BoolType, scope, recvType.Key())
 			return t, true, err
 		case "remove":
-			if err := a.checkMutableTarget(recvExpr, scope); err != nil {
+			mutableRecv := recvExpr
+			for {
+				idxExpr, ok := mutableRecv.(*ast.IndexExpr)
+				if ok && idxExpr.Target.ExprType().Kind == KindDict {
+					mutableRecv = idxExpr.Target
+					continue
+				}
+				break
+			}
+			if err := a.checkMutableTarget(mutableRecv, scope); err != nil {
 				return VoidType, true, err
 			}
 			t, err := a.finishBuiltinCall(e, recvExpr, "dict.remove", VoidType, scope, recvType.Key())

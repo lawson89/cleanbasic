@@ -7,6 +7,8 @@
 // EXPECT_OUT: cliHelp=true
 // EXPECT_OUT: paths=true:false:hello.txt:/tmp/cb_test_08_dir:.txt
 // EXPECT_OUT: cwdNonEmpty=true
+// EXPECT_OUT: exeNonEmpty=true
+// EXPECT_OUT: rel=hello.txt
 // EXPECT_OUT: cacheDirNonEmpty=true
 // EXPECT_OUT: execInDir=0:7
 // EXPECT_OUT: strMethods=true:true:6:-1:hello-stdlib
@@ -72,6 +74,10 @@ fn main() as int
     try
         dim cwd = os.cwd()
         print("cwdNonEmpty=" + (cwd.len() > 0).toStr())
+        dim exePath = os.executable()
+        print("exeNonEmpty=" + (exePath.len() > 0).toStr())
+        dim relPath = fs.rel(dir, file)
+        print("rel=" + relPath)
     catch e
         print("cwd error: " + e.msg)
         return 1

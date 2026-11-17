@@ -429,27 +429,7 @@ func (a *analyzer) inferStructCtorCall(e *ast.CallExpr, s *StructSymbol, scope *
 }
 
 func (a *analyzer) checkAddressableLValue(expr ast.Expr, scope *Scope) error {
-	switch t := expr.(type) {
-	case *ast.IdentExpr:
-		return a.checkMutableTarget(t, scope)
-	case *ast.FieldAccessExpr:
-		if objIdent, ok := t.Target.(*ast.IdentExpr); ok {
-			if _, isMod := a.mod.Imports[objIdent.Name]; isMod {
-				return a.checkMutableTarget(t, scope)
-			}
-		}
-		if t.Target.ExprType().Kind != KindStruct {
-			return newSemaError(t.Pos, "field access target is not an addressable struct")
-		}
-		return a.checkAddressableLValue(t.Target, scope)
-	case *ast.IndexExpr:
-		if t.Target.ExprType().Kind != KindList {
-			return newSemaError(t.Pos, "cannot pass %s index expression byref (only list elements are addressable)", t.Target.ExprType().String())
-		}
-		return a.checkAddressableLValue(t.Target, scope)
-	default:
-		return newSemaError(expr.ExprPos(), "expression is not an addressable mutable variable, struct field, or list element")
-	}
+	return a.checkMutableTarget(expr, scope)
 }
 
 func (a *analyzer) checkByRefArg(val ast.Expr, argIdx int, paramName, fnName string, scope *Scope) error {

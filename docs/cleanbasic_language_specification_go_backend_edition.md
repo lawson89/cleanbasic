@@ -255,7 +255,7 @@ end fn
 
 * **2-Variable `for-in` Loops & `byref` Addressability/Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. All `for-in` loop variables are immutable (`IsConst: true`).
 
-* **Built-In `print` & Receiver Methods:** `print(msg as str)` accepts a single `str` argument (`fmt.Println(msg)`). String/list/int helpers are receiver methods: `list[str].join(sep as str) as str`, `str.quote() as str`, `int.toChar() as str`, and fallible `str.toInt() as int can error` / `str.toFloat() as float can error`. Mutable variables (including `public dim` module variables), struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Inner-scope `dim`, `for` loop variables, and `catch` variables may freely shadow an enclosing function's `byref` parameter.
+* **Built-In `print` & Receiver Methods:** `print(msg as str)` accepts a single `str` argument (`fmt.Println(msg)`). String/list/int helpers are receiver methods: `list[str].join(sep as str) as str`, `str.quote() as str`, `int.toChar() as str`, and fallible `str.toInt() as int can error` / `str.toFloat() as float can error`. Mutable variables (including `public dim` module variables), struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Similarly, `dict` entries cannot be mutated in-place (`dict[k].field = val`, `dict[k][0] = val`, `dict[k].push(val)` are rejected—assign a modified value back to `dict[key]` instead), while direct map entry assignment (`dict[k] = val`), nested `dict` mutations (`dict[k1][k2] = val`, `dict[k1].remove(k2)`), and `list` element mutations (`list[i].field = val`, `list[i].push(val)`) are supported. Inner-scope `dim`, `for` loop variables, and `catch` variables may freely shadow an enclosing function's `byref` parameter.
 
 ```
 fn demoContainers() as int
@@ -336,3 +336,8 @@ User-defined `type` structs map 1:1 to native Go value structs with zero hidden 
 ### 8. Deterministic Standard-Library Build Workspace
 
 When running `cb build` or `cb run`, the CLI maintains a deterministic standard-library Go build workspace at `<userCacheDir>/cleanbasic/work-default/go.mod` (falling back to `os.TempDir()`), writing each transpiled `main.go` into a temporary `job-*` subdirectory inside that workspace for fast `go build` execution.
+
+### 9. Standard Library Highlights (`std/fs`, `std/os`)
+
+* **`std/fs`**: File I/O and path helpers including `fs.rel(basePath as str, targPath as str) as str can error` (wrapping `filepath.Rel`), `fs.join`, `fs.base`, `fs.dir`, `fs.ext`, `fs.clean`, `fs.abs`, `fs.exists`, `fs.isDir`, `fs.isSymlink`, `fs.readFile`, `fs.writeFile`, `fs.listDir`, `fs.mkdirAll`, `fs.mkdirTemp`, and `fs.removeAll`.
+* **`std/os`**: Process, environment, and path helpers including `os.executable() as str can error` (wrapping `os.Executable`), `os.args`, `os.exit`, `os.getEnv`, `os.cwd`, `os.cacheDir`, `os.exec`, `os.execInDir`, `os.readStdin`, `os.eprint`, and `os.eprintln`.

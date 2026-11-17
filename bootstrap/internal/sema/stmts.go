@@ -232,11 +232,20 @@ func (a *analyzer) checkMutableTarget(expr ast.Expr, scope *Scope) error {
 				return nil
 			}
 		}
+		if t.Target.ExprType().Kind != KindStruct {
+			return newSemaError(t.Pos, "field access target is not an addressable struct")
+		}
 		return a.checkMutableTarget(t.Target, scope)
 	case *ast.IndexExpr:
+		if t.Target.ExprType().Kind == KindDict {
+			return newSemaError(t.Pos, "cannot mutate %s index expression in-place (only list elements are addressable; assign a modified value back to dict[key] instead)", t.Target.ExprType().String())
+		}
+		if t.Target.ExprType().Kind != KindList {
+			return newSemaError(t.Pos, "cannot mutate %s index expression (only list elements are addressable)", t.Target.ExprType().String())
+		}
 		return a.checkMutableTarget(t.Target, scope)
 	default:
-		return newSemaError(expr.ExprPos(), "target expression is not mutable")
+		return newSemaError(expr.ExprPos(), "expression is not an addressable mutable variable, struct field, or list element")
 	}
 }
 
@@ -266,14 +275,17 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		return nil
 
 	case *ast.FieldAccessExpr:
-		if err := a.checkMutableTarget(target, scope); err != nil {
-			return err
-		}
 		if targetType, err := a.inferExpr(target.Target, scope); err == nil && targetType.Kind == KindErr {
+			if err := a.checkMutableTarget(target.Target, scope); err != nil {
+				return err
+			}
 			return newSemaError(s.Pos, "cannot assign to read-only field %q on err", target.Field)
 		}
 		fieldType, err := a.inferExpr(target, scope)
 		if err != nil {
+			return err
+		}
+		if err := a.checkMutableTarget(target, scope); err != nil {
 			return err
 		}
 		if !fieldType.Equals(valType) {
@@ -282,15 +294,24 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		return nil
 
 	case *ast.IndexExpr:
-		if err := a.checkMutableTarget(target.Target, scope); err != nil {
-			return err
-		}
 		elemType, err := a.inferExpr(target, scope)
 		if err != nil {
 			return err
 		}
 		if targetObjType := target.Target.ExprType(); targetObjType.Kind == KindStr {
 			return newSemaError(s.Pos, "cannot assign to string index (strings are immutable)")
+		}
+		mutableBase := target.Target
+		for {
+			idxExpr, ok := mutableBase.(*ast.IndexExpr)
+			if ok && mutableBase.ExprType().Kind == KindDict && idxExpr.Target.ExprType().Kind == KindDict {
+				mutableBase = idxExpr.Target
+				continue
+			}
+			break
+		}
+		if err := a.checkMutableTarget(mutableBase, scope); err != nil {
+			return err
 		}
 		if !elemType.Equals(valType) {
 			return newSemaError(s.Pos, "type mismatch in index assignment: expected %s, got %s", elemType.String(), valType.String())
