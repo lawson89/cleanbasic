@@ -212,32 +212,22 @@ func (a *analyzer) lookupStruct(t Type) *StructSymbol {
 	return a.mod.Structs[t.Name]
 }
 func (a *analyzer) isComparableType(t Type) bool {
-	return a.isComparableTypeVisited(t, make(map[string]bool))
-}
-
-func (a *analyzer) isComparableTypeVisited(t Type, visited map[string]bool) bool {
 	switch t.Kind {
 	case KindInt, KindFloat, KindStr, KindByte, KindBool, KindEnum:
 		return true
 	case KindVoid, KindList, KindDict, KindErr:
 		return false
 	case KindStruct:
-		key := "struct:" + t.ModuleID + "." + t.Name
-		if visited[key] {
-			return true
-		}
-		visited[key] = true
 		sym := a.lookupStruct(t)
 		if sym == nil || sym.IsGoType {
 			return false
 		}
 		for _, f := range sym.Fields {
-			if !a.isComparableTypeVisited(f.Type, visited) {
+			if !a.isComparableType(f.Type) {
 				return false
 			}
 		}
 		return true
-
 	default:
 		return false
 	}

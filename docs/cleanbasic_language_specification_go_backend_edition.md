@@ -10,7 +10,7 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 
 * `internal/parser` — Recursive-descent parser emitting a flat AST with strict bottom-up type rules.
 
-* `internal/sema` — Module graph topological sorter, `GlobalSymbolTable`, local/prelude UFCS resolution, mutability enforcement (`const`/`dim`/`byref`), and static `can error` / `try / catch` verification.
+* `internal/sema` — Module graph topological sorter, `TypedProgram` / `ModuleInfo` symbol tables, local/prelude UFCS resolution, mutability enforcement (`const`/`dim`/`byref`), and static `can error` / `try / catch` verification.
 
 * `internal/codegen` — Unity Go emitter generating a single, idiomatic `build.go` file with minimal runtime helpers and zero unused-import/unused-variable errors.
 

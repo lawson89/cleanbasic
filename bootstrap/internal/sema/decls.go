@@ -56,8 +56,11 @@ func (a *analyzer) analyzeProgram(prog *ast.Program) error {
 		}
 	}
 
-	// Pass 0.6: Reject direct and mutually recursive value struct fields.
+	// Pass 0.6: Reject direct and mutually recursive value struct fields, then validate dict key comparability.
 	if err := a.checkRecursiveStructFields(); err != nil {
+		return err
+	}
+	if err := a.validateStructFieldTypes(); err != nil {
 		return err
 	}
 
@@ -116,7 +119,7 @@ func (a *analyzer) resolveTypeDecl(d *ast.TypeDecl) error {
 		if _, dup := sym.FieldMap[f.Name]; dup {
 			return newSemaError(f.Pos, "duplicate field %q in type %q", f.Name, d.Name)
 		}
-		fType, err := a.resolveType(f.Type)
+		fType, err := a.resolveTypeNodes(f.Type)
 		if err != nil {
 			return err
 		}
@@ -148,6 +151,21 @@ func (a *analyzer) checkRecursiveStructFields() error {
 					f.Type.Name,
 					f.Type.Name,
 				)
+			}
+		}
+	}
+	return nil
+}
+
+func (a *analyzer) validateStructFieldTypes() error {
+	for _, decl := range a.mod.Program.Decls {
+		td, ok := decl.(*ast.TypeDecl)
+		if !ok || td.GoName != "" {
+			continue
+		}
+		for _, f := range td.Fields {
+			if err := a.validateType(f.Type); err != nil {
+				return err
 			}
 		}
 	}
@@ -344,24 +362,48 @@ func (a *analyzer) analyzeTopLevelVar(d *ast.VarDecl) error {
 }
 
 func (a *analyzer) resolveType(t Type) (Type, error) {
+	resolved, err := a.resolveTypeNodes(t)
+	if err != nil {
+		return VoidType, err
+	}
+	if err := a.validateType(resolved); err != nil {
+		return VoidType, err
+	}
+	return resolved, nil
+}
+
+func (a *analyzer) validateType(t Type) error {
+	switch t.Kind {
+	case KindList, KindMailbox:
+		return a.validateType(t.SubTypes[0])
+	case KindDict:
+		if err := a.validateType(t.SubTypes[0]); err != nil {
+			return err
+		}
+		if !a.isComparableType(t.SubTypes[0]) {
+			return newSemaError(t.SubTypes[0].Pos, "dict key type %s is not comparable", t.SubTypes[0].String())
+		}
+		return a.validateType(t.SubTypes[1])
+	}
+	return nil
+}
+
+func (a *analyzer) resolveTypeNodes(t Type) (Type, error) {
 	switch t.Kind {
 	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindStruct, KindEnum:
 		return t, nil
 	case KindList, KindMailbox:
-		elem, err := a.resolveType(t.SubTypes[0])
+		elem, err := a.resolveTypeNodes(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
 		return Type{Pos: t.Pos, Kind: t.Kind, SubTypes: []Type{elem}}, nil
 	case KindDict:
-		kt, err := a.resolveType(t.SubTypes[0])
+		kt, err := a.resolveTypeNodes(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
-		if !a.isComparableType(kt) {
-			return VoidType, newSemaError(t.SubTypes[0].Pos, "dict key type %s is not comparable", kt.String())
-		}
-		vt, err := a.resolveType(t.SubTypes[1])
+		vt, err := a.resolveTypeNodes(t.SubTypes[1])
 		if err != nil {
 			return VoidType, err
 		}

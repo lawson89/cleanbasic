@@ -39,14 +39,12 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 		bodyBuf.WriteString(e.emitProgram(mod.Program))
 	}
 
-	if prog.EntryModule != nil {
-		if mainSym, ok := prog.EntryModule.Functions["main"]; ok {
-			if mainSym.ReturnType.Equals(sema.IntType) {
-				e.useImport("os")
-				bodyBuf.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\tos.Exit(int(code))\n\t}\n}\n")
-			} else {
-				bodyBuf.WriteString("func main() {\n\tcb_main()\n}\n")
-			}
+	if mainSym, ok := prog.EntryModule.Functions["main"]; ok {
+		if mainSym.ReturnType.Equals(sema.IntType) {
+			e.useImport("os")
+			bodyBuf.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\tos.Exit(int(code))\n\t}\n}\n")
+		} else {
+			bodyBuf.WriteString("func main() {\n\tcb_main()\n}\n")
 		}
 	}
 	bodyCode := bodyBuf.String()

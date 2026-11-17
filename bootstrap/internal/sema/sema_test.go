@@ -135,6 +135,7 @@ func TestSemanticErrors(t *testing.T) {
 		{"start job rejects fallible fn outside try", "fn work() can error\n    error(\"boom\")\nend fn\nfn main() as int\n    start job work()\n    return 0\nend fn\n", "cannot use 'start job' with fallible function"},
 		{"start job rejects fallible argument", "fn failArg() as int can error\n    error(\"arg\")\n    return 1\nend fn\nfn worker(x as int)\nend fn\nfn main() as int\n    try\n        start job worker(failArg())\n    catch e\n    end try\n    return 0\nend fn\n", "may only appear as a top-level statement expression"},
 		{"str plus int rejected", "fn main() as int\n    dim s = \"a\" + 1\n    return 0\nend fn\n", `type mismatch for operator "+": str and int`},
+		{"forward-declared non-comparable struct as dict key in struct field", "type Holder\n    table as dict[BadKey, int]\nend type\ntype BadKey\n    items as list[int]\nend type\nfn main() as int\n    return 0\nend fn\n", "dict key type BadKey is not comparable"},
 	}
 
 	for _, tc := range tests {
