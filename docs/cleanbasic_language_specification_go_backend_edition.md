@@ -12,15 +12,15 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 
 * `internal/sema` — Module graph topological sorter, `TypedProgram` / `ModuleInfo` symbol tables, local/prelude UFCS resolution, mutability enforcement (`const`/`dim`/`byref`), and static `can error` / `try / catch` verification.
 
-* `internal/codegen` — Unity Go emitter generating a single, idiomatic `build.go` file with minimal runtime helpers and zero unused-import/unused-variable errors.
+* `internal/codegen` — Unity Go emitter generating a single, idiomatic `main.go` file with minimal runtime helpers and zero unused-import/unused-variable errors.
 
 ## 1. Core Architecture
 
-* **Unity Go Backend:** The transpiler converts CleanBasic into a single procedural `build.go` file, leveraging Go's instant compilation, native garbage collection, multiple return values, and built-in cross-compilation (`GOOS`/`GOARCH` and TinyGo).
+* **Unity Go Backend:** The transpiler converts CleanBasic into a single procedural `main.go` file, leveraging Go's instant compilation, native garbage collection, multiple return values, and built-in cross-compilation (`GOOS`/`GOARCH` and TinyGo).
 
 * **Procedural Purity & Value Semantics:** CleanBasic strictly bans classes, inheritance, exceptions, and raw user pointers. Structs and primitives use value semantics by default, explicit `byref` pointers (`*T`) for mutation, and local/prelude Unified Function Call Syntax (UFCS).
 
-* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are rejected by the parser; empty collections always use typed constructors (`list[T]()` and `dict[K, V]()`).
+* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are rejected by the parser; empty containers and channels always use typed constructors (`list[T]()`, `dict[K, V]()`, and `mailbox[T]()`).
 
 * **English-Over-Symbols:** C-style logical operators (`&&`, `||`, `!`) are forbidden at the lexer level and replaced with `and`, `or`, and `not`.
 
@@ -130,7 +130,7 @@ QualifiedIdent  ::= Identifier ("." Identifier)*
 
 ## 3. Streamlined Language Rules & Code Examples
 
-### 1. Multi-File Modules, Explicit Qualification & Name Mangling
+### 1. Multi-File Modules, Explicit Qualification & Go Identifier Mapping
 
 Every `.cb` file is implicitly a module. Everything is private by default; the `public` keyword exposes types, enums, constants, and functions to the importer.
 
@@ -140,7 +140,7 @@ Every `.cb` file is implicitly a module. Everything is private by default; the `
 
 * **Go Identifier Mapping & Native Go Interop:** Entry-module declarations and struct fields emit 1:1 with their exact CleanBasic names (Go keywords and reserved Go identifiers are rejected by the parser); imported module declarations emit with module-qualified names (`<sanitizedModuleId>__<name>`, e.g., `entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting native `error` returns for `can error` bindings).
 
-* **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `byte`, `list`, `dict`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
+* **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `float`, `bool`, `byte`, `list`, `dict`, `mailbox`, `err`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
 
 **player.cb (The Library Module)**
 
@@ -166,7 +166,7 @@ CleanBasic enforces strict bottom-up type inference:
 
 * **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim ch as mailbox[int]`), zero-initializing primitives/structs/lists and initializing `dict` to an empty writable map and `mailbox` to an unbuffered channel. Top-level `[public] dim` declarations are also supported for module-level mutable state.
 
-* **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers always use typed constructors (`dim scores = dict[str, int]()`, `dim items = list[str]()`).
+* **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers and channels always use typed constructors (`dim scores = dict[str, int]()`, `dim items = list[str]()`, `dim ch = mailbox[int]()`).
 
 **main.cb (The Executable Module)**
 
@@ -285,7 +285,7 @@ end fn
 
 ### 5. Declarative CLI Parsing (`std/cli`) and `///` Doc-Comments
 
-CleanBasic includes a pure-CleanBasic command-line parser (`import "std/cli"`), `//` line comments, and `///` doc-comments for documentation extraction (`tools/cbdoc.cb`) and formatting (`tools/cbfmt.cb`).
+CleanBasic includes a pure-CleanBasic command-line parser (`import "std/cli"`), `//` line comments, and `///` doc-comments for documentation extraction and formatting.
 
 ```
 import "std/cli"
