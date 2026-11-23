@@ -1000,3 +1000,70 @@ func TestModuleNamingAndLeadingDigitSanitization(t *testing.T) {
 		t.Errorf("imported symbolGoName = %q, want %q", got, "_01_helper__parse")
 	}
 }
+
+func TestListSortSema(t *testing.T) {
+	validSrc := `fn main()
+    dim strs = ["b", "a"]
+    strs.sort()
+    dim ints = [3, 1, 2]
+    ints.sort()
+    dim floats = [2.5, 1.5]
+    floats.sort()
+    dim bytes = ['z', 'a']
+    bytes.sort()
+end fn`
+	if _, err := AnalyzeSource(validSrc, "list_sort_ok.cb"); err != nil {
+		t.Fatalf("expected valid list.sort() program to pass sema, got: %v", err)
+	}
+
+	errCases := []struct {
+		name    string
+		src     string
+		wantSub string
+	}{
+		{
+			name: "bool_element",
+			src: `fn main()
+    dim bs = [true, false]
+    bs.sort()
+end fn`,
+			wantSub: "ordered element type",
+		},
+		{
+			name: "struct_element",
+			src: `type Item
+    v as int
+end type
+fn main()
+    dim items = [Item(1), Item(2)]
+    items.sort()
+end fn`,
+			wantSub: "ordered element type",
+		},
+		{
+			name: "unexpected_arg",
+			src: `fn main()
+    dim nums = [3, 1]
+    nums.sort(1)
+end fn`,
+			wantSub: "expects 0 argument",
+		},
+		{
+			name: "immutable_dict_entry",
+			src: `fn main()
+    dim m = {"a": [2, 1]}
+    m["a"].sort()
+end fn`,
+			wantSub: "cannot mutate",
+		},
+	}
+
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := AnalyzeSource(tc.src, tc.name+".cb")
+			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantSub, err)
+			}
+		})
+	}
+}

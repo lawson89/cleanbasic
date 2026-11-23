@@ -29,6 +29,12 @@ func (e *emitter) emitZeroOrInitVarDecl(sb *strings.Builder, varGo string, d *as
 	case ast.KindMailbox:
 		elemGo := e.goSemaType(d.Type.Elem())
 		sb.WriteString(fmt.Sprintf("%svar %s %s = make(chan %s)\n", indent, varGo, goType, elemGo))
+	case ast.KindStruct:
+		if e.structNeedsFieldInit(e.lookupStruct(*d.Type)) {
+			sb.WriteString(fmt.Sprintf("%svar %s %s = %s\n", indent, varGo, goType, e.emitZeroStruct(*d.Type)))
+		} else {
+			sb.WriteString(fmt.Sprintf("%svar %s %s\n", indent, varGo, goType))
+		}
 	default:
 		sb.WriteString(fmt.Sprintf("%svar %s %s\n", indent, varGo, goType))
 	}

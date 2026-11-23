@@ -13,11 +13,19 @@
 // EXPECT_OUT: execInDir=0:7
 // EXPECT_OUT: strMethods=true:true:6:-1:hello-stdlib
 // EXPECT_OUT: regex=true:12:12,34:aXbX:true
+// EXPECT_OUT: tempIn=true
+// EXPECT_OUT: writeStdout=ab
+// EXPECT_OUT: sorted=alpha,beta,gamma:1,2,3
+// EXPECT_OUT: structDict=10:20
 
 import "std/fs"
 import "std/os"
 import "std/cli"
 import "std/regex"
+
+type Bag
+    scores as dict[str, int]
+end type
 
 fn main() as int
     dim dir = "/tmp/cb_test_08_dir"
@@ -106,6 +114,32 @@ fn main() as int
         print("regex error: " + e.msg)
         return 1
     end try
+
+    try
+        dim tmpSub = fs.mkdirTempIn(dir, "job-*")
+        dim isSubDir = fs.isDir(tmpSub)
+        dim inDir = fs.dir(tmpSub) == dir
+        fs.removeAll(tmpSub)
+        print("tempIn=" + (isSubDir and inDir).toStr())
+    catch e
+        print("mkdirTempIn error: " + e.msg)
+        return 1
+    end try
+
+    os.writeStdout("writeStdout=a")
+    os.writeStdout("b\n")
+
+    dim words = ["gamma", "alpha", "beta"]
+    words.sort()
+    dim nums = [3, 1, 2]
+    nums.sort()
+    print("sorted=" + words.join(",") + ":" + nums[0].toStr() + "," + nums[1].toStr() + "," + nums[2].toStr())
+
+    dim bag1 as Bag
+    bag1.scores["x"] = 10
+    dim bag2 = Bag()
+    bag2.scores["y"] = 20
+    print("structDict=" + bag1.scores["x"].toStr() + ":" + bag2.scores["y"].toStr())
 
     return 0
 end fn

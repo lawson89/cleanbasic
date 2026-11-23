@@ -797,3 +797,95 @@ func TestEmitGoUFCSPrint(t *testing.T) {
 		t.Errorf("output = %q, want %q", got, "hello")
 	}
 }
+
+func TestEmitGoListSort(t *testing.T) {
+	src := `fn main() as int
+    dim words = ["pear", "apple", "fig"]
+    words.sort()
+    dim nums = [30, 10, 20]
+    nums.sort()
+    print(words.join(",") + ":" + nums[0].toStr() + "," + nums[1].toStr() + "," + nums[2].toStr())
+    return 0
+end fn`
+
+	prog, err := sema.AnalyzeSource(src, "list_sort.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	if !strings.Contains(goCode, `"slices"`) || !strings.Contains(goCode, "slices.Sort(words)") {
+		t.Fatalf("expected slices import and slices.Sort in generated Go:\n%s", goCode)
+	}
+	got := runGeneratedGo(t, goCode)
+	want := "apple,fig,pear:10,20,30"
+	if got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+func TestEmitGoZeroStructFieldInit(t *testing.T) {
+	src := `type Plain
+    x as int
+end type
+type Inner
+    meta as dict[str, int]
+end type
+type Outer
+    counts as dict[str, int]
+    ch as mailbox[int]
+    inner as Inner
+    plain as Plain
+end type
+fn sendVal(ch as mailbox[int], v as int)
+    ch.post(v)
+end fn
+fn makeOuter(fail as bool) as Outer can error
+    if fail
+        error("boom")
+    end if
+    dim o as Outer
+    o.counts["ok"] = 1
+    return o
+end fn
+fn main() as int
+    dim p as Plain
+    dim p2 = Plain()
+    dim o1 as Outer
+    o1.counts["a"] = 42
+    o1.inner.meta["b"] = 7
+    start job sendVal(o1.ch, 99)
+    dim v = o1.ch.get()
+    dim o2 = Outer()
+    o2.counts["c"] = 5
+    dim errHit = false
+    try
+        dim unused = makeOuter(true)
+    catch e
+        errHit = true
+    end try
+    print(p.x.toStr() + ":" + p2.x.toStr() + ":" + o1.counts["a"].toStr() + ":" + o1.inner.meta["b"].toStr() + ":" + v.toStr() + ":" + o2.counts["c"].toStr() + ":" + errHit.toStr())
+    return 0
+end fn`
+
+	prog, err := sema.AnalyzeSource(src, "zero_struct_init.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+	if !strings.Contains(goCode, "var p Plain\n") || !strings.Contains(goCode, "var p2 Plain = Plain{}") {
+		t.Errorf("expected plain structs to keep zero-value emission without composite init:\n%s", goCode)
+	}
+	if !strings.Contains(goCode, "return Outer{counts: map[string]int64{}, ch: make(chan int64), inner: Inner{meta: map[string]int64{}}}") {
+		t.Errorf("expected error return path to use goSemaZeroValue composite struct init:\n%s", goCode)
+	}
+	got := runGeneratedGo(t, goCode)
+	want := "0:0:42:7:99:5:true"
+	if got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}

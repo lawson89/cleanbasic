@@ -29,6 +29,7 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 
 	e := &emitter{
 		emitLineDirectives: opts.EmitLineDirectives,
+		prog:               prog,
 	}
 	var bodyBuf strings.Builder
 	for _, mod := range prog.Modules {
@@ -70,6 +71,7 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 
 type emitter struct {
 	emitLineDirectives bool
+	prog               *sema.TypedProgram
 	currentMod         *sema.ModuleInfo
 	currentFnSym       *sema.FnSymbol
 	imports            map[string]bool
@@ -340,6 +342,60 @@ func (e *emitter) goSemaType(t sema.Type) string {
 	}
 }
 
+func (e *emitter) lookupStruct(t sema.Type) *sema.StructSymbol {
+	if e.prog != nil && t.ModuleID != "" {
+		if m, ok := e.prog.ModuleByID[t.ModuleID]; ok {
+			return m.Structs[t.Name]
+		}
+	}
+	if e.currentMod != nil {
+		return e.currentMod.Structs[t.Name]
+	}
+	return nil
+}
+
+func (e *emitter) structNeedsFieldInit(s *sema.StructSymbol) bool {
+	if s == nil || s.IsGoType || strings.HasPrefix(s.GoName, "*") {
+		return false
+	}
+	for _, f := range s.Fields {
+		switch f.Type.Kind {
+		case sema.KindDict, sema.KindMailbox:
+			return true
+		case sema.KindStruct:
+			if e.structNeedsFieldInit(e.lookupStruct(f.Type)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *emitter) emitZeroStruct(t sema.Type) string {
+	if strings.HasPrefix(t.GoName, "*") {
+		return "nil"
+	}
+	goType := e.goSemaType(t)
+	sym := e.lookupStruct(t)
+	if !e.structNeedsFieldInit(sym) {
+		return goType + "{}"
+	}
+	var inits []string
+	for _, f := range sym.Fields {
+		switch f.Type.Kind {
+		case sema.KindDict:
+			inits = append(inits, fmt.Sprintf("%s: %s{}", f.Name, e.goSemaType(f.Type)))
+		case sema.KindMailbox:
+			inits = append(inits, fmt.Sprintf("%s: make(%s)", f.Name, e.goSemaType(f.Type)))
+		case sema.KindStruct:
+			if e.structNeedsFieldInit(e.lookupStruct(f.Type)) {
+				inits = append(inits, fmt.Sprintf("%s: %s", f.Name, e.emitZeroStruct(f.Type)))
+			}
+		}
+	}
+	return fmt.Sprintf("%s{%s}", goType, strings.Join(inits, ", "))
+}
+
 func (e *emitter) goSemaZeroValue(t sema.Type) string {
 	switch t.Kind {
 	case sema.KindInt:
@@ -359,10 +415,7 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 	case sema.KindEnum:
 		return e.goSemaType(t) + "(0)"
 	case sema.KindStruct:
-		if strings.HasPrefix(t.GoName, "*") {
-			return "nil"
-		}
-		return e.goSemaType(t) + "{}"
+		return e.emitZeroStruct(t)
 	default:
 		return "nil"
 	}

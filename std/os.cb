@@ -58,6 +58,10 @@ func cbStdOsEprintln(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
 }
 
+func cbStdOsWriteStdout(msg string) {
+	fmt.Fprint(os.Stdout, msg)
+}
+
 func cbStdOsExecInDir(dir string, cmd string, args []string) (int64, error) {
 	c := exec.Command(cmd, args...)
 	if dir != "" {
@@ -93,6 +97,7 @@ public fn readStdin() as str can error = go "cbStdOsReadStdin"
 public fn cwd() as str can error = go "os.Getwd"
 public fn eprint(msg as str) = go "cbStdOsEprint"
 public fn eprintln(msg as str) = go "cbStdOsEprintln"
+public fn writeStdout(msg as str) = go "cbStdOsWriteStdout"
 public fn execInDir(dir as str, cmd as str, args as list[str]) as int can error = go "cbStdOsExecInDir"
 public fn cacheDir() as str = go "cbStdOsCacheDir"
 public fn executable() as str can error = go "os.Executable"

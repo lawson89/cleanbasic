@@ -164,7 +164,7 @@ end fn
 
 CleanBasic enforces strict bottom-up type inference:
 
-* **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim ch as mailbox[int]`), zero-initializing primitives/structs/lists and initializing `dict` to an empty writable map and `mailbox` to an unbuffered channel. Top-level `[public] dim` declarations are also supported for module-level mutable state.
+* **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim ch as mailbox[int]`), zero-initializing primitives/lists, initializing `dict` to an empty writable map and `mailbox` to an unbuffered channel, and recursively initializing `dict` and `mailbox` fields on zero-initialized structs (`dim s as MyStruct` and 0-arg `MyStruct()`). Top-level `[public] dim` declarations are also supported for module-level mutable state.
 
 * **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers and channels always use typed constructors (`dim scores = dict[str, int]()`, `dim items = list[str]()`, `dim ch = mailbox[int]()`).
 
@@ -255,7 +255,7 @@ end fn
 
 * **2-Variable `for-in` Loops & `byref` Addressability/Hygiene:** `for i, v in myList` binds `i as int` and `v` as the element type; `for ch in myStr` and `for byteIdx, ch in myStr` iterate UTF-8 runes as 1-rune `str` values. All `for-in` loop variables are immutable (`IsConst: true`).
 
-* **Built-In `print` & Receiver Methods:** `print(msg as str)` accepts a single `str` argument (`fmt.Println(msg)`). String/list/int helpers are receiver methods: `list[str].join(sep as str) as str`, `str.quote() as str`, `int.toChar() as str`, and fallible `str.toInt() as int can error` / `str.toFloat() as float can error`. Mutable variables (including `public dim` module variables), struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Similarly, `dict` entries cannot be mutated in-place (`dict[k].field = val`, `dict[k][0] = val`, `dict[k].push(val)` are rejected—assign a modified value back to `dict[key]` instead), while direct map entry assignment (`dict[k] = val`), nested `dict` mutations (`dict[k1][k2] = val`, `dict[k1].remove(k2)`), and `list` element mutations (`list[i].field = val`, `list[i].push(val)`) are supported. Inner-scope `dim`, `for` loop variables, and `catch` variables may freely shadow an enclosing function's `byref` parameter.
+* **Built-In `print` & Receiver Methods:** `print(msg as str)` accepts a single `str` argument (`fmt.Println(msg)`). String/list/int helpers are receiver methods: `list[str].join(sep as str) as str`, `list[T].sort()` (in-place sort for ordered primitives `int`, `float`, `str`, `byte` via `slices.Sort`), `str.quote() as str`, `int.toChar() as str`, and fallible `str.toInt() as int can error` / `str.toFloat() as float can error`. Mutable variables (including `public dim` module variables), struct fields (`s.field`), and list elements (`items[i]`, `node.children[i]`) may be passed to `byref` parameters and `byref` UFCS receivers; `dict` and `str` index expressions are not addressable and are rejected. Similarly, `dict` entries cannot be mutated in-place (`dict[k].field = val`, `dict[k][0] = val`, `dict[k].push(val)` are rejected—assign a modified value back to `dict[key]` instead), while direct map entry assignment (`dict[k] = val`), nested `dict` mutations (`dict[k1][k2] = val`, `dict[k1].remove(k2)`), and `list` element mutations (`list[i].field = val`, `list[i].push(val)`) are supported. Inner-scope `dim`, `for` loop variables, and `catch` variables may freely shadow an enclosing function's `byref` parameter.
 
 ```
 fn demoContainers() as int
@@ -329,7 +329,7 @@ CleanBasic provides structured, data-race-safe concurrency built around typed me
 
 User-defined `type` structs map 1:1 to native Go value structs with zero hidden pointer indirection:
 
-* Structs are always passed and assigned by value, guaranteeing value-copy isolation and zero-nil safety.
+* Structs are always passed and assigned by value, guaranteeing value-copy isolation and zero-nil safety (with `dict` and `mailbox` fields recursively auto-initialized on zero-initialized `dim s as S` and `S()`).
 * Direct or mutually recursive value cycles (e.g. `Node -> Node` or `Expr <-> Block`) are rejected at compile time with a clear diagnostic.
 * Recursive trees, ASTs, and linked structures model child nodes using `list[T]` (or `dict[K, T]`), which provide fixed-size reference headers in Go.
 * Structs containing `list` or `dict` fields cannot be compared directly with raw `==` or `!=`.
@@ -339,5 +339,5 @@ When running `cb build` or `cb run`, the CLI maintains a deterministic standard-
 
 ### 9. Standard Library Highlights (`std/fs`, `std/os`)
 
-* **`std/fs`**: File I/O and path helpers including `fs.rel(basePath as str, targPath as str) as str can error` (wrapping `filepath.Rel`), `fs.join`, `fs.base`, `fs.dir`, `fs.ext`, `fs.clean`, `fs.abs`, `fs.exists`, `fs.isDir`, `fs.isSymlink`, `fs.readFile`, `fs.writeFile`, `fs.listDir`, `fs.mkdirAll`, `fs.mkdirTemp`, and `fs.removeAll`.
-* **`std/os`**: Process, environment, and path helpers including `os.executable() as str can error` (wrapping `os.Executable`), `os.args`, `os.exit`, `os.getEnv`, `os.cwd`, `os.cacheDir`, `os.exec`, `os.execInDir`, `os.readStdin`, `os.eprint`, and `os.eprintln`.
+* **`std/fs`**: File I/O and path helpers including `fs.rel(basePath as str, targPath as str) as str can error` (wrapping `filepath.Rel`), `fs.join`, `fs.base`, `fs.dir`, `fs.ext`, `fs.clean`, `fs.abs`, `fs.exists`, `fs.isDir`, `fs.isSymlink`, `fs.readFile`, `fs.writeFile`, `fs.listDir`, `fs.mkdirAll`, `fs.mkdirTemp`, `fs.mkdirTempIn`, and `fs.removeAll`.
+* **`std/os`**: Process, environment, and path helpers including `os.executable() as str can error` (wrapping `os.Executable`), `os.args`, `os.exit`, `os.getEnv`, `os.cwd`, `os.cacheDir`, `os.exec`, `os.execInDir`, `os.readStdin`, `os.writeStdout`, `os.eprint`, and `os.eprintln`.

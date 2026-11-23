@@ -55,6 +55,18 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 				t, err := a.finishBuiltinCall(e, recvExpr, "list.join", StrType, scope, StrType)
 				return t, true, err
 			}
+		case "sort":
+			elem := recvType.Elem()
+			switch elem.Kind {
+			case KindInt, KindFloat, KindStr, KindByte:
+			default:
+				return VoidType, true, newSemaError(e.Pos, "list.sort() requires an ordered element type (int, float, str, or byte), got %s", elem.String())
+			}
+			if err := a.checkMutableTarget(recvExpr, scope); err != nil {
+				return VoidType, true, err
+			}
+			t, err := a.finishBuiltinCall(e, recvExpr, "list.sort", VoidType, scope)
+			return t, true, err
 		}
 	case KindDict:
 		switch method {

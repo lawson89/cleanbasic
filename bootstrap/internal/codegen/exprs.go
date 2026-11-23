@@ -25,6 +25,9 @@ func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 	case "list.push":
 		recv := e.emitExpr(ci.Receiver)
 		return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0]))
+	case "list.sort":
+		e.useImport("slices")
+		return fmt.Sprintf("slices.Sort(%s)", e.emitExpr(ci.Receiver))
 	case "dict.get":
 		e.usedDictGet = true
 		return fmt.Sprintf("cbDictGet(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
@@ -233,6 +236,9 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 	if ci := ex.CallInfo; ci != nil {
 		switch ci.Kind {
 		case sema.CallStructCtor:
+			if len(ex.Args) == 0 {
+				return e.emitZeroStruct(ex.ExprType())
+			}
 			var fields []string
 			for _, a := range ex.Args {
 				fields = append(fields, e.emitExpr(a))
