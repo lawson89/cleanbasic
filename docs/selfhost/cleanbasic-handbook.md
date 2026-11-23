@@ -101,7 +101,7 @@ Verified against `bootstrap/internal/sema/builtins.go` and `bootstrap/internal/s
   ```
   Omit `as T` for `void`. Add `can error` before the newline for fallible functions. Parameters are passed by value unless prefixed with `byref`.
 - **Go Interop:**
-  - `go import "pkg"` or `go import alias "pkg"`
+  - `go import "pkg"` or `go import "pkg" as alias`
   - `go ... end go` raw Go block at top level
   - `[public] type T = go "GoType"`
   - `[public] fn f(a as T) as R [can error] = go "goFunc"`
@@ -151,7 +151,7 @@ If `params[0]` is `byref`, `target` must pass `checkMutableTarget`.
 - **Numeric `for`:** `for i = start to end ... end for` (inclusive `start .. end`, `int` bounds, `i` is immutable).
 - **`for-in`:**
   - `for item in listOrMailbox` / `for idx, item in listVal`
-  - `for ch in strVal` / `for idx, ch in strVal` (yields 1-byte `str` characters)
+  - `for ch in strVal` / `for idx, ch in strVal` (yields 1-rune UTF-8 `str` values; `idx` is the UTF-8 byte offset)
   - `for k in dictVal` / `for k, v in dictVal`
   - All loop variables are immutable (`IsConst: true`).
 
@@ -306,11 +306,11 @@ Because `dict[k]` is **not addressable**, you cannot pass `symTable[name]` to `b
 
 ### 5.5 Forbidden Go Reserved Words (`bootstrap/internal/parser/parser.go`)
 
-The bootstrap parser rejects Go keywords in **all** identifier positions (including struct fields/methods via `expectMemberIdent`), and rejects all 33 Go reserved/predeclared words in variable/function/type/param positions via `expectIdent`:
+The bootstrap parser rejects Go keywords in **all** identifier positions (including struct fields/methods via `expectMemberIdent`), and rejects all 34 Go reserved/predeclared words in variable/function/type/param positions via `expectIdent`:
 
 - **`goKeywords` (12 — forbidden everywhere, even member names):**
   `chan`, `default`, `fallthrough`, `func`, `goto`, `interface`, `map`, `package`, `range`, `struct`, `switch`, `var`
-- **`goReservedWords` (33 — includes all 12 `goKeywords` plus 21 Go predeclared/stdlib identifiers, forbidden as top-level/local/param/type/fn identifiers):**
-  `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `panic`, `println`, `recover`, `rune`, `strconv`, `string`, `strings`
+- **`goReservedWords` (34 — includes all 12 `goKeywords` plus 22 Go predeclared/stdlib identifiers, forbidden as top-level/local/param/type/fn identifiers):**
+  `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`
 
 > **Tip:** Avoid `str`, `type`, `fn`, `err`, `len`, `map`, `range`, `default`, `var`, `func`, `error`, `string` when naming variables or struct fields in `selfhost/`. Prefer `ty`, `fnSym`, `errMsg`, `count`, `table`, `isRange`, `defVal`, `text`.

@@ -82,38 +82,84 @@ func syncFileIfChanged(path string, content []byte) error {
 	if err == nil && bytes.Equal(existing, content) {
 		return nil
 	}
-	return os.WriteFile(path, content, 0644)
+
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, ".sync-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmpFile.Write(content); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		// On Windows, concurrent os.Rename onto an existing file can fail;
+		// if another writer already wrote identical content, treat as success.
+		if current, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(current, content) {
+			return nil
+		}
+		return err
+	}
+	cleanupTmp = false
+	return nil
 }
 
 func prepareBuildJob(goCode string) (string, func(), error) {
+	goModBytes := []byte("module cbmain\n\ngo 1.23\n")
+
 	cacheRoot, err := os.UserCacheDir()
-	if err != nil || cacheRoot == "" {
-		cacheRoot = os.TempDir()
-	}
-	workspaceDir := filepath.Join(cacheRoot, "cleanbasic", "work-default")
-	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
-		return "", nil, err
+	if err == nil && cacheRoot != "" {
+		workspaceDir := filepath.Join(cacheRoot, "cleanbasic", "work-default")
+		if err := os.MkdirAll(workspaceDir, 0700); err != nil {
+			return "", nil, err
+		}
+		if err := syncFileIfChanged(filepath.Join(workspaceDir, "go.mod"), goModBytes); err != nil {
+			return "", nil, err
+		}
+		jobDir, err := os.MkdirTemp(workspaceDir, "job-*")
+		if err != nil {
+			return "", nil, err
+		}
+		cleanup := func() {
+			_ = os.RemoveAll(jobDir)
+		}
+		mainGoPath := filepath.Join(jobDir, "main.go")
+		if err := os.WriteFile(mainGoPath, []byte(goCode), 0644); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+		return jobDir, cleanup, nil
 	}
 
-	goModBytes := []byte("module cbmain\n\ngo 1.22\n")
-	if err := syncFileIfChanged(filepath.Join(workspaceDir, "go.mod"), goModBytes); err != nil {
-		return "", nil, err
-	}
-
-	jobDir, err := os.MkdirTemp(workspaceDir, "job-*")
+	jobDir, err := os.MkdirTemp("", "cleanbasic-work-*")
 	if err != nil {
 		return "", nil, err
 	}
 	cleanup := func() {
 		_ = os.RemoveAll(jobDir)
 	}
-
-	mainGoPath := filepath.Join(jobDir, "main.go")
-	if err := os.WriteFile(mainGoPath, []byte(goCode), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "go.mod"), goModBytes, 0644); err != nil {
 		cleanup()
 		return "", nil, err
 	}
-
+	if err := os.WriteFile(filepath.Join(jobDir, "main.go"), []byte(goCode), 0644); err != nil {
+		cleanup()
+		return "", nil, err
+	}
 	return jobDir, cleanup, nil
 }
 
@@ -157,6 +203,22 @@ func runEmit(args []string) int {
 	return 0
 }
 
+func defaultBuildOutputPath(filePath, goos string) string {
+	base := filepath.Base(filePath)
+	ext := filepath.Ext(base)
+	outPath := strings.TrimSuffix(base, ext)
+	if outPath == "" {
+		if goos == "windows" {
+			return "a.exe"
+		}
+		return "a.out"
+	}
+	if goos == "windows" && !strings.HasSuffix(strings.ToLower(outPath), ".exe") {
+		outPath += ".exe"
+	}
+	return outPath
+}
+
 func runBuild(args []string) int {
 	filePath, outPath, code := parseFileAndOutArgs(args, true)
 	if code != 0 {
@@ -169,12 +231,7 @@ func runBuild(args []string) int {
 	}
 
 	if outPath == "" {
-		base := filepath.Base(filePath)
-		ext := filepath.Ext(base)
-		outPath = strings.TrimSuffix(base, ext)
-		if outPath == "" {
-			outPath = "a.out"
-		}
+		outPath = defaultBuildOutputPath(filePath, runtime.GOOS)
 	}
 
 	absOut, err := filepath.Abs(outPath)

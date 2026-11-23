@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -246,5 +247,74 @@ func TestCBGrepExample(t *testing.T) {
 	missingFileCmd := exec.Command(cbgrepBin, "hello", filepath.Join(tmpDir, "missing.txt"))
 	if err := missingFileCmd.Run(); err == nil || missingFileCmd.ProcessState.ExitCode() != 2 {
 		t.Errorf("missing file exit code = %v, want 2", err)
+	}
+}
+
+func TestDefaultBuildOutputPath(t *testing.T) {
+	cases := []struct {
+		filePath string
+		goos     string
+		want     string
+	}{
+		{"examples/cbgrep/main.cb", "linux", "main"},
+		{"examples/cbgrep/main.cb", "darwin", "main"},
+		{"examples/cbgrep/main.cb", "windows", "main.exe"},
+		{"app.exe.cb", "windows", "app.exe"},
+		{"app.EXE.cb", "windows", "app.EXE"},
+		{"", "linux", "a.out"},
+		{"", "windows", "a.exe"},
+		{".cb", "linux", "a.out"},
+		{".cb", "windows", "a.exe"},
+	}
+
+	for _, tc := range cases {
+		got := defaultBuildOutputPath(tc.filePath, tc.goos)
+		if got != tc.want {
+			t.Errorf("defaultBuildOutputPath(%q, %q) = %q, want %q", tc.filePath, tc.goos, got, tc.want)
+		}
+	}
+}
+
+func TestSyncFileIfChangedAtomicAndIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "go.mod")
+
+	initial := []byte("module cbmain\n\ngo 1.23\n")
+	if err := syncFileIfChanged(target, initial); err != nil {
+		t.Fatalf("initial syncFileIfChanged failed: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target failed: %v", err)
+	}
+	if !bytes.Equal(got, initial) {
+		t.Fatalf("got %q, want %q", got, initial)
+	}
+
+	// Idempotent no-op when content matches
+	if err := syncFileIfChanged(target, initial); err != nil {
+		t.Fatalf("idempotent syncFileIfChanged failed: %v", err)
+	}
+
+	// Update with new content
+	updated := []byte("module cbmain\n\ngo 1.24\n")
+	if err := syncFileIfChanged(target, updated); err != nil {
+		t.Fatalf("update syncFileIfChanged failed: %v", err)
+	}
+	got, err = os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read updated target failed: %v", err)
+	}
+	if !bytes.Equal(got, updated) {
+		t.Fatalf("got %q, want %q", got, updated)
+	}
+
+	// Ensure no stray temp files remain
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "go.mod" {
+		t.Fatalf("unexpected directory entries after sync: %v", entries)
 	}
 }

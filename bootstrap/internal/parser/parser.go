@@ -110,7 +110,7 @@ var goReservedWords = map[string]bool{
 	"delete": true, "error": true, "errors": true, "float64": true,
 	"fmt": true, "int64": true, "len": true, "make": true,
 	"new": true, "nil": true, "panic": true, "println": true,
-	"recover": true, "rune": true, "strconv": true, "string": true,
+	"recover": true, "rune": true, "slices": true, "strconv": true, "string": true,
 	"strings": true,
 }
 

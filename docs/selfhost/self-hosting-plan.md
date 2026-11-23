@@ -111,7 +111,7 @@ lexer --> token
 
 ### 3.2 Complete CleanBasic `AstArena` Blueprint
 
-All identifiers below are chosen to avoid CleanBasic keywords and all 33 Go reserved words (`goKeywords` / `goReservedWords`).
+All identifiers below are chosen to avoid CleanBasic keywords and all 34 Go reserved words (`goKeywords` / `goReservedWords`).
 
 ```cleanbasic
 // selfhost/ast.cb — Flat Arena AST & Symbol Pool Blueprint
@@ -666,7 +666,7 @@ public fn typeString(a as AstArena, typeId as int) as str
 - **Subtle Invariants:**
   - **Go Reserved Word Enforcement:**
     - `goKeywords` (**12** words): `chan`, `default`, `fallthrough`, `func`, `goto`, `interface`, `map`, `package`, `range`, `struct`, `switch`, `var`. Checked in `expectMemberIdent` (struct field names, enum variants, and `.` member access).
-    - `goReservedWords` (**33** words = 12 `goKeywords` + 21 Go predeclared/stdlib names: `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `panic`, `println`, `recover`, `rune`, `strconv`, `string`, `strings`). Checked in `expectIdent` (all variable, param, const, type, enum, fn, alias, and primary identifier positions).
+    - `goReservedWords` (**34** words = 12 `goKeywords` + 22 Go predeclared/stdlib names: `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`). Checked in `expectIdent` (all variable, param, const, type, enum, fn, alias, and primary identifier positions).
   - **Operator Precedence Ladder (lowest to highest):**
     - Level 1: `or`
     - Level 2: `and`
@@ -706,7 +706,7 @@ fn parsePrimaryExpr(byref a as AstArena, byref p as Parser) as int can error
 ```
 
 #### Parity & Behavior Checklist
-- Exact same 12 `goKeywords` and 33 `goReservedWords` sets and error message: `"cannot use Go reserved word \"" + lexeme + "\" as an identifier"`.
+- Exact same 12 `goKeywords` and 34 `goReservedWords` sets and error message: `"cannot use Go reserved word \"" + lexeme + "\" as an identifier"`.
 - All top-level forms supported: `import "..." [as alias]`, `go import "..." [as alias]`, `GO_BLOCK`, `[public] const`, `[public] dim`, `[public] type Name = go "GoType"`, `[public] type Name ... end type`, `[public] enum Name ... end enum`, `[public] fn ... [as T] [can error] = go "Target"`, `[public] fn ... end fn`.
 - `for` disambiguates `for i = start to end` vs `for x in iter` vs `for k, v in iter`.
 - `parsePostfixExpr` handles `target[:]`, `target[start:]`, `target[:end]`, `target[start:end]`, and `target[index]`.
@@ -1065,7 +1065,7 @@ fn formatImportLines(ctx as EmitCtx) as list[str]
     - `build <file.cb> [-o <bin>]` -> defaults `outPath` to `filepath.Base(filePath)` without extension (or `"a.out"` if empty), resolves `absOut`, prepares temp job dir, runs `go build -o <absOut> .`, cleans up temp dir.
     - `run <file.cb> [args...]` -> strips optional `--` separator after `file.cb`, compiles `cbprog` (or `cbprog.exe` on Windows) in temp job dir, executes it forwarding stdin/stdout/stderr, propagates child exit code.
     - Missing args / unknown flag / unknown command / missing `-o` value -> prints error + usage to stderr, returns `2`.
-  - **Shared Build Workspace:** `os.UserCacheDir()` + `cleanbasic/work-default`, `syncFileIfChanged("go.mod", "module cbmain\n\ngo 1.22\n")`, `os.MkdirTemp(workspaceDir, "job-*")` with `defer os.RemoveAll(jobDir)`.
+  - **Shared Build Workspace:** `os.UserCacheDir()` + `cleanbasic/work-default`, `syncFileIfChanged("go.mod", "module cbmain\n\ngo 1.23\n")`, `os.MkdirTemp(workspaceDir, "job-*")` with `defer os.RemoveAll(jobDir)`.
 
 #### CleanBasic Design & Key Types/Functions
 ```cleanbasic

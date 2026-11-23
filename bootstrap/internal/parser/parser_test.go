@@ -380,6 +380,7 @@ func TestParseRejectsGoReservedWords(t *testing.T) {
 		{"go predeclared type name", "fn main()\n    dim x as string\nend fn\n", "string"},
 		{"go predeclared error", "fn main()\n    dim error = 1\nend fn\n", "error"},
 		{"go predeclared nil", "fn main()\n    dim nil = 1\nend fn\n", "nil"},
+		{"go predeclared slices", "fn main()\n    dim slices = [3, 1, 2]\nend fn\n", "slices"},
 	}
 
 	for _, tc := range invalidCases {

@@ -315,7 +315,7 @@ end fn
 
 ### 6. Structured Concurrency (`mailbox[T]`, `start job`)
 
-CleanBasic provides structured, data-race-safe concurrency built around typed message queues and goroutine-backed `start job` statements:
+CleanBasic provides message-passing concurrency built around typed mailboxes (`mailbox[T]`) and goroutine-backed `start job` statements (lowered 1:1 to Go channels and goroutines):
 
 * **Typed Mailboxes (`mailbox[T]`):** Lowered 1:1 to Go `chan T`. Created with `mailbox[T]()` (`make(chan T)`, unbuffered) or `mailbox[T](cap)` (`make(chan T, cap)`).
   * `box.post(msg as T)` — sends `msg` (`box <- msg`, infallible).
@@ -323,7 +323,7 @@ CleanBasic provides structured, data-race-safe concurrency built around typed me
   * `box.close()` (`close(box)`), `box.len() as int` (`int64(len(box))`), and `for msg in box ... end for` (`for msg := range box`).
 * **Background Jobs (`start job` Statement):**
   * `start job fnCall(...)` is a standalone statement that lowers 1:1 to `go fnCall(...)`.
-  * Target must be a user or module function/UFCS call; `can error` functions are rejected at compile time, while `byref` parameters are allowed (`&arg` is passed and Go's escape analysis promotes the variable as needed). Results and completion signals are communicated via `mailbox[T]`.
+  * Target must be a user or module function/UFCS call; `can error` functions are rejected at compile time, while `byref` parameters are allowed (`&arg` is passed and Go's escape analysis promotes the variable as needed). Results and completion signals should be communicated via `mailbox[T]`; callers that share mutable state via `byref`, `dict`, `list`, or top-level `dim` variables must coordinate access just as in Go.
 
 ### 7. Pure Value Structs & Recursive Trees (`list[T]`)
 

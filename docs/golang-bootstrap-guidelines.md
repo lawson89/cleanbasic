@@ -1,7 +1,7 @@
 # CleanBasic Bootstrap Transpiler — Agent Guidelines
 
 ## Project Goal
-Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compiles CleanBasic (`.cb`) source files into a single procedural Go file (`main.go`), which is then compiled/executed by the standard Go toolchain (`go build` / `go run`).
+Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.23+) that compiles CleanBasic (`.cb`) source files into a single procedural Go file (`main.go`), which is then compiled/executed by the standard Go toolchain (`go build` / `go run`).
 
 ## Authoritative Specification
 - Always consult `docs/cleanbasic_language_specification_go_backend_edition.md` as the single source of truth for syntax, EBNF grammar, semantics, and type rules.
@@ -9,7 +9,7 @@ Build a clean, fast bootstrap transpiler (`cb`) written in Go (1.22+) that compi
 
 ## Architectural & Coding Rules
 1. **Zero External Dependencies:** Use ONLY the Go standard library (`fmt`, `os`, `strings`, `strconv`, `path/filepath`, `os/exec`, `slices`, `maps`, etc.) in both the transpiler codebase and the emitted `main.go` output.
-2. **Idiomatic Go for Clarity, Bounded by Self-Hosting Portability:** Write idiomatic, readable Go (1.22+) so the bootstrap compiler is as clear and maintainable as possible (using standard library helpers like `slices`, `maps`, `strings`, `fmt`, receiver methods that map cleanly to CleanBasic UFCS, and clean data structures). Avoid Go features that CleanBasic does not support and has no straightforward self-hosting mapping—specifically: runtime `reflect`, complex interface hierarchies / visitor-pattern double-dispatch, ubiquitous closures capturing mutable outer scope, channel/goroutine concurrency inside the compiler pipeline, or `unsafe`. (Existing shallow AST marker interfaces `ast.Expr` / `ast.Statement` / `ast.TopLevelDecl` are fine in Go because they map cleanly to tagged/arena structs in CleanBasic.) Also avoid ternary-like simulated one-liners where explicit `if/else` blocks are clearer.
+2. **Idiomatic Go for Clarity, Bounded by Self-Hosting Portability:** Write idiomatic, readable Go (1.23+) so the bootstrap compiler is as clear and maintainable as possible (using standard library helpers like `slices`, `maps`, `strings`, `fmt`, receiver methods that map cleanly to CleanBasic UFCS, and clean data structures). Avoid Go features that CleanBasic does not support and has no straightforward self-hosting mapping—specifically: runtime `reflect`, complex interface hierarchies / visitor-pattern double-dispatch, ubiquitous closures capturing mutable outer scope, channel/goroutine concurrency inside the compiler pipeline, or `unsafe`. (Existing shallow AST marker interfaces `ast.Expr` / `ast.Statement` / `ast.TopLevelDecl` are fine in Go because they map cleanly to tagged/arena structs in CleanBasic.) Also avoid ternary-like simulated one-liners where explicit `if/else` blocks are clearer.
 3. **Permanent Language Simplifications:**
    - **One-Way Bottom-Up Inference:** Expressions compute their own types bottom-up. Empty collection literals (`[]`, `{}`) are rejected; use typed constructors `list[T]()` / `dict[K, V]()`.
    - **Defining-Module & Local UFCS:** `obj.method(args)` resolves to methods in the built-in prelude (`str`, `int`, `float`, `bool`, `byte`, `list`, `dict`, `mailbox`, `err`), functions declared in the *same* `.cb` module, or `public fn`s declared in the defining module of `obj`'s `type`/`enum`.
