@@ -215,9 +215,6 @@ func (a *analyzer) registerFnDecl(fn *ast.FnDecl) error {
 	if existing, exists := a.mod.Functions[fn.Name]; exists {
 		return newSemaError(fn.Pos, "function %q is already declared (previous declaration at %s)", fn.Name, existing.Pos.String())
 	}
-	if existingVar, exists := a.mod.GlobalVars.Lookup(fn.Name); exists {
-		return newSemaError(fn.Pos, "function name %q conflicts with constant declared at %s", fn.Name, existingVar.Pos.String())
-	}
 
 	var params []ParamSymbol
 	seenParams := make(map[string]token.Position)

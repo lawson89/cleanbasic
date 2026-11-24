@@ -120,9 +120,6 @@ end fn
 
 public fn parseArgs(p as Parser, argv as list[str]) as ParsedArgs can error
 	dim out = ParsedArgs()
-	out.flags = dict[str, bool]()
-	out.options = dict[str, str]()
-	out.args = dict[str, str]()
 	for o in p.options
 		out.options[o.name] = o.defaultVal
 	end for

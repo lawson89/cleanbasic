@@ -4,14 +4,12 @@ import "std/os"
 import "std/regex"
 
 type GrepConfig
-    pattern as str
     fixedNeedle as str
     ignoreCase as bool
     lineNumber as bool
     countOnly as bool
     invertMatch as bool
     fixedStrings as bool
-    recursive as bool
     showFilename as bool
     re as regex.Regex
 end type
@@ -91,8 +89,10 @@ fn collectFiles(target as str, recursive as bool, byref outFiles as list[str]) c
                 continue
             end if
             dim fullPath = fs.join(target, entry)
-            if fs.isDir(fullPath) and not fs.isSymlink(fullPath)
-                collectFiles(fullPath, recursive, outFiles)
+            if fs.isDir(fullPath)
+                if not fs.isSymlink(fullPath)
+                    collectFiles(fullPath, recursive, outFiles)
+                end if
             else
                 outFiles.push(fullPath)
             end if
@@ -137,13 +137,11 @@ fn main() as int
     dim recursive = parsed.hasFlag("recursive")
 
     dim cfg = GrepConfig()
-    cfg.pattern = pattern
     cfg.ignoreCase = ignoreCase
     cfg.lineNumber = lineNumber
     cfg.countOnly = countOnly
     cfg.invertMatch = invertMatch
     cfg.fixedStrings = fixedStrings
-    cfg.recursive = recursive
     cfg.showFilename = false
 
     if fixedStrings

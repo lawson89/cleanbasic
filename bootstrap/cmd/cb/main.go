@@ -103,7 +103,7 @@ func syncFileIfChanged(path string, content []byte) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0644); err != nil {
+	if err := os.Chmod(tmpName, 0600); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpName, path); err != nil {
@@ -138,7 +138,7 @@ func prepareBuildJob(goCode string) (string, func(), error) {
 			_ = os.RemoveAll(jobDir)
 		}
 		mainGoPath := filepath.Join(jobDir, "main.go")
-		if err := os.WriteFile(mainGoPath, []byte(goCode), 0644); err != nil {
+		if err := os.WriteFile(mainGoPath, []byte(goCode), 0600); err != nil {
 			cleanup()
 			return "", nil, err
 		}
@@ -152,20 +152,18 @@ func prepareBuildJob(goCode string) (string, func(), error) {
 	cleanup := func() {
 		_ = os.RemoveAll(jobDir)
 	}
-	if err := os.WriteFile(filepath.Join(jobDir, "go.mod"), goModBytes, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "go.mod"), goModBytes, 0600); err != nil {
 		cleanup()
 		return "", nil, err
 	}
-	if err := os.WriteFile(filepath.Join(jobDir, "main.go"), []byte(goCode), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "main.go"), []byte(goCode), 0600); err != nil {
 		cleanup()
 		return "", nil, err
 	}
 	return jobDir, cleanup, nil
 }
 
-func runGoBuildInDir(jobDir, absOut string) int {
-	cmd := exec.Command("go", "build", "-o", absOut, ".")
-	cmd.Dir = jobDir
+func runCommand(cmd *exec.Cmd, errPrefix string) int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -174,10 +172,16 @@ func runGoBuildInDir(jobDir, absOut string) int {
 		if errors.As(err, &exitErr) {
 			return exitErr.ExitCode()
 		}
-		fmt.Fprintf(os.Stderr, "go build failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", errPrefix, err)
 		return 1
 	}
 	return 0
+}
+
+func runGoBuildInDir(jobDir, absOut string) int {
+	cmd := exec.Command("go", "build", "-o", absOut, ".")
+	cmd.Dir = jobDir
+	return runCommand(cmd, "go build failed")
 }
 
 func runEmit(args []string) int {
@@ -290,18 +294,7 @@ func runExec(args []string) int {
 	}
 
 	cmd := exec.Command(binPath, progArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintf(os.Stderr, "execution failed: %v\n", err)
-		return 1
-	}
-	return 0
+	return runCommand(cmd, "execution failed")
 }
 func parseFileAndOutArgs(args []string, allowOutputFlag bool) (string, string, int) {
 	var filePath string

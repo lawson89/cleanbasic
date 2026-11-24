@@ -21,10 +21,13 @@ func (e *ParseError) Error() string {
 }
 
 // Parser implements a recursive-descent parser for CleanBasic.
+const maxParseDepth = 256
+
 type Parser struct {
 	file   string
 	tokens []token.Token
 	pos    int
+	depth  int
 }
 
 // New creates a Parser from a slice of tokens.
@@ -102,22 +105,40 @@ var goKeywords = map[string]bool{
 	"var":         true,
 }
 
-var goReservedWords = map[string]bool{
-	"chan": true, "default": true, "fallthrough": true, "func": true,
-	"goto": true, "interface": true, "map": true, "package": true,
-	"range": true, "struct": true, "switch": true, "var": true,
+var goPredeclaredWords = map[string]bool{
 	"any": true, "append": true, "close": true, "copy": true,
 	"delete": true, "error": true, "errors": true, "float64": true,
 	"fmt": true, "int64": true, "len": true, "make": true,
-	"new": true, "nil": true, "panic": true, "println": true,
+	"new": true, "nil": true, "os": true, "panic": true, "println": true,
 	"recover": true, "rune": true, "slices": true, "strconv": true, "string": true,
 	"strings": true,
+	"cb_main": true, "cbDictGet": true, "cbDictContains": true,
+	"cbJob": true, "cbStartJob": true, "cbVoidJob": true, "cbStartVoidJob": true,
+}
+
+func isGoReservedIdent(name string) bool {
+	return goKeywords[name] || goPredeclaredWords[name]
+}
+
+func (p *Parser) enterDepth(pos token.Position, context string) error {
+	p.depth++
+	if p.depth > maxParseDepth {
+		p.depth--
+		return errAt(pos, "maximum nesting depth (%d) exceeded %s", maxParseDepth, context)
+	}
+	return nil
+}
+
+func (p *Parser) leaveDepth() {
+	if p.depth > 0 {
+		p.depth--
+	}
 }
 
 func (p *Parser) expectIdent(context string) (token.Token, error) {
 	tok := p.cur()
 	if tok.Kind == token.IDENT {
-		if goReservedWords[tok.Lexeme] {
+		if isGoReservedIdent(tok.Lexeme) {
 			return token.Token{}, errAt(tok.Pos, "cannot use Go reserved word %q as an identifier", tok.Lexeme)
 		}
 		p.advance()
@@ -175,6 +196,10 @@ func (p *Parser) parseOptionalAsType() (*ast.Type, error) {
 }
 
 func (p *Parser) parseStmtBlock(stopKinds ...token.Kind) ([]ast.Statement, error) {
+	if err := p.enterDepth(p.cur().Pos, "in statement block"); err != nil {
+		return nil, err
+	}
+	defer p.leaveDepth()
 	var body []ast.Statement
 	for p.cur().Kind != token.EOF && !slices.Contains(stopKinds, p.cur().Kind) {
 		stmt, err := p.parseStatement()
@@ -251,7 +276,7 @@ func (p *Parser) parseTopLevelDecl() (ast.TopLevelDecl, error) {
 	}
 }
 
-func (p *Parser) parseImportSpec(ctx string) (token.Position, string, string, error) {
+func (p *Parser) parseImportSpec(ctx string, allowPredeclared bool) (token.Position, string, string, error) {
 	startTok := p.advance()
 	pathTok, err := p.expect(token.STRING_LIT, "in "+ctx)
 	if err != nil {
@@ -259,7 +284,12 @@ func (p *Parser) parseImportSpec(ctx string) (token.Position, string, string, er
 	}
 	alias := ""
 	if p.match(token.AS) {
-		aliasTok, err := p.expectIdent("after 'as' in " + ctx)
+		var aliasTok token.Token
+		if allowPredeclared {
+			aliasTok, err = p.expectMemberIdent("after 'as' in " + ctx)
+		} else {
+			aliasTok, err = p.expectIdent("after 'as' in " + ctx)
+		}
 		if err != nil {
 			return token.Position{}, "", "", err
 		}
@@ -272,7 +302,7 @@ func (p *Parser) parseImportSpec(ctx string) (token.Position, string, string, er
 }
 
 func (p *Parser) parseImportDecl() (*ast.ImportDecl, error) {
-	pos, path, alias, err := p.parseImportSpec("import declaration")
+	pos, path, alias, err := p.parseImportSpec("import declaration", true)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +310,7 @@ func (p *Parser) parseImportDecl() (*ast.ImportDecl, error) {
 }
 
 func (p *Parser) parseGoImportDecl() (*ast.GoImportDecl, error) {
-	pos, path, alias, err := p.parseImportSpec("go import declaration")
+	pos, path, alias, err := p.parseImportSpec("go import declaration", false)
 	if err != nil {
 		return nil, err
 	}
@@ -529,6 +559,10 @@ func (p *Parser) parseParamList() ([]ast.Param, error) {
 //	| "dict" "[" Type "," Type "]"
 //	| QualifiedIdent
 func (p *Parser) parseType() (ast.Type, error) {
+	if err := p.enterDepth(p.cur().Pos, "in type"); err != nil {
+		return ast.Type{}, err
+	}
+	defer p.leaveDepth()
 	tok := p.cur()
 	switch tok.Kind {
 	case token.INT, token.FLOAT, token.STR, token.BOOL, token.BYTE, token.ERR:
@@ -593,7 +627,11 @@ func (p *Parser) parseType() (ast.Type, error) {
 		}, nil
 
 	case token.IDENT:
-		if goReservedWords[tok.Lexeme] {
+		if p.peek(1).Kind == token.DOT {
+			if goKeywords[tok.Lexeme] {
+				return ast.Type{}, errAt(tok.Pos, "cannot use Go reserved word %q as an identifier", tok.Lexeme)
+			}
+		} else if isGoReservedIdent(tok.Lexeme) {
 			return ast.Type{}, errAt(tok.Pos, "cannot use Go reserved word %q as an identifier", tok.Lexeme)
 		}
 		p.advance()
@@ -1112,6 +1150,10 @@ func (p *Parser) parseBinaryExpr(minPrec int) (ast.Expr, error) {
 
 // NotExpr ::= "not" NotExpr | CmpExpr
 func (p *Parser) parseNotExpr() (ast.Expr, error) {
+	if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
+		return nil, err
+	}
+	defer p.leaveDepth()
 	if p.cur().Kind == token.NOT {
 		opTok := p.advance()
 		operand, err := p.parseNotExpr()
@@ -1129,6 +1171,10 @@ func (p *Parser) parseNotExpr() (ast.Expr, error) {
 
 // UnaryExpr ::= ("+" | "-") UnaryExpr | PostfixExpr
 func (p *Parser) parseUnaryExpr() (ast.Expr, error) {
+	if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
+		return nil, err
+	}
+	defer p.leaveDepth()
 	if p.cur().Kind == token.PLUS || p.cur().Kind == token.MINUS {
 		opTok := p.advance()
 		operand, err := p.parseUnaryExpr()
@@ -1218,6 +1264,10 @@ func (p *Parser) parsePostfixExpr() (ast.Expr, error) {
 
 // PrimaryExpr ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
 func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
+	if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
+		return nil, err
+	}
+	defer p.leaveDepth()
 	tok := p.cur()
 
 	switch tok.Kind {

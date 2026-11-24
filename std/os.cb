@@ -1,4 +1,5 @@
 go import "bytes"
+go import "errors"
 go import "fmt"
 go import "io"
 go import "os"
@@ -30,7 +31,8 @@ func cbStdOsExec(cmd string, args []string) (std_os__ExecResult, error) {
 	err := c.Run()
 	var exitCode int64
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = int64(exitErr.ExitCode())
 			err = nil
 		}
@@ -72,7 +74,8 @@ func cbStdOsExecInDir(dir string, cmd string, args []string) (int64, error) {
 	c.Stderr = os.Stderr
 	err := c.Run()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return int64(exitErr.ExitCode()), nil
 		}
 		return 0, err

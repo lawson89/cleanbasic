@@ -14,7 +14,6 @@ type Program struct {
 
 // TopLevelDecl is implemented by all top-level declarations in a CleanBasic module.
 type TopLevelDecl interface {
-	DeclPos() token.Position
 	declNode()
 }
 
@@ -36,14 +35,14 @@ type Expr interface {
 type TypeKind string
 
 const (
-	KindVoid    TypeKind = "void"
-	KindInt     TypeKind = "int"
-	KindFloat   TypeKind = "float"
-	KindStr     TypeKind = "str"
-	KindBool    TypeKind = "bool"
-	KindByte    TypeKind = "byte"
-	KindStruct  TypeKind = "struct"
-	KindEnum    TypeKind = "enum"
+	KindVoid   TypeKind = "void"
+	KindInt    TypeKind = "int"
+	KindFloat  TypeKind = "float"
+	KindStr    TypeKind = "str"
+	KindBool   TypeKind = "bool"
+	KindByte   TypeKind = "byte"
+	KindStruct TypeKind = "struct"
+	KindEnum   TypeKind = "enum"
 	KindList   TypeKind = "list"
 	KindDict   TypeKind = "dict"
 	KindJob    TypeKind = "job"
@@ -224,8 +223,7 @@ type ImportDecl struct {
 	Alias string
 }
 
-func (d *ImportDecl) DeclPos() token.Position { return d.Pos }
-func (d *ImportDecl) declNode()               {}
+func (d *ImportDecl) declNode() {}
 
 // GoImportDecl represents: go import "pkg" [as alias]
 type GoImportDecl struct {
@@ -234,8 +232,7 @@ type GoImportDecl struct {
 	Alias string
 }
 
-func (d *GoImportDecl) DeclPos() token.Position { return d.Pos }
-func (d *GoImportDecl) declNode()               {}
+func (d *GoImportDecl) declNode() {}
 
 // GoBlockDecl represents a top-level raw Go code block: go ... end go
 type GoBlockDecl struct {
@@ -243,8 +240,7 @@ type GoBlockDecl struct {
 	Code string
 }
 
-func (d *GoBlockDecl) DeclPos() token.Position { return d.Pos }
-func (d *GoBlockDecl) declNode()               {}
+func (d *GoBlockDecl) declNode() {}
 
 // ConstDecl represents: [public] const Name [as Type] = Value
 type ConstDecl struct {
@@ -255,8 +251,7 @@ type ConstDecl struct {
 	Value  Expr
 }
 
-func (d *ConstDecl) DeclPos() token.Position { return d.Pos }
-func (d *ConstDecl) declNode()               {}
+func (d *ConstDecl) declNode() {}
 
 // FieldDecl represents a field inside a TypeDecl: Name as Type
 type FieldDecl struct {
@@ -274,8 +269,7 @@ type TypeDecl struct {
 	Fields []FieldDecl
 }
 
-func (d *TypeDecl) DeclPos() token.Position { return d.Pos }
-func (d *TypeDecl) declNode()               {}
+func (d *TypeDecl) declNode() {}
 
 // EnumDecl represents: [public] enum Name ... end enum
 type EnumDecl struct {
@@ -285,8 +279,7 @@ type EnumDecl struct {
 	Variants []string
 }
 
-func (d *EnumDecl) DeclPos() token.Position { return d.Pos }
-func (d *EnumDecl) declNode()               {}
+func (d *EnumDecl) declNode() {}
 
 // Param represents a function parameter: [byref] Name as Type
 type Param struct {
@@ -308,8 +301,7 @@ type FnDecl struct {
 	Body       []Statement
 }
 
-func (d *FnDecl) DeclPos() token.Position { return d.Pos }
-func (d *FnDecl) declNode()               {}
+func (d *FnDecl) declNode() {}
 
 // --- Statements ---
 
@@ -322,7 +314,6 @@ type VarDecl struct {
 	Value  Expr  // nil if zero-initialized via 'dim Name as Type'
 }
 
-func (s *VarDecl) DeclPos() token.Position { return s.Pos }
 func (s *VarDecl) declNode()               {}
 func (s *VarDecl) StmtPos() token.Position { return s.Pos }
 func (s *VarDecl) stmtNode()               {}
@@ -573,7 +564,6 @@ func (e *DictLitExpr) exprNode()               {}
 type TypedEmptyCtorExpr struct {
 	Pos  token.Position
 	Type Type
-	Args []Expr
 }
 
 func (e *TypedEmptyCtorExpr) ExprPos() token.Position { return e.Pos }

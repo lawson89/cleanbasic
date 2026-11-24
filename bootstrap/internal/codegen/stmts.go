@@ -97,8 +97,21 @@ func (e *emitter) emitRhs(sb *strings.Builder, expr ast.Expr, indent string) str
 	return e.emitExpr(expr)
 }
 
+func canEmitLineDirective(file string, line int) bool {
+	if file == "" || file == "<memory>" || line <= 0 {
+		return false
+	}
+	for i := 0; i < len(file); i++ {
+		b := file[i]
+		if b < 0x20 || b == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent string) {
-	if e.emitLineDirectives && stmt.StmtPos().File != "" && stmt.StmtPos().File != "<memory>" && stmt.StmtPos().Line > 0 {
+	if e.emitLineDirectives && canEmitLineDirective(stmt.StmtPos().File, stmt.StmtPos().Line) {
 		sb.WriteString(fmt.Sprintf("//line %s:%d\n", filepath.ToSlash(stmt.StmtPos().File), stmt.StmtPos().Line))
 	}
 

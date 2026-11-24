@@ -940,3 +940,22 @@ func TestEmitGoJobRaceSafetyAndRuntime(t *testing.T) {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 }
+func TestEmitLineDirectiveRejectsControlCharsAndAliasesOsExit(t *testing.T) {
+	src := "fn main() as int\n    return 0\nend fn\n"
+	for _, badName := range []string{"evil\npackage main.cb", "evil\rfile.cb"} {
+		prog, err := sema.AnalyzeSource(src, badName)
+		if err != nil {
+			t.Fatalf("AnalyzeSource(%q) failed: %v", badName, err)
+		}
+		goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: true})
+		if err != nil {
+			t.Fatalf("EmitGoWithOptions(%q) failed: %v", badName, err)
+		}
+		if strings.Contains(goCode, "//line ") {
+			t.Fatalf("expected //line directive to be omitted for %q, got:\n%s", badName, goCode)
+		}
+		if !strings.Contains(goCode, "_cb_os \"os\"") || !strings.Contains(goCode, "_cb_os.Exit(int(code))") {
+			t.Fatalf("expected aliased _cb_os.Exit in generated code, got:\n%s", goCode)
+		}
+	}
+}

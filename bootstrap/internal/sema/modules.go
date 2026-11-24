@@ -232,12 +232,37 @@ func (l *moduleLoader) getOrCreateStdlib(modPath string, pos token.Position) (*M
 	return l.visitFile(stdFile, nil, false, modPath)
 }
 
+func isValidStdlibRel(rel string) bool {
+	if rel == "" || strings.HasPrefix(rel, "/") || strings.HasSuffix(rel, "/") || strings.ContainsRune(rel, '\\') {
+		return false
+	}
+	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" {
+		return false
+	}
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func isProjectRootDir(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "bootstrap", "go.mod")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		return true
+	}
+	return false
+}
+
 func findStdlibFile(rootDir, modPath string) (string, bool) {
 	if !strings.HasPrefix(modPath, "std/") {
 		return "", false
 	}
 	rel := strings.TrimPrefix(modPath, "std/")
-	if rel == "" || strings.Contains(rel, "..") {
+	if !isValidStdlibRel(rel) {
 		return "", false
 	}
 	relPath := filepath.FromSlash(rel) + ".cb"
@@ -257,7 +282,9 @@ func findStdlibFile(rootDir, modPath string) (string, bool) {
 		}
 		cur := filepath.Clean(startDir)
 		for {
-			candidates = append(candidates, filepath.Join(cur, "std"))
+			if isProjectRootDir(cur) {
+				candidates = append(candidates, filepath.Join(cur, "std"))
+			}
 			parent := filepath.Dir(cur)
 			if parent == cur {
 				break
@@ -281,6 +308,10 @@ func findStdlibFile(rootDir, modPath string) (string, bool) {
 		}
 		seen[cleanDir] = true
 		full := filepath.Join(cleanDir, relPath)
+		relCheck, err := filepath.Rel(cleanDir, full)
+		if err != nil || relCheck == ".." || strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
+			continue
+		}
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
 			return full, true
 		}

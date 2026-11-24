@@ -1,6 +1,10 @@
 package sema
 
-import "cleanbasic/bootstrap/internal/ast"
+import (
+	"fmt"
+
+	"cleanbasic/bootstrap/internal/ast"
+)
 
 func (a *analyzer) finishBuiltinCall(e *ast.CallExpr, recvExpr ast.Expr, methodName string, retType Type, scope *Scope, params ...Type) (Type, error) {
 	if err := a.expectPositionalArgs(e, methodName, scope, params...); err != nil {
@@ -19,13 +23,8 @@ func (a *analyzer) finishFallibleBuiltinCall(e *ast.CallExpr, recvExpr ast.Expr,
 	if err := a.expectPositionalArgs(e, methodName, scope, params...); err != nil {
 		return VoidType, err
 	}
-	if e != a.startCall {
-		if !a.inFallibleContext() {
-			return VoidType, newSemaError(e.Pos, "call to 'can error' method %q must be inside a 'try' block or a 'can error' function", methodName)
-		}
-		if e != a.allowedFallibleExpr {
-			return VoidType, newSemaError(e.Pos, "call to 'can error' method %q may only appear as a top-level statement expression", methodName)
-		}
+	if err := a.checkFallibleCall(e, fmt.Sprintf("call to 'can error' method %q", methodName), ""); err != nil {
+		return VoidType, err
 	}
 	e.CallInfo = &CallInfo{
 		Kind:       CallMethod,

@@ -14,14 +14,14 @@ import (
 type TypeKind = ast.TypeKind
 
 const (
-	KindVoid    = ast.KindVoid
-	KindInt     = ast.KindInt
-	KindFloat   = ast.KindFloat
-	KindStr     = ast.KindStr
-	KindBool    = ast.KindBool
-	KindByte    = ast.KindByte
-	KindStruct  = ast.KindStruct
-	KindEnum    = ast.KindEnum
+	KindVoid   = ast.KindVoid
+	KindInt    = ast.KindInt
+	KindFloat  = ast.KindFloat
+	KindStr    = ast.KindStr
+	KindBool   = ast.KindBool
+	KindByte   = ast.KindByte
+	KindStruct = ast.KindStruct
+	KindEnum   = ast.KindEnum
 	KindList   = ast.KindList
 	KindDict   = ast.KindDict
 	KindJob    = ast.KindJob
@@ -126,6 +126,19 @@ type TypedProgram struct {
 	Modules     []*ModuleInfo
 	EntryModule *ModuleInfo
 	ModuleByID  map[string]*ModuleInfo
+}
+
+// LookupStruct resolves a struct symbol by its semantic Type, falling back to fallbackMod when ModuleID is empty.
+func (p *TypedProgram) LookupStruct(t Type, fallbackMod *ModuleInfo) *StructSymbol {
+	if t.ModuleID != "" && p != nil {
+		if m, ok := p.ModuleByID[t.ModuleID]; ok {
+			return m.Structs[t.Name]
+		}
+	}
+	if fallbackMod != nil {
+		return fallbackMod.Structs[t.Name]
+	}
+	return nil
 }
 
 // LoadAndAnalyze reads, parses, and semantically analyzes the CleanBasic file at entryPath.
@@ -289,12 +302,7 @@ func (a *analyzer) isSendableType(t Type, visited map[string]bool) bool {
 }
 
 func (a *analyzer) lookupStruct(t Type) *StructSymbol {
-	if t.ModuleID != "" {
-		if m, ok := a.prog.ModuleByID[t.ModuleID]; ok {
-			return m.Structs[t.Name]
-		}
-	}
-	return a.mod.Structs[t.Name]
+	return a.prog.LookupStruct(t, a.mod)
 }
 func (a *analyzer) isComparableType(t Type) bool {
 	switch t.Kind {

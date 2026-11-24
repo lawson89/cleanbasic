@@ -63,16 +63,16 @@ const (
 	NOT      Kind = "not"
 
 	// Built-in type / container keywords
-	INT     Kind = "int"
-	FLOAT   Kind = "float"
-	STR     Kind = "str"
-	BOOL    Kind = "bool"
-	BYTE    Kind = "byte"
-	ERR     Kind = "err"
-	LIST    Kind = "list"
-	DICT    Kind = "dict"
-	JOB     Kind = "job"
-	START   Kind = "start"
+	INT   Kind = "int"
+	FLOAT Kind = "float"
+	STR   Kind = "str"
+	BOOL  Kind = "bool"
+	BYTE  Kind = "byte"
+	ERR   Kind = "err"
+	LIST  Kind = "list"
+	DICT  Kind = "dict"
+	JOB   Kind = "job"
+	START Kind = "start"
 
 	// Helper / transitional single words used before two-word coalescing
 	END    Kind = "end"

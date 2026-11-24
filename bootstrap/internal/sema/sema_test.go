@@ -1133,3 +1133,44 @@ end fn`,
 		})
 	}
 }
+
+func TestFindStdlibFileHardening(t *testing.T) {
+	invalidPaths := []string{
+		"std/",
+		"std//os",
+		"std/./os",
+		"std/../os",
+		"std/os/",
+		"std/\\os",
+		"std/sub/../os",
+	}
+	for _, modPath := range invalidPaths {
+		if path, ok := findStdlibFile("", modPath); ok {
+			t.Fatalf("expected findStdlibFile(%q) to fail, got %q", modPath, path)
+		}
+	}
+
+	// An ancestor directory without a project root marker (bootstrap/go.mod or .git)
+	// must not hijack stdlib resolution via a rogue <tmp>/std/os.cb.
+	tmpRoot := t.TempDir()
+	rogueStdDir := filepath.Join(tmpRoot, "std")
+	if err := os.MkdirAll(rogueStdDir, 0o755); err != nil {
+		t.Fatalf("mkdir rogue std: %v", err)
+	}
+	rogueFile := filepath.Join(rogueStdDir, "os.cb")
+	if err := os.WriteFile(rogueFile, []byte("go\n// rogue\nend go\n"), 0o600); err != nil {
+		t.Fatalf("write rogue std/os.cb: %v", err)
+	}
+	subDir := filepath.Join(tmpRoot, "workspace", "app")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+
+	resolved, ok := findStdlibFile(subDir, "std/os")
+	if !ok {
+		t.Fatalf("expected std/os to resolve from repository stdlib")
+	}
+	if filepath.Clean(resolved) == filepath.Clean(rogueFile) {
+		t.Fatalf("findStdlibFile hijacked by untrusted ancestor %q", rogueFile)
+	}
+}

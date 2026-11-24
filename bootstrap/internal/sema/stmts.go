@@ -28,10 +28,8 @@ func (a *analyzer) analyzeFnBody(fn *ast.FnDecl) error {
 		}
 	}
 
-	for _, stmt := range fn.Body {
-		if err := a.analyzeStmt(stmt, fnScope); err != nil {
-			return err
-		}
+	if err := a.analyzeBlock(fn.Body, fnScope); err != nil {
+		return err
 	}
 
 	if !fnSym.ReturnType.IsVoid() && !blockAlwaysReturns(fn.Body) {
@@ -241,15 +239,15 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		return nil
 
 	case *ast.FieldAccessExpr:
-		if targetType, err := a.inferExpr(target.Target, scope); err == nil && targetType.Kind == KindErr {
+		fieldType, err := a.inferExpr(target, scope)
+		if err != nil {
+			return err
+		}
+		if target.Target.ExprType().Kind == KindErr {
 			if err := a.checkMutableTarget(target.Target, scope); err != nil {
 				return err
 			}
 			return newSemaError(s.Pos, "cannot assign to read-only field %q on err", target.Field)
-		}
-		fieldType, err := a.inferExpr(target, scope)
-		if err != nil {
-			return err
 		}
 		if err := a.checkMutableTarget(target, scope); err != nil {
 			return err
@@ -290,11 +288,8 @@ func (a *analyzer) analyzeIfStmt(s *ast.IfStmt, scope *Scope) error {
 		return newSemaError(s.Cond.ExprPos(), "if condition must be bool, got %s", condType.String())
 	}
 
-	thenScope := NewScope(scope)
-	for _, st := range s.ThenBody {
-		if err := a.analyzeStmt(st, thenScope); err != nil {
-			return err
-		}
+	if err := a.analyzeBlock(s.ThenBody, NewScope(scope)); err != nil {
+		return err
 	}
 
 	for _, elif := range s.ElseIfs {
@@ -305,20 +300,14 @@ func (a *analyzer) analyzeIfStmt(s *ast.IfStmt, scope *Scope) error {
 		if !elifCondType.Equals(BoolType) {
 			return newSemaError(elif.Cond.ExprPos(), "else if condition must be bool, got %s", elifCondType.String())
 		}
-		elifScope := NewScope(scope)
-		for _, st := range elif.Body {
-			if err := a.analyzeStmt(st, elifScope); err != nil {
-				return err
-			}
+		if err := a.analyzeBlock(elif.Body, NewScope(scope)); err != nil {
+			return err
 		}
 	}
 
 	if s.HasElse {
-		elseScope := NewScope(scope)
-		for _, st := range s.ElseBody {
-			if err := a.analyzeStmt(st, elseScope); err != nil {
-				return err
-			}
+		if err := a.analyzeBlock(s.ElseBody, NewScope(scope)); err != nil {
+			return err
 		}
 	}
 
@@ -334,17 +323,7 @@ func (a *analyzer) analyzeWhileStmt(s *ast.WhileStmt, scope *Scope) error {
 		return newSemaError(s.Cond.ExprPos(), "while condition must be bool, got %s", condType.String())
 	}
 
-	bodyScope := NewScope(scope)
-	a.loopDepth++
-	defer func() {
-		a.loopDepth--
-	}()
-	for _, st := range s.Body {
-		if err := a.analyzeStmt(st, bodyScope); err != nil {
-			return err
-		}
-	}
-	return nil
+	return a.analyzeLoopBody(s.Body, NewScope(scope))
 }
 
 func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
@@ -425,17 +404,21 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 	return a.analyzeLoopBody(s.Body, loopScope)
 }
 
+func (a *analyzer) analyzeBlock(stmts []ast.Statement, scope *Scope) error {
+	for _, st := range stmts {
+		if err := a.analyzeStmt(st, scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *analyzer) analyzeLoopBody(stmts []ast.Statement, loopScope *Scope) error {
 	a.loopDepth++
 	defer func() {
 		a.loopDepth--
 	}()
-	for _, st := range stmts {
-		if err := a.analyzeStmt(st, loopScope); err != nil {
-			return err
-		}
-	}
-	return nil
+	return a.analyzeBlock(stmts, loopScope)
 }
 
 func (a *analyzer) analyzeSelectStmt(s *ast.SelectStmt, scope *Scope) error {
@@ -457,35 +440,26 @@ func (a *analyzer) analyzeSelectStmt(s *ast.SelectStmt, scope *Scope) error {
 				return newSemaError(pat.ExprPos(), "case pattern type %s does not match select expression type %s", patType.String(), exprType.String())
 			}
 		}
-		caseScope := NewScope(scope)
-		for _, st := range cc.Body {
-			if err := a.analyzeStmt(st, caseScope); err != nil {
-				return err
-			}
+		if err := a.analyzeBlock(cc.Body, NewScope(scope)); err != nil {
+			return err
 		}
 	}
 
 	if s.HasElse {
-		elseScope := NewScope(scope)
-		for _, st := range s.ElseBody {
-			if err := a.analyzeStmt(st, elseScope); err != nil {
-				return err
-			}
+		if err := a.analyzeBlock(s.ElseBody, NewScope(scope)); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 func (a *analyzer) analyzeTryCatchStmt(s *ast.TryCatchStmt, scope *Scope) error {
-	tryScope := NewScope(scope)
 	a.tryDepth++
-	for _, st := range s.TryBody {
-		if err := a.analyzeStmt(st, tryScope); err != nil {
-			a.tryDepth--
-			return err
-		}
-	}
+	err := a.analyzeBlock(s.TryBody, NewScope(scope))
 	a.tryDepth--
+	if err != nil {
+		return err
+	}
 
 	catchScope := NewScope(scope)
 	if err := catchScope.Define(&VarSymbol{
@@ -496,10 +470,8 @@ func (a *analyzer) analyzeTryCatchStmt(s *ast.TryCatchStmt, scope *Scope) error 
 	}); err != nil {
 		return err
 	}
-	for _, st := range s.CatchBody {
-		if err := a.analyzeStmt(st, catchScope); err != nil {
-			return err
-		}
+	if err := a.analyzeBlock(s.CatchBody, catchScope); err != nil {
+		return err
 	}
 	return nil
 }
@@ -516,13 +488,7 @@ func (a *analyzer) analyzeDeferStmt(s *ast.DeferStmt, scope *Scope) error {
 		a.deferDepth--
 	}()
 
-	deferScope := NewScope(scope)
-	for _, st := range s.Body {
-		if err := a.analyzeStmt(st, deferScope); err != nil {
-			return err
-		}
-	}
-	return nil
+	return a.analyzeBlock(s.Body, NewScope(scope))
 }
 
 func (a *analyzer) analyzeReturnStmt(s *ast.ReturnStmt, scope *Scope) error {

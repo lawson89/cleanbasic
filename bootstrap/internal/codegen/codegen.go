@@ -42,8 +42,8 @@ func EmitGoWithOptions(prog *sema.TypedProgram, opts Options) (string, error) {
 
 	if mainSym, ok := prog.EntryModule.Functions["main"]; ok {
 		if mainSym.ReturnType.Equals(sema.IntType) {
-			e.useImport("os")
-			bodyBuf.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\tos.Exit(int(code))\n\t}\n}\n")
+			e.useGoImport("os", "_cb_os")
+			bodyBuf.WriteString("func main() {\n\tif code := cb_main(); code != 0 {\n\t\t_cb_os.Exit(int(code))\n\t}\n}\n")
 		} else {
 			bodyBuf.WriteString("func main() {\n\tcb_main()\n}\n")
 		}
@@ -220,7 +220,11 @@ func (e *emitter) emitFnHeader(fn *ast.FnDecl) (string, *sema.FnSymbol, []string
 	var params []string
 	var callArgs []string
 	for i, p := range fn.Params {
-		paramGoType := e.goSemaType(fnSym.Params[i].Type)
+		paramType := p.Type
+		if fnSym != nil && i < len(fnSym.Params) {
+			paramType = fnSym.Params[i].Type
+		}
+		paramGoType := e.goSemaType(paramType)
 		if p.ByRef {
 			paramGoType = "*" + paramGoType
 		}
@@ -347,15 +351,10 @@ func (e *emitter) goSemaType(t sema.Type) string {
 }
 
 func (e *emitter) lookupStruct(t sema.Type) *sema.StructSymbol {
-	if e.prog != nil && t.ModuleID != "" {
-		if m, ok := e.prog.ModuleByID[t.ModuleID]; ok {
-			return m.Structs[t.Name]
-		}
+	if e.prog == nil {
+		return nil
 	}
-	if e.currentMod != nil {
-		return e.currentMod.Structs[t.Name]
-	}
-	return nil
+	return e.prog.LookupStruct(t, e.currentMod)
 }
 
 func (e *emitter) structNeedsFieldInit(s *sema.StructSymbol) bool {

@@ -418,3 +418,35 @@ func TestParseRejectsGoReservedWords(t *testing.T) {
 		t.Fatalf("expected built-in .len() and .wait() methods to parse cleanly, got: %v", err)
 	}
 }
+
+func TestParseRecursionDepthLimit(t *testing.T) {
+	depth := maxParseDepth + 20
+	exprSrc := "fn main()\n    dim x = " + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth) + "\nend fn\n"
+	if _, err := Parse(exprSrc, "deep_expr.cb"); err == nil || !strings.Contains(err.Error(), "maximum nesting depth") {
+		t.Fatalf("expected maximum nesting depth error for deep expression, got: %v", err)
+	}
+
+	blockSrc := "fn main()\n" + strings.Repeat("if true\n", depth) + "dim x = 1\n" + strings.Repeat("end if\n", depth) + "end fn\n"
+	if _, err := Parse(blockSrc, "deep_block.cb"); err == nil || !strings.Contains(err.Error(), "maximum nesting depth") {
+		t.Fatalf("expected maximum nesting depth error for deep blocks, got: %v", err)
+	}
+
+	typeSrc := "fn main()\n    dim x as " + strings.Repeat("list[", depth) + "int" + strings.Repeat("]", depth) + "\nend fn\n"
+	if _, err := Parse(typeSrc, "deep_type.cb"); err == nil || !strings.Contains(err.Error(), "maximum nesting depth") {
+		t.Fatalf("expected maximum nesting depth error for deep type, got: %v", err)
+	}
+}
+
+func TestParseRejectsRuntimeAndOsReservedIdents(t *testing.T) {
+	for _, word := range []string{"os", "cb_main", "cbDictGet", "cbJob"} {
+		src := "fn main()\n    dim " + word + " = 1\nend fn\n"
+		if _, err := Parse(src, "reserved_runtime.cb"); err == nil || !strings.Contains(err.Error(), "cannot use Go reserved word") {
+			t.Fatalf("expected reserved word error for %q, got: %v", word, err)
+		}
+	}
+
+	validOsImport := "import \"std/os\" as os\nfn main()\n    dim r as os.ExecResult\n    dim code = os.run(\"echo\")\nend fn\n"
+	if _, err := Parse(validOsImport, "valid_os_import.cb"); err != nil {
+		t.Fatalf("expected import std/os as os and os.ExecResult to parse cleanly, got: %v", err)
+	}
+}

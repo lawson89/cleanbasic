@@ -204,9 +204,6 @@ func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Sco
 	}
 	switch t.Kind {
 	case KindList, KindDict:
-		if len(e.Args) > 0 {
-			return VoidType, newSemaError(e.Pos, "%s() takes no arguments", t.String())
-		}
 		return t, nil
 	default:
 		return VoidType, newSemaError(e.Pos, "typed container constructor is only supported for list and dict, got %s", t.String())
@@ -364,13 +361,36 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 		return VoidType, newSemaError(calleeIdent.Pos, "undefined function %q", calleeIdent.Name)
 	}
 
+	return a.finishFnCall(e, fnSym, scope)
+}
+
+func (a *analyzer) inFallibleContext() bool {
+	return a.tryDepth > 0 || (a.deferDepth == 0 && a.currentFn != nil && a.currentFn.CanError)
+}
+
+func (a *analyzer) checkFallibleCall(e *ast.CallExpr, desc, outsideCtxMsg string) error {
+	if e == a.startCall {
+		return nil
+	}
+	if !a.inFallibleContext() {
+		if outsideCtxMsg != "" {
+			return newSemaError(e.Pos, "%s", outsideCtxMsg)
+		}
+		return newSemaError(e.Pos, "%s must be inside a 'try' block or a 'can error' function", desc)
+	}
+	if e != a.allowedFallibleExpr {
+		return newSemaError(e.Pos, "%s may only appear as a top-level statement expression", desc)
+	}
+	return nil
+}
+
+func (a *analyzer) finishFnCall(e *ast.CallExpr, fnSym *FnSymbol, scope *Scope) (Type, error) {
 	if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 		return VoidType, err
 	}
 	if a.currentFn != nil {
 		a.recordCallee(a.currentFn, fnSym)
 	}
-
 	e.CallInfo = &CallInfo{
 		Kind:     CallFunc,
 		Fn:       fnSym,
@@ -380,18 +400,9 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 	return fnSym.ReturnType, nil
 }
 
-func (a *analyzer) inFallibleContext() bool {
-	return a.tryDepth > 0 || (a.deferDepth == 0 && a.currentFn != nil && a.currentFn.CanError)
-}
-
 func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
-	if e != a.startCall {
-		if !a.inFallibleContext() {
-			return VoidType, newSemaError(e.Pos, "error() can only be called inside a 'can error' function or a 'try' block")
-		}
-		if e != a.allowedFallibleExpr {
-			return VoidType, newSemaError(e.Pos, "error() may only appear as a top-level statement expression")
-		}
+	if err := a.checkFallibleCall(e, "error()", "error() can only be called inside a 'can error' function or a 'try' block"); err != nil {
+		return VoidType, err
 	}
 	if len(e.Args) != 1 {
 		return VoidType, newSemaError(e.Pos, "error() expects 1 argument, got %d", len(e.Args))
@@ -452,12 +463,9 @@ func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.Expr, par
 			}
 		}
 	}
-	if canError && callExpr != a.startCall {
-		if !a.inFallibleContext() {
-			return newSemaError(callExpr.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
-		}
-		if callExpr != a.allowedFallibleExpr {
-			return newSemaError(callExpr.Pos, "call to 'can error' function %q may only appear as a top-level statement expression", fnName)
+	if canError {
+		if err := a.checkFallibleCall(callExpr, fmt.Sprintf("call to 'can error' %s %q", callKindDesc, fnName), ""); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -493,19 +501,7 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 				if !fnSym.Public {
 					return VoidType, newSemaError(e.Pos, "function %q in module %q is private", fa.Field, objIdent.Name)
 				}
-				if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
-					return VoidType, err
-				}
-				if a.currentFn != nil {
-					a.recordCallee(a.currentFn, fnSym)
-				}
-				e.CallInfo = &CallInfo{
-					Kind:     CallFunc,
-					Fn:       fnSym,
-					CanError: fnSym.CanError,
-					HasValue: !fnSym.ReturnType.IsVoid(),
-				}
-				return fnSym.ReturnType, nil
+				return a.finishFnCall(e, fnSym, scope)
 			}
 			return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
 		}
