@@ -1,0 +1,14 @@
+fn factorial(n as int) as int
+    // TODO: Implement recursive factorial (return 1 when n <= 1)
+    return 0
+end fn
+
+fn digitSum(n as int) as int
+    // TODO: Use a while loop to sum the base-10 digits of n
+    return 0
+end fn
+
+fn main()
+    print("6! = " + factorial(6).toStr())
+    print("digitSum(4829) = " + digitSum(4829).toStr())
+end fn

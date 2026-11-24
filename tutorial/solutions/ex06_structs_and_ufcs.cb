@@ -1,0 +1,34 @@
+type Account
+    owner as str
+    balance as int
+end type
+
+fn deposit(byref a as Account, amount as int)
+    if amount > 0
+        a.balance = a.balance + amount
+    end if
+end fn
+
+fn withdraw(byref a as Account, amount as int) as bool
+    if amount > 0 and amount <= a.balance
+        a.balance = a.balance - amount
+        return true
+    end if
+    return false
+end fn
+
+fn summary(a as Account) as str
+    return a.owner + ": $" + a.balance.toStr()
+end fn
+
+fn main()
+    dim acct = Account("Ada", 100)
+    acct.deposit(50)
+
+    dim ok1 = acct.withdraw(200)
+    dim ok2 = acct.withdraw(40)
+
+    print("withdraw 200 ok: " + ok1.toStr())
+    print("withdraw 40 ok: " + ok2.toStr())
+    print(acct.summary())
+end fn

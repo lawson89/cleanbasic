@@ -1,0 +1,15 @@
+fn main()
+    dim text = "go basic go clean basic go"
+    dim words = text.split(" ")
+    dim counts = dict[str, int]()
+
+    for w in words
+        dim prev = counts.get(w, 0)
+        counts[w] = prev + 1
+    end for
+
+    dim queries = ["go", "basic", "clean", "rust"]
+    for q in queries
+        print(q + ": " + counts.get(q, 0).toStr())
+    end for
+end fn

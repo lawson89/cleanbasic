@@ -1,0 +1,24 @@
+enum Tier
+    Standard
+    Express
+    Overnight
+end enum
+
+type Shipment
+    tier as Tier
+    weightKg as int
+end type
+
+fn shippingCost(s as Shipment) as int
+    // TODO: Use select case s.tier to compute shipping cost
+    return 0
+end fn
+
+fn main()
+    dim s1 = Shipment(Tier.Standard, 3)
+    dim s2 = Shipment(Tier.Express, 3)
+    dim s3 = Shipment(Tier.Overnight, 3)
+
+    // TODO: Print shipping costs for all three tiers
+    print("Standard: $" + s1.shippingCost().toStr())
+end fn

@@ -1,0 +1,6 @@
+fn main()
+    // TODO: Loop i from 1 to 15 and print FizzBuzz, Fizz, Buzz, or i.toStr()
+    for i = 1 to 15
+        print(i.toStr())
+    end for
+end fn

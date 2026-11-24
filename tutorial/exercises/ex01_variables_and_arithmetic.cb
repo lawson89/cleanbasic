@@ -1,0 +1,14 @@
+const BOILING_C = 100.0
+
+fn toFahrenheit(c as float) as float
+    // TODO: Convert Celsius to Fahrenheit using c * 9.0 / 5.0 + 32.0
+    return 0.0
+end fn
+
+fn main()
+    dim freezing = 0.0
+    dim room = 25.0
+
+    // TODO: Print the conversions for freezing, room, and BOILING_C
+    print("0 C = " + toFahrenheit(freezing).toStr() + " F")
+end fn

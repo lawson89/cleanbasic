@@ -1,0 +1,26 @@
+fn runStep(name as str, shouldFail as bool) can error
+    print("open: " + name)
+    defer
+        print("close: " + name)
+    end defer
+
+    if shouldFail
+        error(name + " failed")
+    end if
+
+    print("work: " + name)
+end fn
+
+fn main()
+    try
+        runStep("job-A", false)
+    catch e
+        print("caught: " + e.msg)
+    end try
+
+    try
+        runStep("job-B", true)
+    catch e
+        print("caught: " + e.msg)
+    end try
+end fn

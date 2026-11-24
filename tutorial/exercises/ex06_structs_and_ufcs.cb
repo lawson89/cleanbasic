@@ -1,0 +1,24 @@
+type Account
+    owner as str
+    balance as int
+end type
+
+fn deposit(byref a as Account, amount as int)
+    // TODO: Add amount to a.balance if amount > 0
+end fn
+
+fn withdraw(byref a as Account, amount as int) as bool
+    // TODO: Subtract amount and return true if amount > 0 and amount <= a.balance
+    return false
+end fn
+
+fn summary(a as Account) as str
+    // TODO: Return "<owner>: $<balance>"
+    return a.owner
+end fn
+
+fn main()
+    dim acct = Account("Ada", 100)
+    // TODO: Deposit 50, attempt to withdraw 200 and 40, and print results + summary
+    print(acct.summary())
+end fn

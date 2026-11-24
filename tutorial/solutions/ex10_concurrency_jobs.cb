@@ -1,0 +1,38 @@
+fn isPrime(n as int) as bool
+    if n < 2
+        return false
+    end if
+    dim d = 2
+    while d * d <= n
+        if n % d == 0
+            return false
+        end if
+        d = d + 1
+    end while
+    return true
+end fn
+
+fn countPrimes(low as int, high as int) as int
+    dim count = 0
+    for n = low to high
+        if isPrime(n)
+            count = count + 1
+        end if
+    end for
+    return count
+end fn
+
+fn main()
+    dim jobs = list[job[int]]()
+    jobs.push(start countPrimes(1, 100))
+    jobs.push(start countPrimes(101, 200))
+    jobs.push(start countPrimes(201, 300))
+    jobs.push(start countPrimes(301, 400))
+
+    dim total = 0
+    for j in jobs
+        total = total + j.wait()
+    end for
+
+    print("primes in 1..400: " + total.toStr())
+end fn

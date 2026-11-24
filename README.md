@@ -56,6 +56,8 @@ go build -C bootstrap -o cb ./cmd/cb
 - `cb build <file.cb> [-o bin]` — Compile a CleanBasic program into a native executable binary.
 - `cb run <file.cb> [--] [args...]` — Compile and run a CleanBasic program immediately, forwarding trailing arguments and `stdin`.
 
+New to CleanBasic? Start with the [10-Exercise CleanBasic Tutorial](tutorial/README.md).
+
 ## Example: `cbgrep`
 
 [`examples/cbgrep/main.cb`](examples/cbgrep/main.cb) is a CleanBasic `grep` utility using `std/cli`, `std/fs`, `std/os`, and `std/regex`.
@@ -92,6 +94,7 @@ go test ./...
 
 ## Documentation
 
+- [10-Exercise CleanBasic Tutorial](tutorial/README.md)
 - [Language Specification (Go Backend Edition)](docs/cleanbasic_language_specification_go_backend_edition.md)
 - [Self-Hosting Handbook](docs/selfhost/cleanbasic-handbook.md)
 - [Self-Hosting Implementation Plan](docs/selfhost/self-hosting-plan.md)

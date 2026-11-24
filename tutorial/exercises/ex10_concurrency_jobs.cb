@@ -1,0 +1,20 @@
+fn isPrime(n as int) as bool
+    // TODO: Return true if n is prime, false otherwise
+    return false
+end fn
+
+fn countPrimes(low as int, high as int) as int
+    // TODO: Count primes in [low, high] inclusive
+    return 0
+end fn
+
+fn main()
+    dim jobs = list[job[int]]()
+    // TODO: Spawn 4 jobs for 1..100, 101..200, 201..300, 301..400 using start,
+    // wait for each with .wait(), and print the total
+    dim total = 0
+    for j in jobs
+        total = total + j.wait()
+    end for
+    print("primes in 1..400: " + total.toStr())
+end fn

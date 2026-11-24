@@ -1,0 +1,20 @@
+fn parsePositiveInt(raw as str) as int can error
+    // TODO: Trim raw, parse with .toInt(), and error("value must be positive") if <= 0
+    return 0
+end fn
+
+fn sumInputs(inputs as list[str]) as int can error
+    // TODO: Sum parsePositiveInt(item) for each item in inputs
+    return 0
+end fn
+
+fn main()
+    // TODO: Call sumInputs(["10", " 25 ", "5"]) and sumInputs(["10", "-3", "5"])
+    // inside try / catch blocks
+    try
+        dim good = sumInputs(["10", " 25 ", "5"])
+        print("valid sum: " + good.toStr())
+    catch e
+        print("error caught: " + e.msg)
+    end try
+end fn

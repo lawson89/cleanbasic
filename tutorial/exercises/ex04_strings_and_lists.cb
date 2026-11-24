@@ -1,0 +1,8 @@
+fn main()
+    dim raw = "  Banana , apple,  Cherry , , date "
+    dim cleaned = list[str]()
+
+    // TODO: Split raw on ",", trim and lowercase each item, skip empty strings,
+    // push to cleaned, sort, and print "items (N): ..."
+    print("items (" + cleaned.len().toStr() + "): " + cleaned.join(" | "))
+end fn

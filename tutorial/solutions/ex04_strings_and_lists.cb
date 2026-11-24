@@ -1,0 +1,15 @@
+fn main()
+    dim raw = "  Banana , apple,  Cherry , , date "
+    dim parts = raw.split(",")
+    dim cleaned = list[str]()
+
+    for item in parts
+        dim entry = item.trim().toLower()
+        if entry != ""
+            cleaned.push(entry)
+        end if
+    end for
+
+    cleaned.sort()
+    print("items (" + cleaned.len().toStr() + "): " + cleaned.join(" | "))
+end fn

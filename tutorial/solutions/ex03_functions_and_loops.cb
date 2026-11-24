@@ -1,0 +1,21 @@
+fn factorial(n as int) as int
+    if n <= 1
+        return 1
+    end if
+    return n * factorial(n - 1)
+end fn
+
+fn digitSum(n as int) as int
+    dim remaining = n
+    dim total = 0
+    while remaining > 0
+        total = total + (remaining % 10)
+        remaining = remaining / 10
+    end while
+    return total
+end fn
+
+fn main()
+    print("6! = " + factorial(6).toStr())
+    print("digitSum(4829) = " + digitSum(4829).toStr())
+end fn

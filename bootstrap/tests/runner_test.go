@@ -214,3 +214,137 @@ end fn
 		t.Fatalf("missing long-only option line in usage output:\n%s", out)
 	}
 }
+
+func TestTutorialExercises(t *testing.T) {
+	exercisesDir := filepath.Join("..", "..", "tutorial", "exercises")
+	solutionsDir := filepath.Join("..", "..", "tutorial", "solutions")
+	tutorialReadmePath := filepath.Join("..", "..", "tutorial", "README.md")
+
+	readmeBytes, err := os.ReadFile(tutorialReadmePath)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", tutorialReadmePath, err)
+	}
+	readmeText := strings.ReplaceAll(string(readmeBytes), "\r\n", "\n")
+
+	cases := []struct {
+		file    string
+		wantOut string
+	}{
+		{
+			file:    "ex01_variables_and_arithmetic.cb",
+			wantOut: "0 C = 32 F\n25 C = 77 F\n100 C = 212 F",
+		},
+		{
+			file:    "ex02_fizzbuzz.cb",
+			wantOut: "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz",
+		},
+		{
+			file:    "ex03_functions_and_loops.cb",
+			wantOut: "6! = 720\ndigitSum(4829) = 23",
+		},
+		{
+			file:    "ex04_strings_and_lists.cb",
+			wantOut: "items (4): apple | banana | cherry | date",
+		},
+		{
+			file:    "ex05_dictionaries.cb",
+			wantOut: "go: 3\nbasic: 2\nclean: 1\nrust: 0",
+		},
+		{
+			file:    "ex06_structs_and_ufcs.cb",
+			wantOut: "withdraw 200 ok: false\nwithdraw 40 ok: true\nAda: $110",
+		},
+		{
+			file:    "ex07_enums_and_select.cb",
+			wantOut: "Standard: $11\nExpress: $24\nOvernight: $43",
+		},
+		{
+			file:    "ex08_error_handling.cb",
+			wantOut: "valid sum: 40\nerror caught: value must be positive",
+		},
+		{
+			file:    "ex09_defer_cleanup.cb",
+			wantOut: "open: job-A\nwork: job-A\nclose: job-A\nopen: job-B\nclose: job-B\ncaught: job-B failed",
+		},
+		{
+			file:    "ex10_concurrency_jobs.cb",
+			wantOut: "primes in 1..400: 78",
+		},
+	}
+
+	expectedSet := make(map[string]bool, len(cases))
+	for _, tc := range cases {
+		expectedSet[tc.file] = true
+	}
+
+	for _, dir := range []string{exercisesDir, solutionsDir} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", dir, err)
+		}
+		var cbCount int
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".cb") {
+				continue
+			}
+			cbCount++
+			if !expectedSet[entry.Name()] {
+				t.Errorf("unexpected tutorial file %s in %s not listed in TestTutorialExercises", entry.Name(), dir)
+			}
+		}
+		if cbCount != len(cases) {
+			t.Errorf("expected %d .cb files in %s, found %d", len(cases), dir, cbCount)
+		}
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			starterPath := filepath.Join(exercisesDir, tc.file)
+			solutionPath := filepath.Join(solutionsDir, tc.file)
+
+			// 1. Verify starter compiles cleanly
+			starterTmp := t.TempDir()
+			starterGo := filepath.Join(starterTmp, "main.go")
+			if _, err := transpileFile(starterPath, starterGo); err != nil {
+				t.Fatalf("starter %s failed to transpile: %v", starterPath, err)
+			}
+			starterBin := filepath.Join(starterTmp, "starter")
+			buildCmd := exec.Command("go", "build", "-o", starterBin, starterGo)
+			if out, err := buildCmd.CombinedOutput(); err != nil {
+				t.Fatalf("starter %s generated Go failed to build: %v\n%s", starterPath, err, string(out))
+			}
+
+			// 2. Verify solution compiles, runs, and produces exact expected stdout
+			solTmp := t.TempDir()
+			solGo := filepath.Join(solTmp, "main.go")
+			goCode, err := transpileFile(solutionPath, solGo)
+			if err != nil {
+				t.Fatalf("solution %s failed to transpile: %v", solutionPath, err)
+			}
+			runCmd := exec.Command("go", "run", solGo)
+			var stdout, stderr bytes.Buffer
+			runCmd.Stdout = &stdout
+			runCmd.Stderr = &stderr
+			if err := runCmd.Run(); err != nil {
+				t.Fatalf("solution %s failed to run: %v\n--- STDERR ---\n%s\n--- GENERATED GO ---\n%s",
+					solutionPath, err, stderr.String(), goCode)
+			}
+			actualOut := strings.TrimRight(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+			if actualOut != tc.wantOut {
+				t.Errorf("solution %s stdout mismatch:\n--- WANT ---\n%s\n--- GOT ---\n%s",
+					solutionPath, tc.wantOut, actualOut)
+			}
+
+			// 3. Verify tutorial/README.md contains the verbatim solution block
+			solBytes, err := os.ReadFile(solutionPath)
+			if err != nil {
+				t.Fatalf("failed to read %s: %v", solutionPath, err)
+			}
+			solTrimmed := strings.TrimSpace(strings.ReplaceAll(string(solBytes), "\r\n", "\n"))
+			fencedBlock := "```cleanbasic\n" + solTrimmed + "\n```"
+			if !strings.Contains(readmeText, fencedBlock) {
+				t.Errorf("tutorial/README.md does not contain verbatim fenced solution block for %s", tc.file)
+			}
+		})
+	}
+}

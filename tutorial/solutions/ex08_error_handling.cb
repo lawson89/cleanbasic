@@ -1,0 +1,33 @@
+fn parsePositiveInt(raw as str) as int can error
+    dim trimmed = raw.trim()
+    dim val = trimmed.toInt()
+    if val <= 0
+        error("value must be positive")
+    end if
+    return val
+end fn
+
+fn sumInputs(inputs as list[str]) as int can error
+    dim total = 0
+    for item in inputs
+        dim parsed = parsePositiveInt(item)
+        total = total + parsed
+    end for
+    return total
+end fn
+
+fn main()
+    try
+        dim good = sumInputs(["10", " 25 ", "5"])
+        print("valid sum: " + good.toStr())
+    catch e
+        print("unexpected: " + e.msg)
+    end try
+
+    try
+        dim bad = sumInputs(["10", "-3", "5"])
+        print("unreachable: " + bad.toStr())
+    catch e
+        print("error caught: " + e.msg)
+    end try
+end fn
