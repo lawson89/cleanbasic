@@ -179,18 +179,20 @@ func (a *analyzer) checkMutableTarget(expr ast.Expr, scope *Scope) error {
 		return nil
 	case *ast.FieldAccessExpr:
 		if objIdent, ok := t.Target.(*ast.IdentExpr); ok {
-			if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
-				sym, found := impMod.GlobalVars.Lookup(t.Field)
-				if !found {
-					return newSemaError(t.Pos, "module %q has no variable %q", objIdent.Name, t.Field)
+			if _, isVar := scope.Lookup(objIdent.Name); !isVar {
+				if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
+					sym, found := impMod.GlobalVars.Lookup(t.Field)
+					if !found {
+						return newSemaError(t.Pos, "module %q has no variable %q", objIdent.Name, t.Field)
+					}
+					if !sym.Public {
+						return newSemaError(t.Pos, "variable %q in module %q is private", t.Field, objIdent.Name)
+					}
+					if sym.IsConst {
+						return newSemaError(t.Pos, "cannot mutate constant %q (declared at %s)", t.Field, sym.Pos.String())
+					}
+					return nil
 				}
-				if !sym.Public {
-					return newSemaError(t.Pos, "variable %q in module %q is private", t.Field, objIdent.Name)
-				}
-				if sym.IsConst {
-					return newSemaError(t.Pos, "cannot mutate constant %q (declared at %s)", t.Field, sym.Pos.String())
-				}
-				return nil
 			}
 		}
 		if t.Target.ExprType().Kind != KindStruct {
@@ -244,9 +246,6 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 			return err
 		}
 		if target.Target.ExprType().Kind == KindErr {
-			if err := a.checkMutableTarget(target.Target, scope); err != nil {
-				return err
-			}
 			return newSemaError(s.Pos, "cannot assign to read-only field %q on err", target.Field)
 		}
 		if err := a.checkMutableTarget(target, scope); err != nil {

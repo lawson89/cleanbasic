@@ -4,6 +4,9 @@
 // EXPECT_OUT: envNonEmpty=true
 // EXPECT_OUT: exec=0:hello-exec
 // EXPECT_OUT: cli=true:res.txt:myPat:false
+// EXPECT_OUT: cliBundled=true:bundle.txt:p2
+// EXPECT_OUT: cliUtf8=true:αβ
+// EXPECT_OUT: cliLong=true:my.toml
 // EXPECT_OUT: cliHelp=true
 // EXPECT_OUT: paths=true:false:hello.txt:/tmp/cb_test_08_dir:.txt
 // EXPECT_OUT: cwdNonEmpty=true
@@ -68,6 +71,21 @@ fn main() as int
     try
         dim parsed = p.parseArgs(["-i", "--output", "res.txt", "myPat"])
         print("cli=" + parsed.hasFlag("ignore-case").toStr() + ":" + parsed.getOption("output") + ":" + parsed.getArg("pattern") + ":" + parsed.helpRequested.toStr())
+
+        dim bundled = p.parseArgs(["-iobundle.txt", "p2"])
+        print("cliBundled=" + bundled.hasFlag("ignore-case").toStr() + ":" + bundled.getOption("output") + ":" + bundled.getArg("pattern"))
+
+        dim pUtf8 = cli.newParser("u", "1.0", "UTF-8 test")
+        pUtf8.addFlag("alpha", "α", "Alpha flag")
+        pUtf8.addOption("beta", "β", "Beta opt", "def")
+        dim utf8Parsed = pUtf8.parseArgs(["-αβαβ"])
+        print("cliUtf8=" + utf8Parsed.hasFlag("alpha").toStr() + ":" + utf8Parsed.getOption("beta"))
+
+        dim pLong = cli.newParser("longonly", "1.0", "")
+        pLong.addFlag("verbose", "", "Verbose output")
+        pLong.addOption("config", "", "Config file", "cfg.toml")
+        dim longParsed = pLong.parseArgs(["--verbose", "--config", "my.toml"])
+        print("cliLong=" + longParsed.hasFlag("verbose").toStr() + ":" + longParsed.getOption("config"))
 
         dim helpParsed = p.parseArgs(["--help"])
         print("cliHelp=" + helpParsed.helpRequested.toStr())

@@ -176,3 +176,41 @@ type externalCompileError struct {
 func (e *externalCompileError) Error() string {
 	return e.msg
 }
+
+func TestCliPrintUsageLongOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	cbPath := filepath.Join(tmpDir, "cli_usage.cb")
+	goPath := filepath.Join(tmpDir, "main.go")
+	cbSrc := `import "std/cli"
+fn main() as int
+    dim p = cli.newParser("longonly", "1.0", "")
+    p.addFlag("verbose", "", "Verbose output")
+    p.addOption("config", "", "Config file", "cfg.toml")
+    p.printUsage()
+    return 0
+end fn
+`
+	if err := os.WriteFile(cbPath, []byte(cbSrc), 0644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if _, err := transpileFile(cbPath, goPath); err != nil {
+		t.Fatalf("transpile failed: %v", err)
+	}
+	cmd := exec.Command("go", "run", goPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run failed: %v\n%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if strings.Contains(out, "-, --") {
+		t.Fatalf("unexpected empty short flag prefix in usage output:\n%s", out)
+	}
+	if !strings.Contains(out, "  --verbose  Verbose output") {
+		t.Fatalf("missing long-only flag line in usage output:\n%s", out)
+	}
+	if !strings.Contains(out, "  --config <val>  Config file (default: cfg.toml)") {
+		t.Fatalf("missing long-only option line in usage output:\n%s", out)
+	}
+}

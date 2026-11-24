@@ -223,6 +223,13 @@ func (e *emitter) effectiveCallArgs(ex *ast.CallExpr, ci *sema.CallInfo) []ast.E
 	return ex.Args
 }
 
+func (e *emitter) emitFnCallCode(fn *sema.FnSymbol, renderedArgs []string) string {
+	if fn.Name == "print" {
+		e.useImport("fmt")
+		return fmt.Sprintf("fmt.Println(%s)", renderedArgs[0])
+	}
+	return fmt.Sprintf("%s(%s)", e.fnGoName(fn), strings.Join(renderedArgs, ", "))
+}
 func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 	if ci := ex.CallInfo; ci != nil {
 		switch ci.Kind {
@@ -246,16 +253,12 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 		case sema.CallFunc, sema.CallUFCS:
 			if ci.Fn != nil {
 				rawArgs := e.effectiveCallArgs(ex, ci)
-				if ci.Fn.Name == "print" {
-					e.useImport("fmt")
-					return fmt.Sprintf("fmt.Println(%s)", e.emitExpr(rawArgs[0]))
-				}
 				args := make([]string, 0, len(rawArgs))
 				for i, argExpr := range rawArgs {
 					byRef := i < len(ci.Fn.Params) && ci.Fn.Params[i].ByRef
 					args = append(args, e.emitArgExpr(argExpr, byRef))
 				}
-				return fmt.Sprintf("%s(%s)", e.fnGoName(ci.Fn), strings.Join(args, ", "))
+				return e.emitFnCallCode(ci.Fn, args)
 			}
 		}
 	}
@@ -279,13 +282,7 @@ func (e *emitter) emitStartExpr(ex *ast.StartExpr) string {
 		callArgs = append(callArgs, paramName)
 	}
 
-	var innerCall string
-	if ci.Fn.Name == "print" {
-		e.useImport("fmt")
-		innerCall = fmt.Sprintf("fmt.Println(%s)", callArgs[0])
-	} else {
-		innerCall = fmt.Sprintf("%s(%s)", e.fnGoName(ci.Fn), strings.Join(callArgs, ", "))
-	}
+	innerCall := e.emitFnCallCode(ci.Fn, callArgs)
 
 	if ci.Fn.ReturnType.IsVoid() {
 		e.usedVoidJob = true

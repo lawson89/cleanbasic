@@ -124,7 +124,10 @@ func TestSemanticErrors(t *testing.T) {
 		{"return inside defer block", "fn main() as int\n    defer\n        return 1\n    end defer\n    return 0\nend fn\n", "return statement is not allowed inside a defer block"},
 		{"unhandled fallible call inside defer block", "fn cleanup() can error\n    error(\"cleanup failed\")\nend fn\nfn helper() can error\n    defer\n        cleanup()\n    end defer\nend fn\nfn main() as int\n    try\n        helper()\n    catch e\n        print(e.msg)\n    end try\n    return 0\nend fn\n", `call to 'can error' function "cleanup" must be inside a 'try' block or a 'can error' function`},
 		{"main cannot be declared can error", "fn main() as int can error\n    return 0\nend fn\n", `function "main" cannot be declared 'can error'`},
-		{"mutate catch error binding", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        e.msg = \"mutated\"\n    end try\n    return 0\nend fn\n", `cannot mutate constant "e"`},
+		{"mutate catch error binding", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        e.msg = \"mutated\"\n    end try\n    return 0\nend fn\n", `cannot assign to read-only field "msg" on err`},
+		{"reassign catch error binding", "fn risky() can error\n    error(\"fail\")\nend fn\nfn helper() can error\n    try\n        risky()\n    catch e\n        e = error(\"x\")\n    end try\nend fn\nfn main() as int\n    return 0\nend fn\n", `cannot reassign constant "e"`},
+		{"void element in list literal", "fn main() as int\n    dim xs = [print(\"a\")]\n    return 0\nend fn\n", "list literal element cannot have void type"},
+		{"void value in dict literal", "fn main() as int\n    dim d = {\"k\": print(\"a\")}\n    return 0\nend fn\n", "dict literal value cannot have void type"},
 		{"access invalid field on err", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        print(e.code)\n    end try\n    return 0\nend fn\n", `err type has no field "code"`},
 		{"error() rejects 2 arguments", "fn risky() can error\n    error(\"fail\", 1)\nend fn\nfn main() as int\n    return 0\nend fn\n", `error() expects 1 argument, got 2`},
 		{"reassign numeric for counter", "fn main() as int\n    for i = 1 to 5\n        i = 10\n    end for\n    return 0\nend fn\n", `cannot reassign constant "i"`},
@@ -627,6 +630,44 @@ end fn
 		}, "\n")
 		if _, err := AnalyzeSource(src, "byref_shadow_ok.cb"); err != nil {
 			t.Fatalf("expected byref shadowing to succeed, got: %v", err)
+		}
+	})
+
+	t.Run("locals and params shadow enum and import alias", func(t *testing.T) {
+		entry := writeFiles(t, map[string]string{
+			"helper.cb": `public type Box
+    v as int
+end type
+public fn inc(b as Box) as int
+    return b.v + 1
+end fn
+`,
+			"main.cb": `import "helper.cb" as helper
+enum Color
+    Red
+end enum
+type Holder
+    Red as int
+end type
+fn bump(byref b as helper.Box)
+    b.v = b.v + 1
+end fn
+fn useParam(helper as Holder) as int
+    helper.Red = helper.Red + 1
+    return helper.Red
+end fn
+fn main() as int
+    dim helper = helper.Box(1)
+    helper.v = 2
+    helper.bump()
+    dim Color = Holder(3)
+    Color.Red = 4
+    return useParam(Color) + helper.v
+end fn
+`,
+		})
+		if _, err := LoadAndAnalyze(entry); err != nil {
+			t.Fatalf("expected locals/params shadowing enum and import alias to succeed, got: %v", err)
 		}
 	})
 

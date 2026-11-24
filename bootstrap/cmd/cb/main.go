@@ -121,6 +121,7 @@ func syncFileIfChanged(path string, content []byte) error {
 func prepareBuildJob(goCode string) (string, func(), error) {
 	goModBytes := []byte("module cbmain\n\ngo 1.23\n")
 
+	var jobDir string
 	cacheRoot, err := os.UserCacheDir()
 	if err == nil && cacheRoot != "" {
 		workspaceDir := filepath.Join(cacheRoot, "cleanbasic", "work-default")
@@ -130,31 +131,23 @@ func prepareBuildJob(goCode string) (string, func(), error) {
 		if err := syncFileIfChanged(filepath.Join(workspaceDir, "go.mod"), goModBytes); err != nil {
 			return "", nil, err
 		}
-		jobDir, err := os.MkdirTemp(workspaceDir, "job-*")
+		jobDir, err = os.MkdirTemp(workspaceDir, "job-*")
 		if err != nil {
 			return "", nil, err
 		}
-		cleanup := func() {
-			_ = os.RemoveAll(jobDir)
-		}
-		mainGoPath := filepath.Join(jobDir, "main.go")
-		if err := os.WriteFile(mainGoPath, []byte(goCode), 0600); err != nil {
-			cleanup()
+	} else {
+		jobDir, err = os.MkdirTemp("", "cleanbasic-work-*")
+		if err != nil {
 			return "", nil, err
 		}
-		return jobDir, cleanup, nil
+		if err := os.WriteFile(filepath.Join(jobDir, "go.mod"), goModBytes, 0600); err != nil {
+			_ = os.RemoveAll(jobDir)
+			return "", nil, err
+		}
 	}
 
-	jobDir, err := os.MkdirTemp("", "cleanbasic-work-*")
-	if err != nil {
-		return "", nil, err
-	}
 	cleanup := func() {
 		_ = os.RemoveAll(jobDir)
-	}
-	if err := os.WriteFile(filepath.Join(jobDir, "go.mod"), goModBytes, 0600); err != nil {
-		cleanup()
-		return "", nil, err
 	}
 	if err := os.WriteFile(filepath.Join(jobDir, "main.go"), []byte(goCode), 0600); err != nil {
 		cleanup()

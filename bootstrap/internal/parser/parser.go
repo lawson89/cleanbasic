@@ -20,9 +20,9 @@ func (e *ParseError) Error() string {
 	return fmt.Sprintf("%s: syntax error: %s", e.Pos.String(), e.Message)
 }
 
-// Parser implements a recursive-descent parser for CleanBasic.
 const maxParseDepth = 256
 
+// Parser implements a recursive-descent parser for CleanBasic.
 type Parser struct {
 	file   string
 	tokens []token.Token
@@ -112,6 +112,7 @@ var goPredeclaredWords = map[string]bool{
 	"new": true, "nil": true, "os": true, "panic": true, "println": true,
 	"recover": true, "rune": true, "slices": true, "strconv": true, "string": true,
 	"strings": true,
+	"_cb_os":  true,
 	"cb_main": true, "cbDictGet": true, "cbDictContains": true,
 	"cbJob": true, "cbStartJob": true, "cbVoidJob": true, "cbStartVoidJob": true,
 }
@@ -504,7 +505,6 @@ func (p *Parser) parseFnDecl(pos token.Position, isPublic bool) (*ast.FnDecl, er
 	return &ast.FnDecl{Pos: pos, Public: isPublic, Name: nameTok.Lexeme, Params: params, ReturnType: retType, CanError: canError, Body: body}, nil
 }
 
-// ParamList ::= Param ("," Param)* [","]
 func (p *Parser) hasMoreDelimited(endKind token.Kind) bool {
 	p.skipNewlines()
 	if p.match(token.COMMA) {
@@ -514,6 +514,7 @@ func (p *Parser) hasMoreDelimited(endKind token.Kind) bool {
 	return false
 }
 
+// ParamList ::= Param ("," Param)* [","]
 // Param ::= ["byref"] Identifier "as" Type
 func (p *Parser) parseParamList() ([]ast.Param, error) {
 	var params []ast.Param
@@ -553,10 +554,11 @@ func (p *Parser) parseParamList() ([]ast.Param, error) {
 	return params, nil
 }
 
-// Type ::= "int" | "float" | "str" | "bool" | "err"
+// Type ::= "int" | "float" | "str" | "bool" | "byte" | "err"
 //
 //	| "list" "[" Type "]"
 //	| "dict" "[" Type "," Type "]"
+//	| "job" ["[" Type "]"]
 //	| QualifiedIdent
 func (p *Parser) parseType() (ast.Type, error) {
 	if err := p.enterDepth(p.cur().Pos, "in type"); err != nil {
@@ -1053,7 +1055,7 @@ func (p *Parser) parseDeferStmt() (*ast.DeferStmt, error) {
 	return &ast.DeferStmt{Pos: deferTok.Pos, Body: body}, nil
 }
 
-// ReturnStmt ::= "return" [Expr] NEWLINE
+// StartExpr ::= "start" PostfixExpr
 func (p *Parser) parseStartExpr() (ast.Expr, error) {
 	startTok := p.advance()
 	operand, err := p.parsePostfixExpr()
@@ -1067,6 +1069,7 @@ func (p *Parser) parseStartExpr() (ast.Expr, error) {
 	return &ast.StartExpr{Pos: startTok.Pos, Call: call}, nil
 }
 
+// ReturnStmt ::= "return" [Expr] NEWLINE
 func (p *Parser) parseReturnStmt() (*ast.ReturnStmt, error) {
 	retTok, err := p.expect(token.RETURN, "at start of return statement")
 	if err != nil {
@@ -1150,11 +1153,11 @@ func (p *Parser) parseBinaryExpr(minPrec int) (ast.Expr, error) {
 
 // NotExpr ::= "not" NotExpr | CmpExpr
 func (p *Parser) parseNotExpr() (ast.Expr, error) {
-	if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
-		return nil, err
-	}
-	defer p.leaveDepth()
 	if p.cur().Kind == token.NOT {
+		if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
+			return nil, err
+		}
+		defer p.leaveDepth()
 		opTok := p.advance()
 		operand, err := p.parseNotExpr()
 		if err != nil {
@@ -1171,11 +1174,11 @@ func (p *Parser) parseNotExpr() (ast.Expr, error) {
 
 // UnaryExpr ::= ("+" | "-") UnaryExpr | PostfixExpr
 func (p *Parser) parseUnaryExpr() (ast.Expr, error) {
-	if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
-		return nil, err
-	}
-	defer p.leaveDepth()
 	if p.cur().Kind == token.PLUS || p.cur().Kind == token.MINUS {
+		if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
+			return nil, err
+		}
+		defer p.leaveDepth()
 		opTok := p.advance()
 		operand, err := p.parseUnaryExpr()
 		if err != nil {

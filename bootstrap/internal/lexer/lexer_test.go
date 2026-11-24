@@ -235,3 +235,21 @@ func TestTokenizeCorpusCases(t *testing.T) {
 		t.Fatalf("expected at least 11 .cb test cases (01 through 11), found %d", count)
 	}
 }
+
+func TestCoalesceKeywordsIgnoresStringLiterals(t *testing.T) {
+	toks, err := Tokenize(`"end" if
+"can" error
+`, "coalesce_strings.cb")
+	if err != nil {
+		t.Fatalf("unexpected lex error: %v", err)
+	}
+	if len(toks) < 6 {
+		t.Fatalf("expected at least 6 tokens, got %d", len(toks))
+	}
+	if toks[0].Kind != token.STRING_LIT || toks[1].Kind != token.IF {
+		t.Fatalf("expected STRING_LIT then IF, got %s then %s", toks[0].Kind, toks[1].Kind)
+	}
+	if toks[3].Kind != token.STRING_LIT || toks[4].Kind != token.IDENT {
+		t.Fatalf("expected STRING_LIT then IDENT, got %s then %s", toks[3].Kind, toks[4].Kind)
+	}
+}

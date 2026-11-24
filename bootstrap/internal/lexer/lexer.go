@@ -193,7 +193,7 @@ func (l *Lexer) scanIdentifier() token.Token {
 	}
 }
 
-func (l *Lexer) scanNumber() (token.Token, error) {
+func (l *Lexer) scanNumber() token.Token {
 	startPos := l.currentPos()
 	var sb strings.Builder
 	isFloat := false
@@ -218,7 +218,7 @@ func (l *Lexer) scanNumber() (token.Token, error) {
 		Kind:   kind,
 		Lexeme: sb.String(),
 		Pos:    startPos,
-	}, nil
+	}
 }
 
 func (l *Lexer) scanString() (token.Token, error) {
@@ -423,7 +423,7 @@ func (l *Lexer) scanNextToken() (token.Token, error) {
 		return l.scanByteLiteral()
 	}
 	if isDigit(ch) {
-		return l.scanNumber()
+		return l.scanNumber(), nil
 	}
 	if isIdentStart(ch) {
 		return l.scanIdentifier(), nil
@@ -478,11 +478,16 @@ func (l *Lexer) scanNextToken() (token.Token, error) {
 	}
 }
 
+func isCoalescableWord(tok token.Token) bool {
+	return tok.Kind == token.LookupIdent(tok.Lexeme)
+}
+
 func coalesceKeywords(raw []token.Token) []token.Token {
 	out := make([]token.Token, 0, len(raw))
 	i := 0
 	for i < len(raw) {
-		if i+1 < len(raw) && raw[i].Pos.Line == raw[i+1].Pos.Line {
+		if i+1 < len(raw) && raw[i].Pos.Line == raw[i+1].Pos.Line &&
+			isCoalescableWord(raw[i]) && isCoalescableWord(raw[i+1]) {
 			if kind, lexeme, ok := token.CoalesceTwoWordKeyword(raw[i].Lexeme, raw[i+1].Lexeme); ok {
 				out = append(out, token.Token{
 					Kind:   kind,

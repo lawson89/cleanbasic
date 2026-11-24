@@ -154,6 +154,9 @@ func (a *analyzer) inferListLitExpr(e *ast.ListLitExpr, scope *Scope) (Type, err
 	if err != nil {
 		return VoidType, err
 	}
+	if firstType.IsVoid() {
+		return VoidType, newSemaError(e.Elements[0].ExprPos(), "list literal element cannot have void type")
+	}
 	for i := 1; i < len(e.Elements); i++ {
 		elemType, err := a.inferExpr(e.Elements[i], scope)
 		if err != nil {
@@ -177,6 +180,9 @@ func (a *analyzer) inferDictLitExpr(e *ast.DictLitExpr, scope *Scope) (Type, err
 	firstVal, err := a.inferExpr(e.Entries[0].Value, scope)
 	if err != nil {
 		return VoidType, err
+	}
+	if firstVal.IsVoid() {
+		return VoidType, newSemaError(e.Entries[0].Value.ExprPos(), "dict literal value cannot have void type")
 	}
 	for i := 1; i < len(e.Entries); i++ {
 		kt, err := a.inferExpr(e.Entries[i].Key, scope)
@@ -212,46 +218,50 @@ func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Sco
 
 func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (Type, error) {
 	if objIdent, ok := e.Target.(*ast.IdentExpr); ok {
-		if enumSym, isEnum := a.mod.Enums[objIdent.Name]; isEnum {
-			if !enumSym.VariantSet[e.Field] {
-				return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
-			}
-			e.GoName = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
-			return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
-		}
-		if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
-			sym, found := impMod.GlobalVars.Lookup(e.Field)
-			if !found {
-				return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, e.Field)
-			}
-			if !sym.Public {
-				if sym.IsConst {
-					return VoidType, newSemaError(e.Pos, "constant %q in module %q is private", e.Field, objIdent.Name)
+		if _, isVar := scope.Lookup(objIdent.Name); !isVar {
+			if enumSym, isEnum := a.mod.Enums[objIdent.Name]; isEnum {
+				if !enumSym.VariantSet[e.Field] {
+					return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
 				}
-				return VoidType, newSemaError(e.Pos, "variable %q in module %q is private", e.Field, objIdent.Name)
+				e.GoName = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
+				return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
 			}
-			if a.currentFn != nil && sym.IsGlobal && !sym.IsConst {
-				a.recordGlobalAccess(a.currentFn, e.Pos, objIdent.Name+"."+e.Field)
+			if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
+				sym, found := impMod.GlobalVars.Lookup(e.Field)
+				if !found {
+					return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, e.Field)
+				}
+				if !sym.Public {
+					if sym.IsConst {
+						return VoidType, newSemaError(e.Pos, "constant %q in module %q is private", e.Field, objIdent.Name)
+					}
+					return VoidType, newSemaError(e.Pos, "variable %q in module %q is private", e.Field, objIdent.Name)
+				}
+				if a.currentFn != nil && sym.IsGlobal && !sym.IsConst {
+					a.recordGlobalAccess(a.currentFn, e.Pos, objIdent.Name+"."+e.Field)
+				}
+				e.GoName = sym.GoName
+				return sym.Type, nil
 			}
-			e.GoName = sym.GoName
-			return sym.Type, nil
 		}
 	}
 	if innerFA, ok := e.Target.(*ast.FieldAccessExpr); ok {
 		if modIdent, ok2 := innerFA.Target.(*ast.IdentExpr); ok2 {
-			if impMod, isMod := a.mod.Imports[modIdent.Name]; isMod {
-				if enumSym, isEnum := impMod.Enums[innerFA.Field]; isEnum {
-					if !enumSym.Public {
-						return VoidType, newSemaError(e.Pos, "enum %q in module %q is private", innerFA.Field, modIdent.Name)
+			if _, isVar := scope.Lookup(modIdent.Name); !isVar {
+				if impMod, isMod := a.mod.Imports[modIdent.Name]; isMod {
+					if enumSym, isEnum := impMod.Enums[innerFA.Field]; isEnum {
+						if !enumSym.Public {
+							return VoidType, newSemaError(e.Pos, "enum %q in module %q is private", innerFA.Field, modIdent.Name)
+						}
+						if !enumSym.VariantSet[e.Field] {
+							return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
+						}
+						e.GoName = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
+						return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
 					}
-					if !enumSym.VariantSet[e.Field] {
-						return VoidType, newSemaError(e.Pos, "enum %q has no variant %q", enumSym.Name, e.Field)
+					if _, isGlobal := impMod.GlobalVars.Lookup(innerFA.Field); !isGlobal {
+						return VoidType, newSemaError(e.Pos, "module %q has no enum %q", modIdent.Name, innerFA.Field)
 					}
-					e.GoName = fmt.Sprintf("%s_%s", enumSym.GoName, e.Field)
-					return Type{Kind: KindEnum, Name: enumSym.Name, ModuleID: enumSym.ModuleID, GoName: enumSym.GoName}, nil
-				}
-				if _, isGlobal := impMod.GlobalVars.Lookup(innerFA.Field); !isGlobal {
-					return VoidType, newSemaError(e.Pos, "module %q has no enum %q", modIdent.Name, innerFA.Field)
 				}
 			}
 		}
@@ -490,22 +500,23 @@ func (a *analyzer) expectPositionalArgs(e *ast.CallExpr, methodName string, scop
 func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExpr, scope *Scope) (Type, error) {
 	if objIdent, ok := fa.Target.(*ast.IdentExpr); ok {
 		// Cross-module function or struct constructor: modAlias.Symbol(...)
-		if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
-			if structSym, isStruct := impMod.Structs[fa.Field]; isStruct {
-				if !structSym.Public {
-					return VoidType, newSemaError(e.Pos, "type %q in module %q is private", fa.Field, objIdent.Name)
+		if _, isVar := scope.Lookup(objIdent.Name); !isVar {
+			if impMod, isMod := a.mod.Imports[objIdent.Name]; isMod {
+				if structSym, isStruct := impMod.Structs[fa.Field]; isStruct {
+					if !structSym.Public {
+						return VoidType, newSemaError(e.Pos, "type %q in module %q is private", fa.Field, objIdent.Name)
+					}
+					return a.inferStructCtorCall(e, structSym, scope)
 				}
-				return a.inferStructCtorCall(e, structSym, scope)
-			}
-			if fnSym, isFn := impMod.Functions[fa.Field]; isFn {
-				if !fnSym.Public {
-					return VoidType, newSemaError(e.Pos, "function %q in module %q is private", fa.Field, objIdent.Name)
+				if fnSym, isFn := impMod.Functions[fa.Field]; isFn {
+					if !fnSym.Public {
+						return VoidType, newSemaError(e.Pos, "function %q in module %q is private", fa.Field, objIdent.Name)
+					}
+					return a.finishFnCall(e, fnSym, scope)
 				}
-				return a.finishFnCall(e, fnSym, scope)
+				return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
 			}
-			return VoidType, newSemaError(e.Pos, "module %q has no symbol %q", objIdent.Name, fa.Field)
 		}
-
 	}
 
 	recvType, err := a.inferExpr(fa.Target, scope)

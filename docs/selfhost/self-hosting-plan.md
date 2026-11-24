@@ -836,7 +836,7 @@ public fn registerFnDecl(byref a as ast.AstArena, modId as int, declId as int) c
 
 #### CleanBasic Translation Notes / Gotchas
 - **Mutating Arena Nodes by Index:** Use `a.structSyms[symId].fieldIds.push(fid)` and `a.structSyms[symId].fieldMap[fname] = fid` directly on `list[StructSymbol]` elements inside `byref a as ast.AstArena`.
-- **`resolveTypeNodes` Creates New `TypeNode`s:** When resolving a `TypeStruct`/`TypeList`/`TypeDict`/`TypeMailbox`, resolve subtype IDs first (in `dim` variables—no nested fallible calls!) and allocate or update the resolved `TypeNode` in `a.types`.
+- **`resolveTypeNodes` Creates New `TypeNode`s:** When resolving a `TypeStruct`/`TypeList`/`TypeDict`/`TypeJob`, resolve subtype IDs first (in `dim` variables—no nested fallible calls!) and allocate or update the resolved `TypeNode` in `a.types`.
 
 #### Module Verification Gate
 - `./build/cb0 check selfhost/sema_types.cb`

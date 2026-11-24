@@ -70,10 +70,18 @@ public fn printUsage(p as Parser)
 	if p.flags.len() > 0 or p.options.len() > 0
 		print("Options:")
 		for f in p.flags
-			print("  -" + f.short + ", --" + f.name + "  " + f.desc)
+			dim prefix = "  "
+			if f.short != ""
+				prefix = prefix + "-" + f.short + ", "
+			end if
+			print(prefix + "--" + f.name + "  " + f.desc)
 		end for
 		for o in p.options
-			print("  -" + o.short + ", --" + o.name + " <val>  " + o.desc + " (default: " + o.defaultVal + ")")
+			dim prefix = "  "
+			if o.short != ""
+				prefix = prefix + "-" + o.short + ", "
+			end if
+			print(prefix + "--" + o.name + " <val>  " + o.desc + " (default: " + o.defaultVal + ")")
 		end for
 	end if
 end fn
@@ -170,24 +178,6 @@ public fn parseArgs(p as Parser, argv as list[str]) as ParsedArgs can error
 		end if
 		if a.startsWith("-") and a.len() > 1
 			dim shortCode = a[1:]
-			if shortCode.len() == 1
-				dim flagName = findFlagByShort(p, shortCode)
-				if flagName != ""
-					out.flags[flagName] = true
-					i = i + 1
-					continue
-				end if
-				dim optName = findOptionByShort(p, shortCode)
-				if optName != ""
-					if i + 1 >= argv.len()
-						error("option -" + shortCode + " requires a value")
-					end if
-					out.options[optName] = argv[i + 1]
-					i = i + 2
-					continue
-				end if
-				error("unknown flag or option: " + a)
-			end if
 			dim stepConsumed = 1
 			for cIdx, ch in shortCode
 				dim flagName = findFlagByShort(p, ch)
@@ -197,8 +187,8 @@ public fn parseArgs(p as Parser, argv as list[str]) as ParsedArgs can error
 				end if
 				dim optName = findOptionByShort(p, ch)
 				if optName != ""
-					if cIdx + 1 < shortCode.len()
-						out.options[optName] = shortCode[cIdx + 1:]
+					if cIdx + ch.len() < shortCode.len()
+						out.options[optName] = shortCode[cIdx + ch.len():]
 						break
 					end if
 					if i + 1 >= argv.len()
