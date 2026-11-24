@@ -44,10 +44,10 @@ const (
 	KindByte    TypeKind = "byte"
 	KindStruct  TypeKind = "struct"
 	KindEnum    TypeKind = "enum"
-	KindList    TypeKind = "list"
-	KindDict    TypeKind = "dict"
-	KindMailbox TypeKind = "mailbox"
-	KindErr     TypeKind = "err"
+	KindList   TypeKind = "list"
+	KindDict   TypeKind = "dict"
+	KindJob    TypeKind = "job"
+	KindErr    TypeKind = "err"
 )
 
 // Type represents a syntactic or resolved semantic type in CleanBasic.
@@ -57,7 +57,7 @@ type Type struct {
 	Name     string
 	ModuleID string
 	GoName   string
-	SubTypes []Type // [elem] for list/mailbox; [key, val] for dict
+	SubTypes []Type // [elem] for list/job; [key, val] for dict
 }
 
 func (t Type) Elem() Type {
@@ -100,11 +100,16 @@ func (t Type) String() string {
 		return "void"
 	case KindStruct, KindEnum:
 		return t.Name
-	case KindList, KindMailbox:
+	case KindList:
 		if len(t.SubTypes) == 1 {
-			return fmt.Sprintf("%s[%s]", t.Kind, t.SubTypes[0].String())
+			return fmt.Sprintf("list[%s]", t.SubTypes[0].String())
 		}
-		return fmt.Sprintf("%s[?]", t.Kind)
+		return "list[?]"
+	case KindJob:
+		if len(t.SubTypes) == 0 || t.SubTypes[0].IsVoid() {
+			return "job"
+		}
+		return fmt.Sprintf("job[%s]", t.SubTypes[0].String())
 	case KindDict:
 		if len(t.SubTypes) == 2 {
 			return fmt.Sprintf("dict[%s, %s]", t.SubTypes[0].String(), t.SubTypes[1].String())
@@ -126,7 +131,7 @@ func (t Type) Equals(other Type) bool {
 	switch t.Kind {
 	case KindStruct, KindEnum:
 		return t.Name == other.Name && t.ModuleID == other.ModuleID
-	case KindList, KindMailbox, KindDict:
+	case KindList, KindDict:
 		if len(t.SubTypes) != len(other.SubTypes) {
 			return false
 		}
@@ -136,6 +141,8 @@ func (t Type) Equals(other Type) bool {
 			}
 		}
 		return true
+	case KindJob:
+		return t.Elem().Equals(other.Elem())
 	default:
 		return true
 	}
@@ -562,7 +569,7 @@ func (e *DictLitExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *DictLitExpr) exprNode()               {}
 
 // TypedEmptyCtorExpr represents a typed container constructor:
-// list[T](), dict[K, V](), mailbox[T](), or mailbox[T](cap)
+// list[T]() or dict[K, V]()
 type TypedEmptyCtorExpr struct {
 	Pos  token.Position
 	Type Type
@@ -657,11 +664,14 @@ func (e *CallExpr) ExprType() Type          { return e.SemaType }
 func (e *CallExpr) SetExprType(t Type)      { e.SemaType = t }
 func (e *CallExpr) exprNode()               {}
 
-// StartJobStmt represents launching a concurrent background goroutine: start job fnCall(...)
-type StartJobStmt struct {
-	Pos  token.Position
-	Call *CallExpr
+// StartExpr represents launching a concurrent background job: start fnCall(...)
+type StartExpr struct {
+	Pos      token.Position
+	Call     *CallExpr
+	SemaType Type
 }
 
-func (s *StartJobStmt) StmtPos() token.Position { return s.Pos }
-func (s *StartJobStmt) stmtNode()               {}
+func (e *StartExpr) ExprPos() token.Position { return e.Pos }
+func (e *StartExpr) ExprType() Type          { return e.SemaType }
+func (e *StartExpr) SetExprType(t Type)      { e.SemaType = t }
+func (e *StartExpr) exprNode()               {}

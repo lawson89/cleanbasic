@@ -35,7 +35,7 @@ Four language and stdlib improvements were landed specifically to make `selfhost
 1. **`fs.mkdirTempIn(dir, pattern)`** (`std/fs.cb`): Creates temporary build directories inside `os.cacheDir()` or a target workspace.
 2. **`os.writeStdout(msg)`** (`std/os.cb`): Writes raw strings to stdout without a trailing newline (essential for `cb emit` stdout mode or raw diagnostics).
 3. **`list.sort()`** (`sema/builtins.go`, `codegen/exprs.go`): In-place `slices.Sort` on `list[int]`, `list[float]`, `list[str]`, and `list[byte]`, enabling deterministic sorted `import` and declaration emission.
-4. **Recursive Struct `dict`/`mailbox` Auto-Initialization** (`codegen/codegen.go`, `codegen/stmts.go`): Zero-initialized structs (`dim a as AstArena`, `AstArena()`, and error-return zero values) recursively initialize all `dict` and `mailbox` fields—eliminating manual map initialization boilerplate across `AstArena`, `Scope`, and `ModuleInfo`.
+4. **Recursive Struct `dict` Auto-Initialization** (`codegen/codegen.go`, `codegen/stmts.go`): Zero-initialized structs (`dim a as AstArena`, `AstArena()`, and error-return zero values) recursively initialize all `dict` fields—eliminating manual map initialization boilerplate across `AstArena`, `Scope`, and `ModuleInfo`.
 
 ---
 
@@ -128,7 +128,7 @@ public enum TypeKind
     TyEnum
     TyList
     TyDict
-    TyMailbox
+    TyJob
     TyErr
 end enum
 
@@ -184,7 +184,6 @@ public enum StmtKind
     StmtSelect
     StmtTryCatch
     StmtDefer
-    StmtStartJob
     StmtReturn
     StmtBreak
     StmtContinue
@@ -476,25 +475,25 @@ Each module below follows the acyclic import DAG in Section 2 and maps 1-to-1 to
   - `Kind` (`string`): **83 token kinds** grouped into:
     - Special (2): `EOF`, `NEWLINE`.
     - Identifiers & Literals (7): `IDENT`, `INT_LIT`, `FLOAT_LIT`, `STRING_LIT`, `BYTE_LIT`, `TRUE`, `FALSE`.
-    - Single-word Keywords (26): `IMPORT`, `AS`, `PUBLIC`, `CONST`, `DIM`, `TYPE`, `ENUM`, `FN`, `GO`, `BYREF`, `IF`, `ELSE`, `FOR`, `TO`, `IN`, `WHILE`, `CASE`, `TRY`, `CATCH`, `DEFER`, `RETURN`, `BREAK`, `CONTINUE`, `AND`, `OR`, `NOT`.
-    - Built-in Type / Container Keywords (9): `INT`, `FLOAT`, `STR`, `BOOL`, `BYTE`, `ERR`, `LIST`, `DICT`, `MAILBOX`.
+    - Single-word Keywords (27): `IMPORT`, `AS`, `PUBLIC`, `CONST`, `DIM`, `TYPE`, `ENUM`, `FN`, `GO`, `BYREF`, `IF`, `ELSE`, `FOR`, `TO`, `IN`, `WHILE`, `CASE`, `TRY`, `CATCH`, `DEFER`, `RETURN`, `BREAK`, `CONTINUE`, `AND`, `OR`, `NOT`, `START`.
+    - Built-in Type / Container Keywords (9): `INT`, `FLOAT`, `STR`, `BOOL`, `BYTE`, `ERR`, `LIST`, `DICT`, `JOB`.
     - Transitional Single Words (3): `END`, `SELECT`, `CAN`.
-    - Two-word Coalesced Keywords (15): `ELSE_IF`, `END_FN`, `END_IF`, `END_FOR`, `END_WHILE`, `END_SELECT`, `END_TRY`, `END_DEFER`, `END_TYPE`, `END_ENUM`, `GO_IMPORT`, `SELECT_CASE`, `CASE_ELSE`, `CAN_ERROR`, `START_JOB`.
+    - Two-word Coalesced Keywords (14): `ELSE_IF`, `END_FN`, `END_IF`, `END_FOR`, `END_WHILE`, `END_SELECT`, `END_TRY`, `END_DEFER`, `END_TYPE`, `END_ENUM`, `GO_IMPORT`, `SELECT_CASE`, `CASE_ELSE`, `CAN_ERROR`.
     - Verbatim Go Block (1): `GO_BLOCK`.
     - Operators & Punctuation (20): `ASSIGN`, `EQ`, `NEQ`, `LT`, `GT`, `LTE`, `GTE`, `PLUS`, `MINUS`, `STAR`, `SLASH`, `PERCENT`, `DOT`, `COMMA`, `COLON`, `LPAREN`, `RPAREN`, `LBRACKET`, `RBRACKET`, `LBRACE`, `RBRACE`.
   - `Token` (`Kind Kind`, `Lexeme string`, `Pos Position`).
 - **Core Functions & Tables:**
-  - `singleWordKeywords`: `map[string]Kind` with **40 entries** (26 keywords + 9 built-in types + 3 transitional words + `true`/`false`).
-  - `twoWordKeywords`: `map[twoWordKey]Kind` with **15 pairs**.
+  - `singleWordKeywords`: `map[string]Kind` with **41 entries** (27 keywords + 9 built-in types + 3 transitional words + `true`/`false`).
+  - `twoWordKeywords`: `map[twoWordKey]Kind` with **14 pairs**.
   - `LookupIdent(word string) Kind` and `CoalesceTwoWordKeyword(first, second string) (Kind, string, bool)`.
 
 #### CleanBasic Design & Key Types/Functions
 - Define `public enum Kind` with unambiguous `Tok*` variant names (avoiding CleanBasic keywords and Go reserved words like `type`, `func`, `map`, `range`, `switch`, `default`, `error`):
   - `TokEOF`, `TokNewline`, `TokIdent`, `TokIntLit`, `TokFloatLit`, `TokStrLit`, `TokByteLit`, `TokTrue`, `TokFalse`
-  - `TokImport`, `TokAs`, `TokPublic`, `TokConst`, `TokDim`, `TokType`, `TokEnum`, `TokFn`, `TokGo`, `TokByref`, `TokIf`, `TokElse`, `TokFor`, `TokTo`, `TokIn`, `TokWhile`, `TokCase`, `TokTry`, `TokCatch`, `TokDefer`, `TokReturn`, `TokBreak`, `TokContinue`, `TokAnd`, `TokOr`, `TokNot`
-  - `TokInt`, `TokFloat`, `TokStr`, `TokBool`, `TokByte`, `TokErr`, `TokList`, `TokDict`, `TokMailbox`
+  - `TokImport`, `TokAs`, `TokPublic`, `TokConst`, `TokDim`, `TokType`, `TokEnum`, `TokFn`, `TokGo`, `TokByref`, `TokIf`, `TokElse`, `TokFor`, `TokTo`, `TokIn`, `TokWhile`, `TokCase`, `TokTry`, `TokCatch`, `TokDefer`, `TokReturn`, `TokBreak`, `TokContinue`, `TokAnd`, `TokOr`, `TokNot`, `TokStart`
+  - `TokInt`, `TokFloat`, `TokStr`, `TokBool`, `TokByte`, `TokErr`, `TokList`, `TokDict`, `TokJob`
   - `TokEnd`, `TokSelect`, `TokCan`
-  - `TokElseIf`, `TokEndFn`, `TokEndIf`, `TokEndFor`, `TokEndWhile`, `TokEndSelect`, `TokEndTry`, `TokEndDefer`, `TokEndType`, `TokEndEnum`, `TokGoImport`, `TokSelectCase`, `TokCaseElse`, `TokCanError`, `TokStartJob`
+  - `TokElseIf`, `TokEndFn`, `TokEndIf`, `TokEndFor`, `TokEndWhile`, `TokEndSelect`, `TokEndTry`, `TokEndDefer`, `TokEndType`, `TokEndEnum`, `TokGoImport`, `TokSelectCase`, `TokCaseElse`, `TokCanError`
   - `TokGoBlock`
   - `TokAssign`, `TokEq`, `TokNeq`, `TokLt`, `TokGt`, `TokLte`, `TokGte`, `TokPlus`, `TokMinus`, `TokStar`, `TokSlash`, `TokPercent`, `TokDot`, `TokComma`, `TokColon`, `TokLParen`, `TokRParen`, `TokLBracket`, `TokRBracket`, `TokLBrace`, `TokRBrace`
 - **Structs & Functions:**
@@ -531,7 +530,7 @@ public fn coalesceTwoWordKeyword(first as str, second as str) as CoalesceResult
 
 #### CleanBasic Translation Notes / Gotchas
 - **No Go Reserved Words in Enum Variants or Parameters:** Never name an enum variant `Error` or `Type` or `Go` without a prefix; `Tok*` avoids all collisions.
-- **Composite Key Workaround:** CleanBasic `dict` keys can be `str`—encode two-word pairs in a module-level `dict[str, Kind]` keyed by `first + " " + second` (e.g., `"else if"`, `"end fn"`, `"start job"`). Build or lazy-initialize the lookup `dict` inside a helper function if top-level `dict` literal syntax is verbose.
+- **Composite Key Workaround:** CleanBasic `dict` keys can be `str`—encode two-word pairs in a module-level `dict[str, Kind]` keyed by `first + " " + second` (e.g., `"else if"`, `"end fn"`, `"can error"`). Build or lazy-initialize the lookup `dict` inside a helper function if top-level `dict` literal syntax is verbose.
 - **Zero-Allocation `CoalesceResult`:** CleanBasic functions return a single value, so return `CoalesceResult(true, k, first + " " + second)` instead of Go's 3-tuple `(Kind, string, bool)`.
 
 #### Module Verification Gate
@@ -608,7 +607,7 @@ fn coalesceKeywords(raw as list[token.Token]) as list[token.Token]
   - Type System: `TypeKind` (12 kinds), `Type` (`Kind`, `Name`, `ModuleID`, `GoName`, `SubTypes []Type`), `Elem()`, `Key()`, `Val()`, `String()`, `IsVoid()`, `Equals(other)`, plus primitive constants (`VoidType`, `IntType`, `FloatType`, `StrType`, `BoolType`, `ByteType`, `ErrType`).
   - Symbol Structs: `ParamSymbol`, `FnSymbol`, `FieldSymbol`, `StructSymbol`, `EnumSymbol`, `CallKind` (5 kinds), `CallInfo`.
   - Decl Nodes (8): `ImportDecl`, `GoImportDecl`, `GoBlockDecl`, `ConstDecl`, `TypeDecl`, `EnumDecl`, `FnDecl`, `VarDecl` (implements both `TopLevelDecl` and `Statement`).
-  - Stmt Nodes (14): `VarDecl`, `Assignment`, `ExprStmt`, `IfStmt`, `ForStmt` (range + for-in), `WhileStmt`, `SelectStmt`, `TryCatchStmt`, `DeferStmt`, `StartJobStmt`, `ReturnStmt`, `BreakStmt`, `ContinueStmt`.
+  - Stmt Nodes (13): `VarDecl`, `Assignment`, `ExprStmt`, `IfStmt`, `ForStmt` (range + for-in), `WhileStmt`, `SelectStmt`, `TryCatchStmt`, `DeferStmt`, `ReturnStmt`, `BreakStmt`, `ContinueStmt`.
   - Expr Nodes (15): `IdentExpr`, `IntLitExpr`, `FloatLitExpr`, `StringLitExpr`, `ByteLitExpr`, `BoolLitExpr`, `ListLitExpr`, `DictLitExpr`, `TypedEmptyCtorExpr`, `UnaryExpr`, `BinaryExpr`, `FieldAccessExpr`, `IndexExpr`, `SliceExpr`, `CallExpr`.
 
 #### CleanBasic Design & Key Types/Functions
@@ -617,7 +616,7 @@ fn coalesceKeywords(raw as list[token.Token]) as list[token.Token]
 - **Node Field Usage by Kind (Key Mappings):**
   - `DeclNode`: `DeclImport` (`path`, `alias`); `DeclGoImport` (`path`, `alias`); `DeclGoBlock` (`goCode`); `DeclConst` (`isPublic`, `name`, `typeId`, `valueExprId`); `DeclVar` (`isPublic`, `name`, `typeId`, `valueExprId`); `DeclType` (`isPublic`, `name`, `isGoDecl`, `goName`, `fieldIds`); `DeclEnum` (`isPublic`, `name`, `variants`); `DeclFn` (`isPublic`, `name`, `paramIds`, `retTypeId`, `canError`, `isGoDecl`, `goTarget`, `bodyStmtIds`).
   - `StmtNode`: `StmtVarDecl` (`name`, `typeId`, `valueExprId`); `StmtAssign` (`targetExprId`, `valueExprId`); `StmtExpr` (`valueExprId`); `StmtIf` (`condExprId`, `bodyStmtIds`, `elseIfIds`, `hasElse`, `elseStmtIds`); `StmtForRange` (`name`, `startExprId`, `endExprId`, `bodyStmtIds`); `StmtForIn` (`loopVars`, `iterExprId`, `bodyStmtIds`); `StmtWhile` (`condExprId`, `bodyStmtIds`); `StmtSelect` (`targetExprId`, `caseIds`, `hasElse`, `elseStmtIds`); `StmtTryCatch` (`bodyStmtIds`, `catchVar`, `catchStmtIds`); `StmtDefer` (`bodyStmtIds`); `StmtStartJob` (`callExprId`); `StmtReturn` (`valueExprId`).
-  - `ExprNode`: `ExprIdent` (`text`, `goName`); `ExprIntLit` (`intVal`); `ExprFloatLit` (`floatVal`); `ExprStrLit` (`text`); `ExprByteLit` (`byteVal`); `ExprBoolLit` (`boolVal`); `ExprListLit` (`childExprIds`); `ExprDictLit` (`dictEntryIds`); `ExprTypedEmpty` (`ctorTypeId`, `childExprIds` for optional mailbox capacity); `ExprUnary` (`op`, `rightId`); `ExprBinary` (`op`, `leftId`, `rightId`); `ExprFieldAccess` (`targetId`, `text`, `goName`); `ExprIndex` (`targetId`, `indexId`); `ExprSlice` (`targetId`, `startId`, `endId`); `ExprCall` (`targetId`, `childExprIds`, `callInfoId`).
+  - `ExprNode`: `ExprIdent` (`text`, `goName`); `ExprIntLit` (`intVal`); `ExprFloatLit` (`floatVal`); `ExprStrLit` (`text`); `ExprByteLit` (`byteVal`); `ExprBoolLit` (`boolVal`); `ExprListLit` (`childExprIds`); `ExprDictLit` (`dictEntryIds`); `ExprTypedEmpty` (`ctorTypeId`); `ExprStart` (`callExprId`); `ExprUnary` (`op`, `rightId`); `ExprBinary` (`op`, `leftId`, `rightId`); `ExprFieldAccess` (`targetId`, `text`, `goName`); `ExprIndex` (`targetId`, `indexId`); `ExprSlice` (`targetId`, `startId`, `endId`); `ExprCall` (`targetId`, `childExprIds`, `callInfoId`).
 - **Required Helpers:**
 ```cleanbasic
 public fn initArena() as AstArena
@@ -641,11 +640,11 @@ public fn typeString(a as AstArena, typeId as int) as str
 
 #### Parity & Behavior Checklist
 - `typeEquals(a, leftId, rightId)` matches Go's `Type.Equals`: checks `kind`, `name`, `modId`, `subTypeIds.len()`, and recursively compares each subtype pair.
-- `typeString(a, typeId)` formats `list[T]`, `dict[K, V]`, `mailbox[T]`, `void`, primitive names, and struct/enum names identically to `Type.String()`.
+- `typeString(a, typeId)` formats `list[T]`, `dict[K, V]`, `job[T]`, `job`, `void`, primitive names, and struct/enum names identically to `Type.String()`.
 - `typeElem`, `typeKey`, `typeVal` return `-1` (or `TyIdVoid`) when out of bounds.
 
 #### CleanBasic Translation Notes / Gotchas
-- **Zero-Init of `AstArena`:** Thanks to recursive struct `dict`/`mailbox` auto-initialization, `dim a = AstArena()` initializes all 16 `list[...]` pools to empty and all nested `dict` fields on `Scope`, `ModuleInfo`, `StructSymbol`, `EnumSymbol` to non-nil maps automatically.
+- **Zero-Init of `AstArena`:** Thanks to recursive struct `dict` auto-initialization, `dim a = AstArena()` initializes all 16 `list[...]` pools to empty and all nested `dict` fields on `Scope`, `ModuleInfo`, `StructSymbol`, `EnumSymbol` to non-nil maps automatically.
 - **Defaulting `int` IDs to `-1`:** CleanBasic zero-initializes `int` fields to `0`, **not** `-1`. Always provide factory constructors (e.g., `newExprNode(kind, pos)`, `newStmtNode(kind, pos)`, `newDeclNode(kind, pos)`) that initialize all ID fields (`typeId`, `semaTypeId`, `leftId`, `rightId`, `targetId`, `callInfoId`, etc.) to `-1`.
 
 #### Module Verification Gate
@@ -661,7 +660,7 @@ public fn typeString(a as AstArena, typeId as int) as str
 - **Key Types:** `ParseError` (`Pos`, `Message`; `Error()` formats `"%s: syntax error: %s"`), `Parser` (`tokens []token.Token`, `pos int`, `file string`).
 - **Core Functions:**
   - Top-level: `Parse(src, filename)`, `ParseProgram()`, `parseTopLevelDecl()`, `parseImportDecl()`, `parseGoImportDecl()`, `parseConstDecl()`, `parseTypeDecl()`, `parseEnumDecl()`, `parseFnDecl()`, `parseParamList()`, `parseType()`.
-  - Statements: `parseStatement()`, `parseVarDecl()`, `parseAssignOrExprStmt()`, `parseIfStmt()`, `parseForStmt()`, `finishForStmt()`, `parseWhileStmt()`, `parseSelectStmt()`, `parseTryCatchStmt()`, `parseDeferStmt()`, `parseStartJobStmt()`, `parseReturnStmt()`.
+  - Statements: `parseStatement()`, `parseVarDecl()`, `parseAssignOrExprStmt()`, `parseIfStmt()`, `parseForStmt()`, `finishForStmt()`, `parseWhileStmt()`, `parseSelectStmt()`, `parseTryCatchStmt()`, `parseDeferStmt()`, `parseReturnStmt()`.
   - Expressions: `parseExpr()`, `parseBinaryExpr(minPrec)`, `parseNotExpr()`, `parseUnaryExpr()`, `parsePostfixExpr()`, `parsePrimaryExpr()`, `parseTypedEmptyCtor()`, `parseListLiteral()`, `parseDictLiteral()`.
 - **Subtle Invariants:**
   - **Go Reserved Word Enforcement:**
@@ -677,7 +676,7 @@ public fn typeString(a as AstArena, typeId as int) as str
     - Prefix Unary: `-`, `+`
     - Postfix (left-associative): `.member`, `(args)`, `[index]` / `[start:end]`
   - **Multi-line Delimited Lists:** `hasMoreDelimited(endKind)` skips newlines inside `(...)`, `[...]`, `{...}`, allowing multi-line params, args, list literals, and dict literals with optional trailing commas.
-  - **`start job` Validation:** `parseStartJobStmt` parses a postfix expression and requires it to be a `CallExpr` (`start job must be followed by a function call`).
+  - **`start` Expression:** `parseStartExpr` parses a postfix expression and requires it to be a `CallExpr` (`expected function call after 'start'`).
   - **Empty `[]` / `{}` Rejection:** `parseListLiteral` and `parseDictLiteral` reject empty `[]` and `{}`, directing users to `list[T]()` / `dict[K, V]()`.
   - **Numeric Literal Parsing:** `strconv.ParseInt(..., 0, 64)` and `strconv.ParseFloat(..., 64)` validate literals during parsing.
 
@@ -710,7 +709,7 @@ fn parsePrimaryExpr(byref a as AstArena, byref p as Parser) as int can error
 - All top-level forms supported: `import "..." [as alias]`, `go import "..." [as alias]`, `GO_BLOCK`, `[public] const`, `[public] dim`, `[public] type Name = go "GoType"`, `[public] type Name ... end type`, `[public] enum Name ... end enum`, `[public] fn ... [as T] [can error] = go "Target"`, `[public] fn ... end fn`.
 - `for` disambiguates `for i = start to end` vs `for x in iter` vs `for k, v in iter`.
 - `parsePostfixExpr` handles `target[:]`, `target[start:]`, `target[:end]`, `target[start:end]`, and `target[index]`.
-- `parseTypedEmptyCtor` handles `list[T]()`, `dict[K, V]()`, `mailbox[T]()`, and `mailbox[T](cap)`.
+- `parseTypedEmptyCtor` handles `list[T]()` and `dict[K, V]()`.
 
 #### CleanBasic Translation Notes / Gotchas
 - **`cur` / `peek` / `advance`:** Check `p.pos + offset >= p.tokens.len()` and return the final `TokEOF` token so out-of-bounds panics never occur.
@@ -790,13 +789,13 @@ fn findStdlibFile(rootDir as str, modPath as str) as str
 - **Key Types:**
   - `SemaError` (`Pos`, `Message`; `Error()` formats `"%s: type error: %s"`).
   - `VarSymbol`, `Scope` (`parent *Scope`, `vars map[string]*VarSymbol`; `Define`, `Lookup`).
-  - `analyzer` (`prog`, `mod`, `currentFn`, `loopDepth`, `tryDepth`, `deferDepth`, `allowedFallibleExpr`, `startJobCall`).
+  - `analyzer` (`prog`, `mod`, `currentFn`, `loopDepth`, `tryDepth`, `deferDepth`, `allowedFallibleExpr`, `startCall`, `fnGlobalAccess`, `fnCallees`, `startSites`).
 - **Core Functions:**
   - Scope & Type Helpers: `NewScope`, `Scope.Define`, `Scope.Lookup`, `lookupStruct`, `isComparableType`.
   - Declaration & Type Resolution: `predeclareType`, `resolveTypeDecl`, `checkRecursiveStructFields`, `validateStructFieldTypes`, `structReaches`, `resolveEnumDecl`, `registerFnDecl`, `resolveVarDeclType`, `registerTopLevelVar`, `analyzeTopLevelConst`, `analyzeTopLevelVar`, `resolveType`, `validateType`, `resolveTypeNodes`.
 - **Subtle Invariants:**
-  - **Recursive Value Struct Cycle Detection:** `structReaches(t, target, visited)` returns `false` for `KindList`, `KindDict`, and `KindMailbox`, and recursively traverses `KindStruct` fields (skipping `IsGoType`) to reject direct or mutually recursive value struct fields (`type Node ... next as Node`).
-  - **`isComparableType`:** Returns `true` for `int`, `float`, `str`, `byte`, `bool`, `enum`, and non-`go` `struct` types whose fields are all recursively comparable. Returns `false` for `void`, `list`, `dict`, `mailbox`, `err`, and `type ... = go "..."`.
+  - **Recursive Value Struct Cycle Detection:** `structReaches(t, target, visited)` returns `false` for `KindList`, `KindDict`, and `KindJob`, and recursively traverses `KindStruct` fields (skipping `IsGoType`) to reject direct or mutually recursive value struct fields (`type Node ... next as Node`).
+  - **`isComparableType` / `isSendableType`:** `isComparableType` returns `true` for `int`, `float`, `str`, `byte`, `bool`, `enum`, and non-`go` `struct` types whose fields are all recursively comparable; `isSendableType` returns `true` for those plus `err`, and `false` for `void`, `list`, `dict`, `job`, and `type ... = go "..."`.
   - **`validateStructFieldTypes`:** Runs **after** `checkRecursiveStructFields` (Pass 0.6) so `isComparableType` on `dict[K, V]` fields never infinite-loops on cyclic structs.
   - **Function & Param Validation:** `registerFnDecl` checks duplicate param names, resolves param/return types, sets `goName = a.mod.symbolGoName(fn.Name)` (or `"cb_main"` for entry `main`, or `fn.GoTarget` for `= go "..."`), and rejects `byref` on `go`-bound functions.
 
@@ -810,7 +809,7 @@ public type SemaCtx
     tryDepth as int
     deferDepth as int
     allowedFallibleExprId as int
-    startJobCallId as int
+    startCallId as int
 end type
 
 public fn semaErr(pos as token.Position, msg as str) as str
@@ -862,13 +861,13 @@ public fn registerFnDecl(byref a as ast.AstArena, modId as int, declId as int) c
     - `float`: `toStr() -> str`.
     - `bool`: `toStr() -> str`.
     - `byte`: `toInt() -> int`, `toStr() -> str`.
-    - `mailbox[T]`: `post(T) -> void`, `get() -> T`, `close() -> void`, `len() -> int`.
+    - `job[T]` / `job`: `wait() -> T` (or `void`).
   - **UFCS 3-Step Lookup Order:** On `recv.method(args...)`:
     1. If `recv` is an import alias (`ExprIdent` matching `mod.imports`), resolve module-qualified function `imp.funcs[method]` (must be `isPublic`).
     2. Otherwise infer `recv`'s type and check `inferBuiltinMethodCall`.
     3. Otherwise look up UFCS function `method` in `a.mod.funcs` (must accept `recvType` as first param).
   - **Struct Constructors:** Positional-only, accepting either `0` args (zero-init) or `len(fields)` args; rejects `type ... = go "..."` ctors with args.
-  - **Fallible Call Context:** `can error` functions/methods and `error(msg)` require `inFallibleContext()` (`tryDepth > 0` or `currentFn.canErr`) AND `exprId == ctx.allowedFallibleExprId` (unless `exprId == ctx.startJobCallId`).
+  - **Fallible Call Context:** `can error` functions/methods and `error(msg)` require `inFallibleContext()` (`tryDepth > 0` or `currentFn.canErr`) AND `exprId == ctx.allowedFallibleExprId` (unless `exprId == ctx.startCallId`).
   - **`byref` Arguments:** `checkByRefArg` requires an addressable mutable target (`ExprIdent` non-const/non-loop-var, `ExprFieldAccess` on mutable struct, or `ExprIndex` on mutable `list`).
 
 #### CleanBasic Design & Key Types/Functions
@@ -903,11 +902,11 @@ fn validateCallArgs(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, ca
 #### Go Reference Summary
 - **Source File:** `bootstrap/internal/sema/stmts.go` (582 LOC)
 - **Core Functions:**
-  - `analyzeFnBody(fn)`, `blockAlwaysReturns(stmts)`, `analyzeStmt(stmt, scope)`, `analyzeStartJobStmt(s, scope)`, `inferRootExpr(expr, scope)`, `analyzeVarDecl(s, scope)`, `unwrapMutableDictTarget(expr)`, `checkMutableTarget(expr, scope)`, `analyzeAssignment(s, scope)`, `analyzeIfStmt(s, scope)`, `analyzeWhileStmt(s, scope)`, `analyzeForStmt(s, scope)`, `analyzeLoopBody(stmts, loopScope)`, `analyzeSelectStmt(s, scope)`, `analyzeTryCatchStmt(s, scope)`, `analyzeDeferStmt(s, scope)`, `analyzeReturnStmt(s, scope)`.
+  - `analyzeFnBody(fn)`, `blockAlwaysReturns(stmts)`, `analyzeStmt(stmt, scope)`, `inferStartExpr(e, scope)`, `validateStartJobIsolation()`, `inferRootExpr(expr, scope)`, `analyzeVarDecl(s, scope)`, `unwrapMutableDictTarget(expr)`, `checkMutableTarget(expr, scope)`, `analyzeAssignment(s, scope)`, `analyzeIfStmt(s, scope)`, `analyzeWhileStmt(s, scope)`, `analyzeForStmt(s, scope)`, `analyzeLoopBody(stmts, loopScope)`, `analyzeSelectStmt(s, scope)`, `analyzeTryCatchStmt(s, scope)`, `analyzeDeferStmt(s, scope)`, `analyzeReturnStmt(s, scope)`.
 - **Subtle Invariants:**
   - **`blockAlwaysReturns`:** Recognizes `ReturnStmt`, `ExprStmt` calling `error(...)`, `IfStmt` (when `HasElse` and `Then`, all `ElseIfs`, and `Else` all return), `SelectStmt` (when `HasElse` and all cases + `Else` return), and `TryCatchStmt` (when both `TryBody` and `CatchBody` return).
   - **`inferRootExpr`:** Temporarily sets `ctx.allowedFallibleExprId = exprId` only for the root RHS of `VarDecl`, `Assignment`, `ReturnStmt`, or `ExprStmt`, then restores it to `-1`.
-  - **`analyzeStartJobStmt`:** Sets `ctx.startJobCallId = s.callExprId`, verifies the call is **not** `can error` (`cannot start job on a 'can error' function`), and requires a function/method call.
+  - **`inferStartExpr` & `validateStartJobIsolation`:** Rejects `can error` targets and `byref` parameters, enforces `isSendableType` on all arguments (and UFCS receiver), and performs a Pass 4 call-graph BFS to reject direct or transitive access to mutable module-level `dim` variables (while allowing `list`/`dict` returns and eager caller-goroutine argument capture in codegen).
   - **`defer` Isolation:** `analyzeDeferStmt` saves and zeroes `tryDepth` and `loopDepth`, increments `deferDepth`, and restores them on exit—so `return`, `break`, `continue`, and unhandled `can error` calls from enclosing `try`/`can error` functions are rejected inside `defer`.
   - **Loop Variable Immutability:** `for` range and `for-in` variables are defined with `isConst = true` in `loopScope` so mutating them is rejected.
   - **`select case`:** Supports `int`, `str`, `byte`, and `enum` targets (rejects `bool`, `float`, structs, containers).
@@ -998,7 +997,7 @@ fn analyzeTopLevelVar(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, 
 - **Subtle Invariants:**
   - **Deterministic Imports:** `useImport` / `useGoImport` record imports during body emission; `formatImportLines()` deduplicates and sorts them lexicographically before emitting `package main` + `import (...)` at the top.
   - **Unmangled Identifiers & `cb_main()` Wrapper:** Entry module symbols are unmangled, except `main` which is emitted as `cb_main()`. If entry `main` returns `int64`, emit `func main() { if code := cb_main(); code != 0 { os.Exit(int(code)) } }` (and record `"os"` import); if `void`, emit `func main() { cb_main() }`.
-  - **Recursive Struct `dict`/`mailbox` Auto-Initialization:** `structNeedsFieldInit` recursively checks if a struct has any `dict`, `mailbox`, or nested struct field needing init; `emitZeroStruct` emits `TypeName{field: map[K]V{}, mb: make(chan T)}` for zero-init `dim`, zero-arg `TypeName()`, and error-return zero values.
+  - **Recursive Struct `dict` Auto-Initialization:** `structNeedsFieldInit` recursively checks if a struct has any `dict` or nested struct field needing init; `emitZeroStruct` emits `TypeName{field: map[K]V{}}` for zero-init `dim`, zero-arg `TypeName()`, and error-return zero values, and `runtime.go` emits `cbJob[T]` / `cbVoidJob` on demand with eager-argument IIFE wrappers for `start`.
   - **On-Demand Runtime Helpers:** `cbDictGet` and `cbDictContains` are generic Go helpers emitted **only** when `usedDictGet` or `usedDictContains` is `true`.
   - **Column-1 `//line` Directives:** Emitted before each statement when `emitLineDirectives` is true and `pos.File != ""` and `pos.File != "<memory>"` and `pos.Line > 0`: `//line <slashPath>:<line>\n` (must start at column 1 with forward slashes).
   - **`try/catch` Label Guard:** Emits `var _tryErr_N error`, `_ = _tryErr_N`, `tryBody` block, `if false { goto _catch_N }` (prevents Go `label _catch_N defined and not used` when `tryBody` has no fallible calls), `goto _end_try_N`, `_catch_N:`, `catchBody`, `_end_try_N:`.

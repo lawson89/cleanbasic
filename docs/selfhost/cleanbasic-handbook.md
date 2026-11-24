@@ -18,12 +18,12 @@ This handbook is a practical, codebase-grounded reference for writing the self-h
 | `err` | `error` | `nil` | No |
 | `list[T]` | `[]Go(T)` | `nil` (safe for `.len()`, `.push()`, `for-in`) | No |
 | `dict[K, V]` | `map[Go(K)]Go(V)` | `make` / `map[K]V{}` (non-nil, ready for writes) | No |
-| `mailbox[T]` | `chan Go(T)` | `make(chan Go(T))` (unbuffered channel) | No |
-| `type S` (struct) | `S` (or `<mod>__S`) | `S{}` with recursive `dict`/`mailbox` auto-init | Yes, if all fields are comparable and not `= go` |
+| `job[T]` / `job` | `*cbJob[Go(T)]` / `*cbVoidJob` | `nil` (nil-safe `.wait()`) | No |
+| `type S` (struct) | `S` (or `<mod>__S`) | `S{}` with recursive `dict` auto-init | Yes, if all fields are comparable and not `= go` |
 | `enum E` | `int64`-backed `type E int64` | `E(0)` (first declared variant) | Yes |
 
 > **Recursive Struct Field Auto-Initialization:**
-> In `bootstrap/internal/codegen/codegen.go` (`structNeedsFieldInit` / `emitZeroStruct`) and `stmts.go` (`emitZeroOrInitVarDecl`), any zero-initialized CleanBasic struct—whether created via `dim s as S`, `S()` (0-arg constructor), or an error-return zero value—automatically initializes all `dict` fields to `map[K]V{}` and all `mailbox` fields to `make(chan T)`, **recursively** through nested struct fields. You do **not** need manual `s.table = dict[str, int]()` boilerplate for struct-owned dictionaries or mailboxes.
+> In `bootstrap/internal/codegen/codegen.go` (`structNeedsFieldInit` / `emitZeroStruct`) and `stmts.go` (`emitZeroOrInitVarDecl`), any zero-initialized CleanBasic struct—whether created via `dim s as S`, `S()` (0-arg constructor), or an error-return zero value—automatically initializes all `dict` fields to `map[K]V{}`, **recursively** through nested struct fields. You do **not** need manual `s.table = dict[str, int]()` boilerplate for struct-owned dictionaries.
 
 ### 1.2 Indexing & Slicing
 
@@ -67,10 +67,7 @@ Verified against `bootstrap/internal/sema/builtins.go` and `bootstrap/internal/s
 | `bool` | `.toStr()` | `() as str` | `strconv.FormatBool(b)` |
 | `byte` | `.toInt()` | `() as int` | `int64(b)` |
 | `byte` | `.toStr()` | `() as str` | `strconv.FormatInt(int64(b), 10)` |
-| `mailbox[T]` | `.post(val)` | `(val as T)` | `ch <- val` |
-| `mailbox[T]` | `.get()` | `() as T` | `(<-ch)` |
-| `mailbox[T]` | `.close()` | `()` | `close(ch)` |
-| `mailbox[T]` | `.len()` | `() as int` | `int64(len(ch))` |
+| `job[T]` / `job` | `.wait()` | `() as T` / `()` | `j.wait()` |
 | `err` | `.msg` | field `str` | `e.Error()` |
 
 ---
@@ -125,7 +122,7 @@ Verified against `bootstrap/internal/sema/stmts.go` (`checkMutableTarget`):
 
 When evaluating `target.name(args...)` (`bootstrap/internal/sema/exprs.go` `inferMethodOrUFCSCall`):
 1. **Module-qualified call:** If `target` is an imported module alias, resolve `mod.StructName(...)` or `mod.fnName(...)` (requires `public`).
-2. **Built-in method:** Check built-in methods on `target`'s type (`list`, `dict`, `str`, `int`, `float`, `bool`, `byte`, `mailbox`).
+2. **Built-in method:** Check built-in methods on `target`'s type (`list`, `dict`, `str`, `int`, `float`, `bool`, `byte`, `job`).
 3. **Current module UFCS:** Look up `name` in the current module's functions where `params[0].Type.Equals(recvType)`.
 4. **Defining module UFCS:** If `target`'s type was defined in another module `M`, look up `public fn name` in `M` where `params[0].Type.Equals(recvType)`.
 
@@ -150,7 +147,7 @@ If `params[0]` is `byref`, `target` must pass `checkMutableTarget`.
   - Case values must match `target`'s type. **No fallthrough.**
 - **Numeric `for`:** `for i = start to end ... end for` (inclusive `start .. end`, `int` bounds, `i` is immutable).
 - **`for-in`:**
-  - `for item in listOrMailbox` / `for idx, item in listVal`
+  - `for item in listVal` / `for idx, item in listVal`
   - `for ch in strVal` / `for idx, ch in strVal` (yields 1-rune UTF-8 `str` values; `idx` is the UTF-8 byte offset)
   - `for k in dictVal` / `for k, v in dictVal`
   - All loop variables are immutable (`IsConst: true`).
@@ -172,7 +169,7 @@ If `params[0]` is `byref`, `target` must pass `checkMutableTarget`.
   2. A `dim` initializer: `dim n = s.toInt()`
   3. An assignment RHS: `n = s.toInt()`
   4. A `return` value: `return fs.readFile(p)`
-  5. A `start job` target (only if the spawned function is NOT `can error`—`start job` rejects `can error` functions).
+  5. A `start` target (only if the spawned function is NOT `can error`—`start` rejects `can error` functions).
   **Never** nest a `can error` call inside `if`, `while`, `print(...)`, binary operators, or another call's arguments!
 
 ### 3.3 `defer`

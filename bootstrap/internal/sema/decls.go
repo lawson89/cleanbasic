@@ -174,7 +174,7 @@ func (a *analyzer) validateStructFieldTypes() error {
 
 func (a *analyzer) structReaches(t Type, target *StructSymbol, visited map[string]bool) bool {
 	switch t.Kind {
-	case KindList, KindDict, KindMailbox:
+	case KindList, KindDict, KindJob:
 		return false
 	case KindStruct:
 		s := a.lookupStruct(t)
@@ -330,12 +330,13 @@ func (a *analyzer) registerTopLevelVar(name string, pos token.Position, isPublic
 	}
 
 	sym := &VarSymbol{
-		Name:    name,
-		GoName:  a.mod.symbolGoName(name),
-		Type:    finalType,
-		IsConst: isConst,
-		Public:  isPublic,
-		Pos:     pos,
+		Name:     name,
+		GoName:   a.mod.symbolGoName(name),
+		Type:     finalType,
+		IsConst:  isConst,
+		IsGlobal: true,
+		Public:   isPublic,
+		Pos:      pos,
 	}
 	if err := a.mod.GlobalVars.Define(sym); err != nil {
 		return VoidType, err
@@ -374,8 +375,13 @@ func (a *analyzer) resolveType(t Type) (Type, error) {
 
 func (a *analyzer) validateType(t Type) error {
 	switch t.Kind {
-	case KindList, KindMailbox:
+	case KindList:
 		return a.validateType(t.SubTypes[0])
+	case KindJob:
+		if len(t.SubTypes) == 1 && !t.SubTypes[0].IsVoid() {
+			return a.validateType(t.SubTypes[0])
+		}
+		return nil
 	case KindDict:
 		if err := a.validateType(t.SubTypes[0]); err != nil {
 			return err
@@ -392,12 +398,21 @@ func (a *analyzer) resolveTypeNodes(t Type) (Type, error) {
 	switch t.Kind {
 	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindStruct, KindEnum:
 		return t, nil
-	case KindList, KindMailbox:
+	case KindList:
 		elem, err := a.resolveTypeNodes(t.SubTypes[0])
 		if err != nil {
 			return VoidType, err
 		}
-		return Type{Pos: t.Pos, Kind: t.Kind, SubTypes: []Type{elem}}, nil
+		return Type{Pos: t.Pos, Kind: KindList, SubTypes: []Type{elem}}, nil
+	case KindJob:
+		if len(t.SubTypes) == 1 && !t.SubTypes[0].IsVoid() {
+			elem, err := a.resolveTypeNodes(t.SubTypes[0])
+			if err != nil {
+				return VoidType, err
+			}
+			return Type{Pos: t.Pos, Kind: KindJob, SubTypes: []Type{elem}}, nil
+		}
+		return Type{Pos: t.Pos, Kind: KindJob, SubTypes: []Type{VoidType}}, nil
 	case KindDict:
 		kt, err := a.resolveTypeNodes(t.SubTypes[0])
 		if err != nil {

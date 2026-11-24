@@ -20,7 +20,7 @@ func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 	case "str.quote":
 		e.useImport("strconv")
 		return fmt.Sprintf("strconv.Quote(%s)", e.emitExpr(ci.Receiver))
-	case "list.len", "dict.len", "str.len", "mailbox.len":
+	case "list.len", "dict.len", "str.len":
 		return fmt.Sprintf("int64(len(%s))", e.emitExpr(ci.Receiver))
 	case "list.push":
 		recv := e.emitExpr(ci.Receiver)
@@ -75,12 +75,8 @@ func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 		return fmt.Sprintf("byte(%s)", e.emitExpr(ci.Receiver))
 	case "byte.toInt":
 		return fmt.Sprintf("int64(%s)", e.emitExpr(ci.Receiver))
-	case "mailbox.post":
-		return fmt.Sprintf("%s <- %s", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
-	case "mailbox.get":
-		return fmt.Sprintf("(<-%s)", e.emitExpr(ci.Receiver))
-	case "mailbox.close":
-		return fmt.Sprintf("close(%s)", e.emitExpr(ci.Receiver))
+	case "job.wait":
+		return fmt.Sprintf("%s.wait()", e.emitExpr(ci.Receiver))
 	case "int.toStr":
 		e.useImport("strconv")
 		return fmt.Sprintf("strconv.FormatInt(%s, 10)", e.emitExpr(ci.Receiver))
@@ -162,15 +158,7 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("%s{%s}", goT, strings.Join(entries, ", "))
 
 	case *ast.TypedEmptyCtorExpr:
-		t := ex.ExprType()
-		if t.Kind == sema.KindMailbox {
-			elemGo := e.goSemaType(t.Elem())
-			if len(ex.Args) == 1 {
-				return fmt.Sprintf("make(chan %s, %s)", elemGo, e.emitExpr(ex.Args[0]))
-			}
-			return fmt.Sprintf("make(chan %s)", elemGo)
-		}
-		return fmt.Sprintf("%s{}", e.goSemaType(t))
+		return fmt.Sprintf("%s{}", e.goSemaType(ex.ExprType()))
 
 	case *ast.FieldAccessExpr:
 		if ex.GoName != "" {
@@ -198,6 +186,9 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 
 	case *ast.CallExpr:
 		return e.emitCallExprRaw(ex)
+
+	case *ast.StartExpr:
+		return e.emitStartExpr(ex)
 
 	default:
 		return "nil"
@@ -270,4 +261,46 @@ func (e *emitter) emitCallExprRaw(ex *ast.CallExpr) string {
 	}
 
 	return ""
+}
+
+func (e *emitter) emitStartExpr(ex *ast.StartExpr) string {
+	ci := ex.Call.CallInfo
+	if ci == nil || ci.Fn == nil {
+		return "nil"
+	}
+	rawArgs := e.effectiveCallArgs(ex.Call, ci)
+	paramDecls := make([]string, 0, len(rawArgs))
+	argExprs := make([]string, 0, len(rawArgs))
+	callArgs := make([]string, 0, len(rawArgs))
+	for i, argExpr := range rawArgs {
+		paramName := fmt.Sprintf("_a%d", i)
+		paramDecls = append(paramDecls, fmt.Sprintf("%s %s", paramName, e.goSemaType(argExpr.ExprType())))
+		argExprs = append(argExprs, e.emitExpr(argExpr))
+		callArgs = append(callArgs, paramName)
+	}
+
+	var innerCall string
+	if ci.Fn.Name == "print" {
+		e.useImport("fmt")
+		innerCall = fmt.Sprintf("fmt.Println(%s)", callArgs[0])
+	} else {
+		innerCall = fmt.Sprintf("%s(%s)", e.fnGoName(ci.Fn), strings.Join(callArgs, ", "))
+	}
+
+	if ci.Fn.ReturnType.IsVoid() {
+		e.usedVoidJob = true
+		startBody := fmt.Sprintf("cbStartVoidJob(func() { %s })", innerCall)
+		if len(rawArgs) == 0 {
+			return startBody
+		}
+		return fmt.Sprintf("func(%s) *cbVoidJob { return %s }(%s)", strings.Join(paramDecls, ", "), startBody, strings.Join(argExprs, ", "))
+	}
+
+	e.usedJob = true
+	retGo := e.goSemaType(ci.Fn.ReturnType)
+	startBody := fmt.Sprintf("cbStartJob(func() %s { return %s })", retGo, innerCall)
+	if len(rawArgs) == 0 {
+		return startBody
+	}
+	return fmt.Sprintf("func(%s) *cbJob[%s] { return %s }(%s)", strings.Join(paramDecls, ", "), retGo, startBody, strings.Join(argExprs, ", "))
 }

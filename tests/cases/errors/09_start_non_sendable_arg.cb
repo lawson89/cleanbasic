@@ -1,0 +1,16 @@
+// EXPECT_ERR: cannot pass non-sendable argument
+
+type Payload
+    tags as dict[str, int]
+end type
+
+fn worker(p as Payload) as int
+    return p.tags.len()
+end fn
+
+fn main() as int
+    dim p = Payload()
+    dim j = start worker(p)
+    print(j.wait().toStr())
+    return 0
+end fn

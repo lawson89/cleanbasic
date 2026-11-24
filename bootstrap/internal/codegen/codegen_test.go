@@ -562,8 +562,8 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 		"    children as list[TreeNode]",
 		"end type",
 		"",
-		"fn worker(box as mailbox[int]) as int",
-		"    return box.get()",
+		"fn worker(x as int) as int",
+		"    return x + 1",
 		"end fn",
 		"",
 		"fn main()",
@@ -572,10 +572,8 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 		"    dim child = TreeNode()",
 		"    child.val = 20",
 		"    n.children.push(child)",
-		"    dim box = mailbox[int](4)",
-		"    start job worker(box)",
-		"    box.post(42)",
-		"    print(n.children[0].val.toStr())",
+		"    dim j = start worker(41)",
+		"    print(n.children[0].val.toStr() + \":\" + j.wait().toStr())",
 		"end fn",
 	}, "\n")
 	prog, err := sema.AnalyzeSource(src, "cg_test.cb")
@@ -586,19 +584,19 @@ func TestEmitConcurrencyAndValueStructs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	for _, want := range []string{"children []TreeNode", "make(chan int64, int64(4))", "go worker("} {
+	for _, want := range []string{"children []TreeNode", "cbStartJob(func() int64", ".wait()"} {
 		if !strings.Contains(goCode, want) {
 			t.Errorf("expected generated Go code to contain %q, got:\n%s", want, goCode)
 		}
 	}
-	for _, unwanted := range []string{"cbBox", "cbUnbox", "cbEnsureBox", "*TreeNode", "CbJob", "cbStartJob"} {
+	for _, unwanted := range []string{"cbBox", "cbUnbox", "cbEnsureBox", "*TreeNode", "CbJob"} {
 		if strings.Contains(goCode, unwanted) {
 			t.Errorf("did not expect generated Go code to contain %q, got:\n%s", unwanted, goCode)
 		}
 	}
 }
 
-func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
+func TestEmitFallibleStartArg(t *testing.T) {
 	src := strings.Join([]string{
 		"fn getCap() as int can error",
 		"    return 4",
@@ -608,9 +606,8 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 		"end fn",
 		"fn runCase() can error",
 		"    dim cap = getCap()",
-		"    dim box = mailbox[int](cap)",
-		"    start job worker(cap)",
-		"    print(box.len().toStr())",
+		"    dim j = start worker(cap)",
+		"    print(j.wait().toStr())",
 		"end fn",
 		"fn main() as int",
 		"    try",
@@ -629,8 +626,8 @@ func TestEmitFallibleMailboxCapAndStartJobArg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codegen failed: %v", err)
 	}
-	if !strings.Contains(goCode, "make(chan int64, cap") {
-		t.Errorf("expected cap variable in make(chan int64, ...), got:\n%s", goCode)
+	if !strings.Contains(goCode, "}(cap)") {
+		t.Errorf("expected cap variable passed eagerly to start IIFE, got:\n%s", goCode)
 	}
 }
 
@@ -682,9 +679,7 @@ func TestEmitFallibleNumericParsingAndReceiverMethods(t *testing.T) {
 		`        dim n = "42".toInt()`,
 		`        dim f = "3.5".toFloat()`,
 		`        dim xs = ["a", "b"]`,
-		`        dim mb = mailbox[int](2)`,
-		`        mb.post(10)`,
-		`        print(n.toStr() + ":" + f.toStr() + ":" + xs.join("-") + ":" + "hi".quote() + ":" + 65.toChar() + ":" + mb.len().toStr())`,
+		`        print(n.toStr() + ":" + f.toStr() + ":" + xs.join("-") + ":" + "hi".quote() + ":" + 65.toChar() + ":" + xs.len().toStr())`,
 		"    catch e",
 		`        print("unexpected:" + e.msg)`,
 		"    end try",
@@ -715,7 +710,7 @@ func TestEmitFallibleNumericParsingAndReceiverMethods(t *testing.T) {
 		t.Errorf("did not expect cbStrToInt helper in generated Go:\n%s", goCode)
 	}
 	got := runGeneratedGo(t, goCode)
-	want := "42:3.5:a-b:\"hi\":A:1\nbadInt-caught\nbadFloat-caught"
+	want := "42:3.5:a-b:\"hi\":A:2\nbadInt-caught\nbadFloat-caught"
 	if got != want {
 		t.Errorf("output = %q, want %q\ngo:\n%s", got, want, goCode)
 	}
@@ -736,9 +731,8 @@ func TestEmitGoAlignedSimplifications(t *testing.T) {
 		"    end for",
 		"end fn",
 		"",
-		"fn jobMutator(byref n as int, done as mailbox[bool])",
-		"    n = n + 32",
-		"    done.post(true)",
+		"fn workerAdd(n as int) as int",
+		"    return n + 32",
 		"end fn",
 		"",
 		"fn main() as int",
@@ -747,10 +741,8 @@ func TestEmitGoAlignedSimplifications(t *testing.T) {
 		`    localDict["k"] = 7`,
 		`    gScores["a"] = 3`,
 		"    shadowAndBump(gTotal)",
-		"    dim done as mailbox[bool]",
-		"    dim sharedVal = 10",
-		"    start job jobMutator(sharedVal, done)",
-		"    done.get()",
+		"    dim j = start workerAdd(10)",
+		"    dim sharedVal = j.wait()",
 		`    print(gTotal.toStr() + ":" + gScores["a"].toStr() + ":" + localZero.toStr() + ":" + localDict["k"].toStr() + ":" + sharedVal.toStr())`,
 		"    return 0",
 		"end fn",
@@ -834,12 +826,11 @@ type Inner
 end type
 type Outer
     counts as dict[str, int]
-    ch as mailbox[int]
     inner as Inner
     plain as Plain
 end type
-fn sendVal(ch as mailbox[int], v as int)
-    ch.post(v)
+fn makeVal(v as int) as int
+    return v
 end fn
 fn makeOuter(fail as bool) as Outer can error
     if fail
@@ -855,8 +846,8 @@ fn main() as int
     dim o1 as Outer
     o1.counts["a"] = 42
     o1.inner.meta["b"] = 7
-    start job sendVal(o1.ch, 99)
-    dim v = o1.ch.get()
+    dim j = start makeVal(99)
+    dim v = j.wait()
     dim o2 = Outer()
     o2.counts["c"] = 5
     dim errHit = false
@@ -880,11 +871,71 @@ end fn`
 	if !strings.Contains(goCode, "var p Plain\n") || !strings.Contains(goCode, "var p2 Plain = Plain{}") {
 		t.Errorf("expected plain structs to keep zero-value emission without composite init:\n%s", goCode)
 	}
-	if !strings.Contains(goCode, "return Outer{counts: map[string]int64{}, ch: make(chan int64), inner: Inner{meta: map[string]int64{}}}") {
+	if !strings.Contains(goCode, "return Outer{counts: map[string]int64{}, inner: Inner{meta: map[string]int64{}}}") {
 		t.Errorf("expected error return path to use goSemaZeroValue composite struct init:\n%s", goCode)
 	}
 	got := runGeneratedGo(t, goCode)
 	want := "0:0:42:7:99:5:true"
+	if got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitGoJobRaceSafetyAndRuntime(t *testing.T) {
+	src := strings.Join([]string{
+		"fn scale(x as int) as list[int]",
+		"    return [x, x * 2]",
+		"end fn",
+		"",
+		"fn noop()",
+		"end fn",
+		"",
+		"fn main() as int",
+		"    dim jobs = list[job[list[int]]]()",
+		"    for i = 1 to 4",
+		"        jobs.push(start scale(i))",
+		"    end for",
+		"    dim x = 10",
+		"    dim j = start scale(x)",
+		"    x = 999",
+		"    dim sum = 0",
+		"    for item in jobs",
+		"        dim res = item.wait()",
+		"        sum = sum + res[0] + res[1]",
+		"    end for",
+		"    dim single = j.wait()",
+		"    dim singleAgain = j.wait()",
+		"    dim nilJob as job[int]",
+		"    dim vj = start noop()",
+		"    vj.wait()",
+		"    print(sum.toStr() + \":\" + single[0].toStr() + \":\" + singleAgain[1].toStr() + \":\" + nilJob.wait().toStr())",
+		"    return 0",
+		"end fn",
+	}, "\n")
+
+	prog, err := sema.AnalyzeSource(src, "job_race.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	mainPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(mainPath, []byte(goCode), 0o600); err != nil {
+		t.Fatalf("write temp main.go: %v", err)
+	}
+	cmd := exec.Command("go", "run", "-race", mainPath)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run -race failed: %v\nstderr:\n%s\ngo:\n%s", err, errBuf.String(), goCode)
+	}
+	got := strings.TrimSpace(outBuf.String())
+	want := "30:10:20:0"
 	if got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}

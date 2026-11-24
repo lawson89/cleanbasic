@@ -71,7 +71,8 @@ const (
 	ERR     Kind = "err"
 	LIST    Kind = "list"
 	DICT    Kind = "dict"
-	MAILBOX Kind = "mailbox"
+	JOB     Kind = "job"
+	START   Kind = "start"
 
 	// Helper / transitional single words used before two-word coalescing
 	END    Kind = "end"
@@ -93,7 +94,6 @@ const (
 	SELECT_CASE Kind = "select case"
 	CASE_ELSE   Kind = "case else"
 	CAN_ERROR   Kind = "can error"
-	START_JOB   Kind = "start job"
 
 	// Verbatim Go block token
 	GO_BLOCK Kind = "GO_BLOCK"
@@ -166,7 +166,8 @@ var singleWordKeywords = map[string]Kind{
 	"err":      ERR,
 	"list":     LIST,
 	"dict":     DICT,
-	"mailbox":  MAILBOX,
+	"job":      JOB,
+	"start":    START,
 	"end":      END,
 	"select":   SELECT,
 	"can":      CAN,
@@ -192,7 +193,6 @@ var twoWordKeywords = map[twoWordKey]Kind{
 	{first: "select", second: "case"}: SELECT_CASE,
 	{first: "case", second: "else"}:   CASE_ELSE,
 	{first: "can", second: "error"}:   CAN_ERROR,
-	{first: "start", second: "job"}:   START_JOB,
 }
 
 // LookupIdent returns the keyword Kind for word, or IDENT if it is an ordinary identifier.

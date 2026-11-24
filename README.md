@@ -8,7 +8,7 @@ A statically typed, readable BASIC dialect that transpiles to clean, single-file
 
 - **Readable BASIC syntax, Go performance:** Familiar block-delimited syntax (`fn ... end fn`, `if ... end if`, `type ... end type`) lowered 1:1 to idiomatic Go and compiled to native binaries.
 - **Zero-dependency toolchain:** Both the bootstrap compiler and emitted Go code rely strictly on the Go standard library.
-- **Explicit error handling & message-passing concurrency:** `can error` / `try ... catch` error propagation, `defer`, typed `mailbox[T]` channels, and `start job` goroutines.
+- **Explicit error handling & race-free concurrency:** `can error` / `try ... catch` error propagation, `defer`, and value-isolated `start` / `job[T]` / `.wait()` tasks (zero buffer sizing, race-free by construction).
 - **Direct Go interop:** Import any Go package with `go import "pkg" [as alias]` or embed Go bindings cleanly when needed.
 
 ## Example
@@ -26,17 +26,16 @@ fn label(t as Task) as str
     return "[ ] " + t.name
 end fn
 
-fn worker(id as int, out as mailbox[str])
+fn worker(id as int) as str
     dim t = Task("compile module " + id.toStr(), true)
-    out.post(t.label())
+    return t.label()
 end fn
 
 fn main()
-    dim inbox = mailbox[str](2)
-    start job worker(1, inbox)
-    start job worker(2, inbox)
-    print(inbox.get())
-    print(inbox.get())
+    dim j1 = start worker(1)
+    dim j2 = start worker(2)
+    print(j1.wait())
+    print(j2.wait())
 end fn
 ```
 

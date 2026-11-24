@@ -113,8 +113,6 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 		return a.analyzeTryCatchStmt(s, scope)
 	case *ast.DeferStmt:
 		return a.analyzeDeferStmt(s, scope)
-	case *ast.StartJobStmt:
-		return a.analyzeStartJobStmt(s, scope)
 	case *ast.ReturnStmt:
 		return a.analyzeReturnStmt(s, scope)
 	case *ast.BreakStmt:
@@ -130,24 +128,6 @@ func (a *analyzer) analyzeStmt(stmt ast.Statement, scope *Scope) error {
 	default:
 		return newSemaError(stmt.StmtPos(), "unsupported statement")
 	}
-}
-
-func (a *analyzer) analyzeStartJobStmt(s *ast.StartJobStmt, scope *Scope) error {
-	prevStartJobCall := a.startJobCall
-	a.startJobCall = s.Call
-	_, err := a.inferExpr(s.Call, scope)
-	a.startJobCall = prevStartJobCall
-	if err != nil {
-		return err
-	}
-	ci := s.Call.CallInfo
-	if ci == nil || (ci.Kind != CallFunc && ci.Kind != CallUFCS) || ci.Fn == nil {
-		return newSemaError(s.Pos, "start job target must be a user or module function call")
-	}
-	if ci.Fn.CanError {
-		return newSemaError(s.Pos, "cannot use 'start job' with fallible function %q (handle errors inside the worker function)", ci.Fn.Name)
-	}
-	return nil
 }
 
 func (a *analyzer) inferRootExpr(expr ast.Expr, scope *Scope) (Type, error) {
@@ -246,6 +226,9 @@ func (a *analyzer) analyzeAssignment(s *ast.Assignment, scope *Scope) error {
 		}
 		if sym.IsConst {
 			return newSemaError(s.Pos, "cannot reassign constant %q (declared at %s)", target.Name, sym.Pos.String())
+		}
+		if a.currentFn != nil && sym.IsGlobal {
+			a.recordGlobalAccess(a.currentFn, target.Pos, target.Name)
 		}
 		target.SetExprType(sym.Type)
 		if sym.GoName != "" {
@@ -395,13 +378,8 @@ func (a *analyzer) analyzeForStmt(s *ast.ForStmt, scope *Scope) error {
 			} else {
 				varTypes = []Type{iterType.Key(), iterType.Val()}
 			}
-		case KindMailbox:
-			if len(s.Vars) != 1 {
-				return newSemaError(s.Pos, "for-in loop over mailbox supports exactly 1 loop variable")
-			}
-			varTypes = []Type{iterType.Elem()}
 		default:
-			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list, dict, str, or mailbox, got %s", iterType.String())
+			return newSemaError(s.Iterable.ExprPos(), "for-in loop requires list, dict, or str, got %s", iterType.String())
 		}
 
 		for i, name := range s.Vars {

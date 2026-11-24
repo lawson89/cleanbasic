@@ -78,6 +78,8 @@ type emitter struct {
 	goImports          map[string]string
 	usedDictGet        bool
 	usedDictContains   bool
+	usedJob            bool
+	usedVoidJob        bool
 	currentFn          *ast.FnDecl
 	currentTryID       int
 	tryCounter         int
@@ -332,11 +334,13 @@ func (e *emitter) goSemaType(t sema.Type) string {
 			return fmt.Sprintf("map[%s]%s", e.goSemaType(t.SubTypes[0]), e.goSemaType(t.SubTypes[1]))
 		}
 		return "map[any]any"
-	case sema.KindMailbox:
-		if len(t.SubTypes) == 1 {
-			return "chan " + e.goSemaType(t.SubTypes[0])
+	case sema.KindJob:
+		if t.Elem().IsVoid() {
+			e.usedVoidJob = true
+			return "*cbVoidJob"
 		}
-		return "chan any"
+		e.usedJob = true
+		return fmt.Sprintf("*cbJob[%s]", e.goSemaType(t.Elem()))
 	default:
 		return "any"
 	}
@@ -360,7 +364,7 @@ func (e *emitter) structNeedsFieldInit(s *sema.StructSymbol) bool {
 	}
 	for _, f := range s.Fields {
 		switch f.Type.Kind {
-		case sema.KindDict, sema.KindMailbox:
+		case sema.KindDict:
 			return true
 		case sema.KindStruct:
 			if e.structNeedsFieldInit(e.lookupStruct(f.Type)) {
@@ -385,8 +389,6 @@ func (e *emitter) emitZeroStruct(t sema.Type) string {
 		switch f.Type.Kind {
 		case sema.KindDict:
 			inits = append(inits, fmt.Sprintf("%s: %s{}", f.Name, e.goSemaType(f.Type)))
-		case sema.KindMailbox:
-			inits = append(inits, fmt.Sprintf("%s: make(%s)", f.Name, e.goSemaType(f.Type)))
 		case sema.KindStruct:
 			if e.structNeedsFieldInit(e.lookupStruct(f.Type)) {
 				inits = append(inits, fmt.Sprintf("%s: %s", f.Name, e.emitZeroStruct(f.Type)))
@@ -410,7 +412,7 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 		return "byte(0)"
 	case sema.KindErr:
 		return "nil"
-	case sema.KindList, sema.KindDict, sema.KindMailbox:
+	case sema.KindList, sema.KindDict, sema.KindJob:
 		return "nil"
 	case sema.KindEnum:
 		return e.goSemaType(t) + "(0)"

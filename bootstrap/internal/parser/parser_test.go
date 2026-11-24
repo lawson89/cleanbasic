@@ -224,41 +224,58 @@ end fn
 	}
 }
 
-func TestParseMailboxAndStartJob(t *testing.T) {
+func TestParseJobAndStartExpr(t *testing.T) {
 	src := strings.Join([]string{
-		"fn worker(box as mailbox[int]) as int",
-		"    return 1",
+		"fn worker(x as int) as int",
+		"    return x + 1",
+		"end fn",
+		"",
+		"fn notify()",
 		"end fn",
 		"",
 		"fn main()",
-		"    dim box1 = mailbox[int]()",
-		"    dim box2 = mailbox[str](16)",
-		"    start job worker(box1)",
+		"    dim j = start worker(10)",
+		"    dim jobs = list[job[int]]()",
+		"    jobs.push(start worker(20))",
+		"    dim vj as job",
+		"    vj = start notify()",
+		"    start notify()",
 		"end fn",
 	}, "\n")
 	prog, err := Parse(src, "concurrency.cb")
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if len(prog.Decls) != 2 {
-		t.Fatalf("got %d decls, want 2", len(prog.Decls))
+	if len(prog.Decls) != 3 {
+		t.Fatalf("got %d decls, want 3", len(prog.Decls))
 	}
-	mainFn, ok := prog.Decls[1].(*ast.FnDecl)
+	mainFn, ok := prog.Decls[2].(*ast.FnDecl)
 	if !ok {
-		t.Fatalf("expected *ast.FnDecl, got %T", prog.Decls[1])
+		t.Fatalf("expected *ast.FnDecl, got %T", prog.Decls[2])
 	}
-	if len(mainFn.Body) != 3 {
-		t.Fatalf("got %d statements in main, want 3", len(mainFn.Body))
+	if len(mainFn.Body) != 6 {
+		t.Fatalf("got %d statements in main, want 6", len(mainFn.Body))
 	}
-	if _, ok := mainFn.Body[2].(*ast.StartJobStmt); !ok {
-		t.Fatalf("expected *ast.StartJobStmt, got %T", mainFn.Body[2])
+	vd, ok := mainFn.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected *ast.VarDecl, got %T", mainFn.Body[0])
+	}
+	if _, ok := vd.Value.(*ast.StartExpr); !ok {
+		t.Fatalf("expected *ast.StartExpr, got %T", vd.Value)
+	}
+	es, ok := mainFn.Body[5].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected *ast.ExprStmt, got %T", mainFn.Body[5])
+	}
+	if _, ok := es.Expr.(*ast.StartExpr); !ok {
+		t.Fatalf("expected *ast.StartExpr in standalone statement, got %T", es.Expr)
 	}
 
 	for _, bad := range []string{
-		"fn main()\n    dim j = start job worker(box1)\nend fn\n",
-		"fn main()\n    start job 42\nend fn\n",
+		"fn main()\n    dim x = job\nend fn\n",
+		"fn main()\n    dim j = start 42\nend fn\n",
 	} {
-		if _, err := Parse(bad, "bad_start_job.cb"); err == nil {
+		if _, err := Parse(bad, "bad_start.cb"); err == nil {
 			t.Errorf("expected parse error for %q, got nil", bad)
 		}
 	}
@@ -309,7 +326,7 @@ end fn
 `,
 		"fn main()\n    dim x = list\nend fn\n",
 		"fn main()\n    dim x = dict\nend fn\n",
-		"fn main()\n    dim x = mailbox\nend fn\n",
+		"fn main()\n    dim x = job\nend fn\n",
 		"fn main()\n    dim x = obj.str\nend fn\n",
 	}
 	for _, src := range badSources {
@@ -327,7 +344,7 @@ func TestParseTopLevelAndZeroInitVarDecl(t *testing.T) {
 		"public dim gCache as dict[str, int]",
 		"fn main() as int",
 		"    dim x as int",
-		"    dim ch as mailbox[int]",
+		"    dim j as job[int]",
 		"    return x",
 		"end fn",
 	}, "\n")
@@ -396,8 +413,8 @@ func TestParseRejectsGoReservedWords(t *testing.T) {
 		})
 	}
 
-	validSrc := "fn main()\n    dim s = \"abc\"\n    dim n = s.len()\n    dim box as mailbox[int]\n    box.close()\nend fn\n"
+	validSrc := "fn main()\n    dim s = \"abc\"\n    dim n = s.len()\n    dim j as job[int]\n    dim res = j.wait()\nend fn\n"
 	if _, err := Parse(validSrc, "valid_builtins.cb"); err != nil {
-		t.Fatalf("expected built-in .len() and .close() methods to parse cleanly, got: %v", err)
+		t.Fatalf("expected built-in .len() and .wait() methods to parse cleanly, got: %v", err)
 	}
 }

@@ -20,7 +20,7 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 
 * **Procedural Purity & Value Semantics:** CleanBasic strictly bans classes, inheritance, exceptions, and raw user pointers. Structs and primitives use value semantics by default, explicit `byref` pointers (`*T`) for mutation, and local/prelude Unified Function Call Syntax (UFCS).
 
-* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are rejected by the parser; empty containers and channels always use typed constructors (`list[T]()`, `dict[K, V]()`, and `mailbox[T]()`).
+* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are rejected by the parser; empty containers always use typed constructors (`list[T]()` and `dict[K, V]()`).
 
 * **English-Over-Symbols:** C-style logical operators (`&&`, `||`, `!`) are forbidden at the lexer level and replaced with `and`, `or`, and `not`.
 
@@ -54,7 +54,7 @@ Param           ::= ["byref"] Identifier "as" Type
 
 Statement       ::= VarDecl | Assignment | ExprStmt
                   | IfStmt | ForStmt | WhileStmt | SelectStmt
-                  | TryCatchStmt | DeferStmt | StartJobStmt | ReturnStmt | BreakStmt | ContinueStmt
+                  | TryCatchStmt | DeferStmt | ReturnStmt | BreakStmt | ContinueStmt
 
 VarDecl         ::= "dim" Identifier (["as" Type] "=" Expr | "as" Type) NEWLINE
 Assignment      ::= Expr "=" Expr NEWLINE
@@ -85,7 +85,6 @@ SelectStmt      ::= "select case" Expr NEWLINE
                     "end select" NEWLINE
 ExprList        ::= Expr ("," Expr)*
 
-StartJobStmt    ::= "start job" CallExpr NEWLINE
 ReturnStmt      ::= "return" [Expr] NEWLINE
 BreakStmt       ::= "break" NEWLINE
 ContinueStmt    ::= "continue" NEWLINE
@@ -105,9 +104,10 @@ PostfixExpr     ::= PrimaryExpr
                     | "[" [Expr] ":" [Expr] "]"
                     | "(" [CallArgList] ")" )*
 
-PrimaryExpr     ::= Literal | QualifiedIdent | TypedEmptyCtor | "(" Expr ")"
+PrimaryExpr     ::= Literal | QualifiedIdent | StartExpr | TypedEmptyCtor | "(" Expr ")"
+StartExpr       ::= "start" PostfixExpr   (* PostfixExpr must be a CallExpr *)
 
-TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")" | "mailbox" "[" Type "]" "(" [Expr] ")"
+TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
 CallArgList     ::= Expr ("," Expr)* [","]
 
 Literal         ::= NumberLiteral | StringLiteral | ByteLiteral
@@ -120,7 +120,7 @@ DictEntry       ::= Expr ":" Expr
 Type            ::= "int" | "float" | "str" | "bool" | "byte" | "err"
                   | "list" "[" Type "]"
                   | "dict" "[" Type "," Type "]"
-                  | "mailbox" "[" Type "]"
+                  | "job" ["[" Type "]"]
                   | QualifiedIdent
 
 IdentList       ::= Identifier ("," Identifier)*
@@ -140,7 +140,7 @@ Every `.cb` file is implicitly a module. Everything is private by default; the `
 
 * **Go Identifier Mapping & Native Go Interop:** Entry-module declarations and struct fields emit 1:1 with their exact CleanBasic names (Go keywords and reserved Go identifiers are rejected by the parser); imported module declarations emit with module-qualified names (`<sanitizedModuleId>__<name>`, e.g., `entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting native `error` returns for `can error` bindings).
 
-* **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `float`, `bool`, `byte`, `list`, `dict`, `mailbox`, `err`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
+* **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `float`, `bool`, `byte`, `list`, `dict`, `job`, `err`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
 
 **player.cb (The Library Module)**
 
@@ -164,9 +164,9 @@ end fn
 
 CleanBasic enforces strict bottom-up type inference:
 
-* **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim ch as mailbox[int]`), zero-initializing primitives/lists, initializing `dict` to an empty writable map and `mailbox` to an unbuffered channel, and recursively initializing `dict` and `mailbox` fields on zero-initialized structs (`dim s as MyStruct` and 0-arg `MyStruct()`). Top-level `[public] dim` declarations are also supported for module-level mutable state.
+* **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim j as job[int]`), zero-initializing primitives/lists/jobs, initializing `dict` to an empty writable map, and recursively initializing `dict` fields on zero-initialized structs (`dim s as MyStruct` and 0-arg `MyStruct()`). Top-level `[public] dim` declarations are also supported for module-level mutable state.
 
-* **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers and channels always use typed constructors (`dim scores = dict[str, int]()`, `dim items = list[str]()`, `dim ch = mailbox[int]()`).
+* **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers always use typed constructors (`dim scores = dict[str, int]()` and `dim items = list[str]()`).
 
 **main.cb (The Executable Module)**
 
@@ -313,23 +313,27 @@ end fn
 
 ```
 
-### 6. Structured Concurrency (`mailbox[T]`, `start job`)
+### 6. Race-Free Concurrency (`start`, `job[T]`, `.wait()`)
 
-CleanBasic provides message-passing concurrency built around typed mailboxes (`mailbox[T]`) and goroutine-backed `start job` statements (lowered 1:1 to Go channels and goroutines):
+CleanBasic provides panic-free, data-race-free concurrency built around `start` expressions, typed `job[T]` (and void `job`) handles, and `.wait()`:
 
-* **Typed Mailboxes (`mailbox[T]`):** Lowered 1:1 to Go `chan T`. Created with `mailbox[T]()` (`make(chan T)`, unbuffered) or `mailbox[T](cap)` (`make(chan T, cap)`).
-  * `box.post(msg as T)` — sends `msg` (`box <- msg`, infallible).
-  * `box.get() as T` — blocking receive (`(<-box)`, infallible).
-  * `box.close()` (`close(box)`), `box.len() as int` (`int64(len(box))`), and `for msg in box ... end for` (`for msg := range box`).
-* **Background Jobs (`start job` Statement):**
-  * `start job fnCall(...)` is a standalone statement that lowers 1:1 to `go fnCall(...)`.
-  * Target must be a user or module function/UFCS call; `can error` functions are rejected at compile time, while `byref` parameters are allowed (`&arg` is passed and Go's escape analysis promotes the variable as needed). Results and completion signals should be communicated via `mailbox[T]`; callers that share mutable state via `byref`, `dict`, `list`, or top-level `dim` variables must coordinate access just as in Go.
+* **Starting Background Jobs (`start` Expression):**
+  * `start fnCall(...)` launches `fnCall(...)` in a background goroutine and immediately returns a handle of type `job[T]` (if `fnCall` returns `T`) or `job` (if `fnCall` returns `void`).
+  * `start` is a primary expression, so it can be assigned (`dim j = start work(x)`), appended to a list (`jobs.push(start work(i))`), or used as a standalone statement (`start notify()`).
+  * **Eager Argument Capture:** All arguments (including a UFCS receiver) are evaluated and copied on the caller goroutine *before* the worker goroutine starts, preventing loop-variable and post-`start` mutation races.
+* **Waiting for Results (`.wait()`):**
+  * `j.wait()` blocks until the job completes and returns `T` (or `void` for `job`).
+  * `.wait()` is infallible, idempotent (safe to call multiple times), and nil-safe on zero-initialized `dim j as job[T]` (returns the zero value of `T` without panicking).
+* **Compile-Time Race-Free Isolation Rules:**
+  * **Value-Only Arguments:** Every argument passed to `start` (including UFCS receivers) must be sendable: primitives (`int`, `float`, `str`, `bool`, `byte`), `err`, `enum`, and non-`go` `type` structs whose fields are all recursively sendable. Passing `list[T]`, `dict[K, V]`, `job[T]`, opaque `= go` types, or structs containing them is rejected at compile time.
+  * **Returning `list` and `dict` is Safe:** Because a `job[T]` finishes before `.wait()` returns and `job[T]` itself is non-sendable, worker functions may safely construct and return `list[T]`, `dict[K, V]`, or structs containing them.
+  * **No `byref`, `can error`, or Mutable Globals:** `start` rejects functions with `byref` parameters, `can error` functions (workers handle errors internally with `try/catch`), and any function that directly or transitively reads or writes a mutable module-level `dim` variable (top-level `const` remains allowed).
 
 ### 7. Pure Value Structs & Recursive Trees (`list[T]`)
 
 User-defined `type` structs map 1:1 to native Go value structs with zero hidden pointer indirection:
 
-* Structs are always passed and assigned by value, guaranteeing value-copy isolation and zero-nil safety (with `dict` and `mailbox` fields recursively auto-initialized on zero-initialized `dim s as S` and `S()`).
+* Structs are always passed and assigned by value, guaranteeing value-copy isolation and zero-nil safety (with `dict` fields recursively auto-initialized on zero-initialized `dim s as S` and `S()`).
 * Direct or mutually recursive value cycles (e.g. `Node -> Node` or `Expr <-> Block`) are rejected at compile time with a clear diagnostic.
 * Recursive trees, ASTs, and linked structures model child nodes using `list[T]` (or `dict[K, T]`), which provide fixed-size reference headers in Go.
 * Structs containing `list` or `dict` fields cannot be compared directly with raw `==` or `!=`.

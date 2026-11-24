@@ -539,23 +539,33 @@ func (p *Parser) parseType() (ast.Type, error) {
 			Name: tok.Lexeme,
 		}, nil
 
-	case token.LIST, token.MAILBOX:
+	case token.LIST:
 		p.advance()
-		if _, err := p.expect(token.LBRACKET, "after '"+tok.Lexeme+"'"); err != nil {
+		if _, err := p.expect(token.LBRACKET, "after 'list'"); err != nil {
 			return ast.Type{}, err
 		}
 		elemType, err := p.parseType()
 		if err != nil {
 			return ast.Type{}, err
 		}
-		if _, err := p.expect(token.RBRACKET, "after "+tok.Lexeme+" element type"); err != nil {
+		if _, err := p.expect(token.RBRACKET, "after list element type"); err != nil {
 			return ast.Type{}, err
 		}
-		kind := ast.KindList
-		if tok.Kind == token.MAILBOX {
-			kind = ast.KindMailbox
+		return ast.Type{Pos: tok.Pos, Kind: ast.KindList, SubTypes: []ast.Type{elemType}}, nil
+
+	case token.JOB:
+		p.advance()
+		if p.match(token.LBRACKET) {
+			elemType, err := p.parseType()
+			if err != nil {
+				return ast.Type{}, err
+			}
+			if _, err := p.expect(token.RBRACKET, "after job result type"); err != nil {
+				return ast.Type{}, err
+			}
+			return ast.Type{Pos: tok.Pos, Kind: ast.KindJob, SubTypes: []ast.Type{elemType}}, nil
 		}
-		return ast.Type{Pos: tok.Pos, Kind: kind, SubTypes: []ast.Type{elemType}}, nil
+		return ast.Type{Pos: tok.Pos, Kind: ast.KindJob, SubTypes: []ast.Type{ast.VoidType}}, nil
 
 	case token.DICT:
 		p.advance()
@@ -629,8 +639,6 @@ func (p *Parser) parseStatement() (ast.Statement, error) {
 		return p.parseTryCatchStmt()
 	case token.DEFER:
 		return p.parseDeferStmt()
-	case token.START_JOB:
-		return p.parseStartJobStmt()
 	case token.RETURN:
 		return p.parseReturnStmt()
 	case token.BREAK:
@@ -1008,7 +1016,7 @@ func (p *Parser) parseDeferStmt() (*ast.DeferStmt, error) {
 }
 
 // ReturnStmt ::= "return" [Expr] NEWLINE
-func (p *Parser) parseStartJobStmt() (*ast.StartJobStmt, error) {
+func (p *Parser) parseStartExpr() (ast.Expr, error) {
 	startTok := p.advance()
 	operand, err := p.parsePostfixExpr()
 	if err != nil {
@@ -1016,12 +1024,9 @@ func (p *Parser) parseStartJobStmt() (*ast.StartJobStmt, error) {
 	}
 	call, ok := operand.(*ast.CallExpr)
 	if !ok {
-		return nil, errAt(startTok.Pos, "expected function call after 'start job'")
+		return nil, errAt(startTok.Pos, "expected function call after 'start'")
 	}
-	if err := p.expectNewline("start job statement"); err != nil {
-		return nil, err
-	}
-	return &ast.StartJobStmt{Pos: startTok.Pos, Call: call}, nil
+	return &ast.StartExpr{Pos: startTok.Pos, Call: call}, nil
 }
 
 func (p *Parser) parseReturnStmt() (*ast.ReturnStmt, error) {
@@ -1246,8 +1251,11 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 		p.advance()
 		return &ast.IdentExpr{Pos: tok.Pos, Name: tok.Lexeme}, nil
 
-	case token.LIST, token.DICT, token.MAILBOX:
+	case token.LIST, token.DICT:
 		return p.parseTypedEmptyCtor()
+
+	case token.START:
+		return p.parseStartExpr()
 
 	case token.LPAREN:
 		p.advance()
@@ -1271,7 +1279,7 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 	}
 }
 
-// TypedEmptyCtor ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]" | "mailbox" "[" Type "]") "(" [Expr] ")"
+// TypedEmptyCtor ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
 func (p *Parser) parseTypedEmptyCtor() (ast.Expr, error) {
 	startPos := p.cur().Pos
 	ctorType, err := p.parseType()
@@ -1281,18 +1289,10 @@ func (p *Parser) parseTypedEmptyCtor() (ast.Expr, error) {
 	if _, err := p.expect(token.LPAREN, "after typed container constructor"); err != nil {
 		return nil, err
 	}
-	var args []ast.Expr
-	if ctorType.Kind == ast.KindMailbox && p.cur().Kind != token.RPAREN {
-		capExpr, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		args = []ast.Expr{capExpr}
-	}
 	if _, err := p.expect(token.RPAREN, "to close typed container constructor '()'"); err != nil {
 		return nil, err
 	}
-	return &ast.TypedEmptyCtorExpr{Pos: startPos, Type: ctorType, Args: args}, nil
+	return &ast.TypedEmptyCtorExpr{Pos: startPos, Type: ctorType}, nil
 }
 
 // ListLiteral ::= "[" Expr ("," Expr)* [","] "]"

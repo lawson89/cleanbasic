@@ -1,0 +1,12 @@
+// EXPECT_ERR: is 'byref'
+
+fn mutator(byref x as int)
+    x = x + 1
+end fn
+
+fn main() as int
+    dim v = 10
+    dim j = start mutator(v)
+    j.wait()
+    return 0
+end fn

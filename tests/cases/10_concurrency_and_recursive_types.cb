@@ -2,11 +2,13 @@
 // EXPECT_OUT: isolation orig=10 copy=10
 // EXPECT_OUT: nested=99 byref=55
 // EXPECT_OUT: mutual=77
-// EXPECT_OUT: count=2 val=10
 // EXPECT_OUT: pool sum=60
-// EXPECT_OUT: drain=100,200,300
-// EXPECT_OUT: done=true
-// EXPECT_OUT: byref_job=42
+// EXPECT_OUT: list_ret=3:60
+// EXPECT_OUT: dict_ret=1:42
+// EXPECT_OUT: eager=100
+// EXPECT_OUT: zero_wait=0
+// EXPECT_OUT: repeat=42:42
+// EXPECT_OUT: void_done=true
 
 type TreeNode
     val as int
@@ -24,24 +26,38 @@ type Block
     exprs as list[Expr]
 end type
 
+type BoxedPair
+    a as int
+    b as int
+end type
+
 fn bumpVal(byref n as TreeNode, v as int)
     n.val = v
 end fn
 
-fn worker(id as int, tasks as mailbox[int], results as mailbox[int], done as mailbox[bool])
-    for item in tasks
-        results.post(item * 2)
-    end for
-    done.post(true)
+fn doubleVal(x as int) as int
+    return x * 2
 end fn
 
-fn quickWorker(x as int, outBox as mailbox[int])
-    outBox.post(x + 1)
+fn makeScaledList(base as int) as list[int]
+    dim out = list[int]()
+    out.push(base * 1)
+    out.push(base * 2)
+    out.push(base * 3)
+    return out
 end fn
 
-fn byrefJobWorker(byref n as TreeNode, done as mailbox[bool])
-    n.val = 42
-    done.post(true)
+fn buildSummary(p as BoxedPair) as dict[str, int]
+    dim d = dict[str, int]()
+    d["sum"] = p.a + p.b
+    return d
+end fn
+
+fn addOne(x as int) as int
+    return x + 1
+end fn
+
+fn touchVoid()
 end fn
 
 fn main() as int
@@ -74,60 +90,47 @@ fn main() as int
     e.blocks.push(blk)
     print("mutual=" + e.blocks[0].exprs[0].tag.toStr())
 
-    // 3. Buffered mailbox post, count, get, close
-    dim mb = mailbox[int](2)
-    mb.post(10)
-    mb.post(20)
-    print("count=" + mb.len().toStr() + " val=" + mb.get().toStr())
-    mb.get()
-    mb.close()
-
-    // 4. Worker pool with mailbox[T] and start job statement
-    dim tasks = mailbox[int]()
-    dim results = mailbox[int](8)
-    dim done = mailbox[bool](2)
-    for w = 1 to 2
-        start job worker(w, tasks, results, done)
-    end for
-
-    tasks.post(5)
-    tasks.post(10)
-    tasks.post(15)
-    tasks.close()
-
-    for w = 1 to 2
-        done.get()
-    end for
-    results.close()
-
+    // 3. Fan-out / fan-in with list[job[int]]
+    dim jobs = list[job[int]]()
+    jobs.push(start doubleVal(5))
+    jobs.push(start doubleVal(10))
+    jobs.push(start doubleVal(15))
     dim sum = 0
-    for r in results
-        sum = sum + r
+    for j in jobs
+        sum = sum + j.wait()
     end for
     print("pool sum=" + sum.toStr())
 
-    // 5. Mailbox for-in drain & single start job communication
-    dim q = mailbox[int](4)
-    q.post(100)
-    q.post(200)
-    q.post(300)
-    q.close()
-    dim parts = list[str]()
-    for msg in q
-        parts.push(msg.toStr())
-    end for
-    print("drain=" + parts.join(","))
+    // 4. Returning list[T] and dict[K, V] from job[T]
+    dim listJob = start makeScaledList(10)
+    dim items = listJob.wait()
+    print("list_ret=" + items.len().toStr() + ":" + (items[0] + items[1] + items[2]).toStr())
 
-    dim qOutBox = mailbox[int](1)
-    start job quickWorker(41, qOutBox)
-    dim qOut = qOutBox.get()
-    print("done=" + (qOut == 42).toStr())
+    dim pair = BoxedPair(20, 22)
+    dim dictJob = start buildSummary(pair)
+    pair.a = 999
+    dim summary = dictJob.wait()
+    print("dict_ret=" + summary.len().toStr() + ":" + summary.get("sum", 0).toStr())
 
-    dim byrefNode = TreeNode()
-    dim byrefDone as mailbox[bool]
-    start job byrefJobWorker(byrefNode, byrefDone)
-    byrefDone.get()
-    print("byref_job=" + byrefNode.val.toStr())
+    // 5. Eager value-copy isolation after start
+    dim n = 99
+    dim eagerJob = start addOne(n)
+    n = 1
+    print("eager=" + eagerJob.wait().toStr())
+
+    // 6. Zero-initialized job.wait() safety and idempotent repeated .wait()
+    dim nilJob as job[int]
+    print("zero_wait=" + nilJob.wait().toStr())
+
+    dim repJob = start doubleVal(21)
+    print("repeat=" + repJob.wait().toStr() + ":" + repJob.wait().toStr())
+
+    // 7. Void job
+    dim vj as job
+    vj = start touchVoid()
+    vj.wait()
+    vj.wait()
+    print("void_done=true")
 
     return 0
 end fn

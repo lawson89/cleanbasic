@@ -27,6 +27,9 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 		if !ok {
 			return VoidType, newSemaError(e.Pos, "undefined identifier %q", e.Name)
 		}
+		if a.currentFn != nil && sym.IsGlobal && !sym.IsConst {
+			a.recordGlobalAccess(a.currentFn, e.Pos, e.Name)
+		}
 		if sym.GoName != "" {
 			e.GoName = sym.GoName
 		}
@@ -50,6 +53,8 @@ func (a *analyzer) inferExpr(expr ast.Expr, scope *Scope) (Type, error) {
 		resolved, err = a.inferSliceExpr(e, scope)
 	case *ast.CallExpr:
 		resolved, err = a.inferCallExpr(e, scope)
+	case *ast.StartExpr:
+		resolved, err = a.inferStartExpr(e, scope)
 	default:
 		return VoidType, newSemaError(expr.ExprPos(), "unsupported expression")
 	}
@@ -203,22 +208,8 @@ func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Sco
 			return VoidType, newSemaError(e.Pos, "%s() takes no arguments", t.String())
 		}
 		return t, nil
-	case KindMailbox:
-		if len(e.Args) > 1 {
-			return VoidType, newSemaError(e.Pos, "mailbox constructor takes at most 1 capacity argument, got %d", len(e.Args))
-		}
-		if len(e.Args) == 1 {
-			capType, err := a.inferExpr(e.Args[0], scope)
-			if err != nil {
-				return VoidType, err
-			}
-			if !capType.Equals(IntType) {
-				return VoidType, newSemaError(e.Args[0].ExprPos(), "mailbox capacity must be int, got %s", capType.String())
-			}
-		}
-		return t, nil
 	default:
-		return VoidType, newSemaError(e.Pos, "typed container constructor is only supported for list, dict, and mailbox, got %s", t.String())
+		return VoidType, newSemaError(e.Pos, "typed container constructor is only supported for list and dict, got %s", t.String())
 	}
 }
 
@@ -241,6 +232,9 @@ func (a *analyzer) inferFieldAccessExpr(e *ast.FieldAccessExpr, scope *Scope) (T
 					return VoidType, newSemaError(e.Pos, "constant %q in module %q is private", e.Field, objIdent.Name)
 				}
 				return VoidType, newSemaError(e.Pos, "variable %q in module %q is private", e.Field, objIdent.Name)
+			}
+			if a.currentFn != nil && sym.IsGlobal && !sym.IsConst {
+				a.recordGlobalAccess(a.currentFn, e.Pos, objIdent.Name+"."+e.Field)
 			}
 			e.GoName = sym.GoName
 			return sym.Type, nil
@@ -373,6 +367,9 @@ func (a *analyzer) inferCallExpr(e *ast.CallExpr, scope *Scope) (Type, error) {
 	if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 		return VoidType, err
 	}
+	if a.currentFn != nil {
+		a.recordCallee(a.currentFn, fnSym)
+	}
 
 	e.CallInfo = &CallInfo{
 		Kind:     CallFunc,
@@ -388,7 +385,7 @@ func (a *analyzer) inFallibleContext() bool {
 }
 
 func (a *analyzer) inferErrorCall(e *ast.CallExpr, scope *Scope) (Type, error) {
-	if e != a.startJobCall {
+	if e != a.startCall {
 		if !a.inFallibleContext() {
 			return VoidType, newSemaError(e.Pos, "error() can only be called inside a 'can error' function or a 'try' block")
 		}
@@ -455,7 +452,7 @@ func (a *analyzer) validateCallArgs(callExpr *ast.CallExpr, args []ast.Expr, par
 			}
 		}
 	}
-	if canError && callExpr != a.startJobCall {
+	if canError && callExpr != a.startCall {
 		if !a.inFallibleContext() {
 			return newSemaError(callExpr.Pos, "call to 'can error' function %q must be inside a 'try' block or a 'can error' function", fnName)
 		}
@@ -498,6 +495,9 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 				}
 				if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 					return VoidType, err
+				}
+				if a.currentFn != nil {
+					a.recordCallee(a.currentFn, fnSym)
 				}
 				e.CallInfo = &CallInfo{
 					Kind:     CallFunc,
@@ -545,6 +545,9 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 	if err := a.validateCallArgs(e, e.Args, fnSym.Params[1:], fnSym.Name, fnSym.CanError, "UFCS call", scope); err != nil {
 		return VoidType, err
 	}
+	if a.currentFn != nil {
+		a.recordCallee(a.currentFn, fnSym)
+	}
 
 	e.CallInfo = &CallInfo{
 		Kind:     CallUFCS,
@@ -554,4 +557,40 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 		HasValue: !fnSym.ReturnType.IsVoid(),
 	}
 	return fnSym.ReturnType, nil
+}
+
+func (a *analyzer) inferStartExpr(e *ast.StartExpr, scope *Scope) (Type, error) {
+	prevStartCall := a.startCall
+	a.startCall = e.Call
+	_, err := a.inferExpr(e.Call, scope)
+	a.startCall = prevStartCall
+	if err != nil {
+		return VoidType, err
+	}
+	ci := e.Call.CallInfo
+	if ci == nil || (ci.Kind != CallFunc && ci.Kind != CallUFCS) || ci.Fn == nil {
+		return VoidType, newSemaError(e.Pos, "'start' target must be a user or module function call")
+	}
+	if ci.Fn.CanError {
+		return VoidType, newSemaError(e.Pos, "cannot use 'start' with fallible function %q (handle errors inside the worker function)", ci.Fn.Name)
+	}
+	for i, p := range ci.Fn.Params {
+		if p.ByRef {
+			return VoidType, newSemaError(e.Pos, "cannot use 'start' with function %q because parameter %d (%q) is 'byref'", ci.Fn.Name, i+1, p.Name)
+		}
+	}
+	if ci.Kind == CallUFCS && ci.Receiver != nil {
+		recvType := ci.Receiver.ExprType()
+		if !a.isSendableType(recvType, map[string]bool{}) {
+			return VoidType, newSemaError(ci.Receiver.ExprPos(), "cannot pass non-sendable receiver type %s to 'start' function %q (only value types and value-only structs are allowed)", recvType.String(), ci.Fn.Name)
+		}
+	}
+	for i, arg := range e.Call.Args {
+		argType := arg.ExprType()
+		if !a.isSendableType(argType, map[string]bool{}) {
+			return VoidType, newSemaError(arg.ExprPos(), "cannot pass non-sendable argument %d of type %s to 'start' function %q (only value types and value-only structs are allowed)", i+1, argType.String(), ci.Fn.Name)
+		}
+	}
+	a.startSites = append(a.startSites, startSite{pos: e.Pos, fn: ci.Fn})
+	return Type{Pos: e.Pos, Kind: KindJob, SubTypes: []Type{ci.Fn.ReturnType}}, nil
 }

@@ -1,0 +1,18 @@
+// EXPECT_ERR: transitively accesses mutable module-level variable
+
+dim gCounter = 0
+
+fn helper() as int
+    gCounter = gCounter + 1
+    return gCounter
+end fn
+
+fn worker() as int
+    return helper()
+end fn
+
+fn main() as int
+    dim j = start worker()
+    print(j.wait().toStr())
+    return 0
+end fn

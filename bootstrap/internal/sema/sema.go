@@ -22,10 +22,10 @@ const (
 	KindByte    = ast.KindByte
 	KindStruct  = ast.KindStruct
 	KindEnum    = ast.KindEnum
-	KindList    = ast.KindList
-	KindDict    = ast.KindDict
-	KindMailbox = ast.KindMailbox
-	KindErr     = ast.KindErr
+	KindList   = ast.KindList
+	KindDict   = ast.KindDict
+	KindJob    = ast.KindJob
+	KindErr    = ast.KindErr
 )
 
 // Type represents a resolved semantic type in CleanBasic.
@@ -78,13 +78,14 @@ func newSemaError(pos token.Position, format string, args ...any) error {
 
 // VarSymbol represents a top-level constant, function parameter, local variable, or loop counter.
 type VarSymbol struct {
-	Name    string
-	GoName  string
-	Type    Type
-	IsConst bool
-	Public  bool
-	ByRef   bool
-	Pos     token.Position
+	Name     string
+	GoName   string
+	Type     Type
+	IsConst  bool
+	IsGlobal bool
+	Public   bool
+	ByRef    bool
+	Pos      token.Position
 }
 
 // Scope represents a lexical variable scope with an optional parent scope.
@@ -170,7 +171,9 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 	}
 
 	a := &analyzer{
-		prog: tp,
+		prog:           tp,
+		fnGlobalAccess: make(map[*FnSymbol]globalAccessInfo),
+		fnCallees:      make(map[*FnSymbol][]*FnSymbol),
 	}
 
 	for _, mod := range topoOrder {
@@ -189,7 +192,21 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 		}
 	}
 
+	if err := a.validateStartJobIsolation(); err != nil {
+		return nil, err
+	}
+
 	return tp, nil
+}
+
+type globalAccessInfo struct {
+	pos     token.Position
+	varName string
+}
+
+type startSite struct {
+	pos token.Position
+	fn  *FnSymbol
 }
 
 type analyzer struct {
@@ -200,7 +217,75 @@ type analyzer struct {
 	tryDepth            int
 	deferDepth          int
 	allowedFallibleExpr ast.Expr
-	startJobCall        *ast.CallExpr
+	startCall           *ast.CallExpr
+	fnGlobalAccess      map[*FnSymbol]globalAccessInfo
+	fnCallees           map[*FnSymbol][]*FnSymbol
+	startSites          []startSite
+}
+
+func (a *analyzer) recordGlobalAccess(fn *FnSymbol, pos token.Position, varName string) {
+	if fn == nil {
+		return
+	}
+	if _, exists := a.fnGlobalAccess[fn]; !exists {
+		a.fnGlobalAccess[fn] = globalAccessInfo{pos: pos, varName: varName}
+	}
+}
+
+func (a *analyzer) recordCallee(caller, callee *FnSymbol) {
+	if caller == nil || callee == nil {
+		return
+	}
+	a.fnCallees[caller] = append(a.fnCallees[caller], callee)
+}
+
+func (a *analyzer) validateStartJobIsolation() error {
+	for _, site := range a.startSites {
+		visited := map[*FnSymbol]bool{site.fn: true}
+		queue := []*FnSymbol{site.fn}
+		for len(queue) > 0 {
+			fn := queue[0]
+			queue = queue[1:]
+			if acc, hasGlobal := a.fnGlobalAccess[fn]; hasGlobal {
+				if fn == site.fn {
+					return newSemaError(acc.pos, "function %q started with 'start' cannot access mutable module-level variable %q (pass values as arguments or use 'const')", site.fn.Name, acc.varName)
+				}
+				return newSemaError(site.pos, "function %q started with 'start' transitively accesses mutable module-level variable %q via %q at %s", site.fn.Name, acc.varName, fn.Name, acc.pos.String())
+			}
+			for _, callee := range a.fnCallees[fn] {
+				if !visited[callee] {
+					visited[callee] = true
+					queue = append(queue, callee)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (a *analyzer) isSendableType(t Type, visited map[string]bool) bool {
+	switch t.Kind {
+	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindEnum:
+		return true
+	case KindStruct:
+		sym := a.lookupStruct(t)
+		if sym == nil || sym.IsGoType {
+			return false
+		}
+		key := sym.ModuleID + "." + sym.Name
+		if visited[key] {
+			return true
+		}
+		visited[key] = true
+		for _, f := range sym.Fields {
+			if !a.isSendableType(f.Type, visited) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *analyzer) lookupStruct(t Type) *StructSymbol {
@@ -215,7 +300,7 @@ func (a *analyzer) isComparableType(t Type) bool {
 	switch t.Kind {
 	case KindInt, KindFloat, KindStr, KindByte, KindBool, KindEnum:
 		return true
-	case KindVoid, KindList, KindDict, KindErr:
+	case KindVoid, KindList, KindDict, KindJob, KindErr:
 		return false
 	case KindStruct:
 		sym := a.lookupStruct(t)

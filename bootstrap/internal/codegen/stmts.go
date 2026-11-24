@@ -26,9 +26,7 @@ func (e *emitter) emitZeroOrInitVarDecl(sb *strings.Builder, varGo string, d *as
 	switch d.Type.Kind {
 	case ast.KindDict:
 		sb.WriteString(fmt.Sprintf("%svar %s %s = %s{}\n", indent, varGo, goType, goType))
-	case ast.KindMailbox:
-		elemGo := e.goSemaType(d.Type.Elem())
-		sb.WriteString(fmt.Sprintf("%svar %s %s = make(chan %s)\n", indent, varGo, goType, elemGo))
+
 	case ast.KindStruct:
 		if e.structNeedsFieldInit(e.lookupStruct(*d.Type)) {
 			sb.WriteString(fmt.Sprintf("%svar %s %s = %s\n", indent, varGo, goType, e.emitZeroStruct(*d.Type)))
@@ -127,8 +125,6 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		}
 		sb.WriteString(fmt.Sprintf("%s%s\n", indent, e.emitExpr(s.Expr)))
 
-	case *ast.StartJobStmt:
-		sb.WriteString(fmt.Sprintf("%sgo %s\n", indent, e.emitCallExprRaw(s.Call)))
 	case *ast.IfStmt:
 		sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, e.emitExpr(s.Cond)))
 		e.emitStmtList(s.ThenBody, indent+"\t", sb)
@@ -188,8 +184,6 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 				} else {
 					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, v0, s.Vars[1], iterExpr))
 				}
-			case sema.KindMailbox:
-				sb.WriteString(fmt.Sprintf("%sfor %s := range %s {\n", indent, v0, iterExpr))
 			}
 			for _, v := range s.Vars {
 				sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, v))

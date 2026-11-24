@@ -19,7 +19,7 @@ func (a *analyzer) finishFallibleBuiltinCall(e *ast.CallExpr, recvExpr ast.Expr,
 	if err := a.expectPositionalArgs(e, methodName, scope, params...); err != nil {
 		return VoidType, err
 	}
-	if e != a.startJobCall {
+	if e != a.startCall {
 		if !a.inFallibleContext() {
 			return VoidType, newSemaError(e.Pos, "call to 'can error' method %q must be inside a 'try' block or a 'can error' function", methodName)
 		}
@@ -164,19 +164,9 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 			t, err := a.finishBuiltinCall(e, recvExpr, "byte.toStr", StrType, scope)
 			return t, true, err
 		}
-	case KindMailbox:
-		switch method {
-		case "post":
-			t, err := a.finishBuiltinCall(e, recvExpr, "mailbox.post", VoidType, scope, recvType.Elem())
-			return t, true, err
-		case "get":
-			t, err := a.finishBuiltinCall(e, recvExpr, "mailbox.get", recvType.Elem(), scope)
-			return t, true, err
-		case "close":
-			t, err := a.finishBuiltinCall(e, recvExpr, "mailbox.close", VoidType, scope)
-			return t, true, err
-		case "len":
-			t, err := a.finishBuiltinCall(e, recvExpr, "mailbox.len", IntType, scope)
+	case KindJob:
+		if method == "wait" {
+			t, err := a.finishBuiltinCall(e, recvExpr, "job.wait", recvType.Elem(), scope)
 			return t, true, err
 		}
 	}

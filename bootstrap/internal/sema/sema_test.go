@@ -128,12 +128,10 @@ func TestSemanticErrors(t *testing.T) {
 		{"access invalid field on err", "fn risky() can error\n    error(\"fail\")\nend fn\nfn main() as int\n    try\n        risky()\n    catch e\n        print(e.code)\n    end try\n    return 0\nend fn\n", `err type has no field "code"`},
 		{"error() rejects 2 arguments", "fn risky() can error\n    error(\"fail\", 1)\nend fn\nfn main() as int\n    return 0\nend fn\n", `error() expects 1 argument, got 2`},
 		{"reassign numeric for counter", "fn main() as int\n    for i = 1 to 5\n        i = 10\n    end for\n    return 0\nend fn\n", `cannot reassign constant "i"`},
-		{"mailbox postTimeout removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    ch.postTimeout(1, 10)\n    return 0\nend fn\n", `no method or UFCS function "postTimeout" for receiver type mailbox[int]`},
-		{"mailbox checkTimeout removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    dim v = 0\n    ch.checkTimeout(v, 10)\n    return 0\nend fn\n", `no method or UFCS function "checkTimeout" for receiver type mailbox[int]`},
-		{"mailbox isClosed removed", "fn main() as int\n    dim ch = mailbox[int](1)\n    dim c = ch.isClosed()\n    return 0\nend fn\n", `no method or UFCS function "isClosed" for receiver type mailbox[int]`},
-		{"start job rejects fallible fn inside try", "fn work() can error\n    error(\"boom\")\nend fn\nfn main() as int\n    try\n        start job work()\n    catch e\n    end try\n    return 0\nend fn\n", "cannot use 'start job' with fallible function"},
-		{"start job rejects fallible fn outside try", "fn work() can error\n    error(\"boom\")\nend fn\nfn main() as int\n    start job work()\n    return 0\nend fn\n", "cannot use 'start job' with fallible function"},
-		{"start job rejects fallible argument", "fn failArg() as int can error\n    error(\"arg\")\n    return 1\nend fn\nfn worker(x as int)\nend fn\nfn main() as int\n    try\n        start job worker(failArg())\n    catch e\n    end try\n    return 0\nend fn\n", "may only appear as a top-level statement expression"},
+		{"job unknown method", "fn main() as int\n    dim j as job[int]\n    j.close()\n    return 0\nend fn\n", `no method or UFCS function "close" for receiver type job[int]`},
+		{"start rejects fallible fn inside try", "fn work() can error\n    error(\"boom\")\nend fn\nfn main() as int\n    try\n        dim j = start work()\n    catch e\n    end try\n    return 0\nend fn\n", "cannot use 'start' with fallible function"},
+		{"start rejects fallible fn outside try", "fn work() can error\n    error(\"boom\")\nend fn\nfn main() as int\n    dim j = start work()\n    return 0\nend fn\n", "cannot use 'start' with fallible function"},
+		{"start rejects fallible argument", "fn failArg() as int can error\n    error(\"arg\")\n    return 1\nend fn\nfn worker(x as int)\nend fn\nfn main() as int\n    try\n        dim j = start worker(failArg())\n    catch e\n    end try\n    return 0\nend fn\n", "may only appear as a top-level statement expression"},
 		{"str plus int rejected", "fn main() as int\n    dim s = \"a\" + 1\n    return 0\nend fn\n", `type mismatch for operator "+": str and int`},
 		{"forward-declared non-comparable struct as dict key in struct field", "type Holder\n    table as dict[BadKey, int]\nend type\ntype BadKey\n    items as list[int]\nend type\nfn main() as int\n    return 0\nend fn\n", "dict key type BadKey is not comparable"},
 	}
@@ -675,10 +673,78 @@ end fn
 	}
 }
 func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
-	t.Run("start_job_allows_byref", func(t *testing.T) {
-		src := "fn mut(byref x as int)\n    x = x + 1\nend fn\nfn main()\n    dim a = 1\n    start job mut(a)\nend fn\n"
-		if _, err := AnalyzeSource(src, "byref_job.cb"); err != nil {
-			t.Fatalf("expected start job with byref to succeed, got: %v", err)
+	t.Run("start_rejects_byref", func(t *testing.T) {
+		src := "fn mut(byref x as int)\n    x = x + 1\nend fn\nfn main()\n    dim a = 1\n    dim j = start mut(a)\nend fn\n"
+		_, err := AnalyzeSource(src, "byref_job.cb")
+		if err == nil || !strings.Contains(err.Error(), "is 'byref'") {
+			t.Fatalf("expected start with byref to be rejected, got: %v", err)
+		}
+	})
+
+	t.Run("start_sendability_and_global_isolation", func(t *testing.T) {
+		badCases := []struct {
+			name string
+			src  string
+			want string
+		}{
+			{
+				name: "list_arg",
+				src:  "fn w(xs as list[int]) as int\n    return xs.len()\nend fn\nfn main()\n    dim xs = [1, 2]\n    dim j = start w(xs)\nend fn\n",
+				want: "cannot pass non-sendable argument",
+			},
+			{
+				name: "dict_arg",
+				src:  "fn w(d as dict[str, int]) as int\n    return d.len()\nend fn\nfn main()\n    dim d = dict[str, int]()\n    dim j = start w(d)\nend fn\n",
+				want: "cannot pass non-sendable argument",
+			},
+			{
+				name: "job_arg",
+				src:  "fn inner() as int\n    return 1\nend fn\nfn w(j as job[int]) as int\n    return j.wait()\nend fn\nfn main()\n    dim j1 = start inner()\n    dim j2 = start w(j1)\nend fn\n",
+				want: "cannot pass non-sendable argument",
+			},
+			{
+				name: "struct_with_dict_arg",
+				src:  "type Holder\n    d as dict[str, int]\nend type\nfn w(h as Holder) as int\n    return h.d.len()\nend fn\nfn main()\n    dim h = Holder()\n    dim j = start w(h)\nend fn\n",
+				want: "cannot pass non-sendable argument",
+			},
+			{
+				name: "direct_mutable_global_read",
+				src:  "dim gCount = 1\nfn w() as int\n    return gCount\nend fn\nfn main()\n    dim j = start w()\nend fn\n",
+				want: "cannot access mutable module-level variable",
+			},
+			{
+				name: "transitive_mutable_global_write",
+				src:  "dim gCount = 1\nfn helper()\n    gCount = 2\nend fn\nfn w()\n    helper()\nend fn\nfn main()\n    dim j = start w()\nend fn\n",
+				want: "transitively accesses mutable module-level variable",
+			},
+		}
+		for _, tc := range badCases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := AnalyzeSource(tc.src, tc.name+".cb")
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("expected error %q, got: %v", tc.want, err)
+				}
+			})
+		}
+
+		goodSrc := strings.Join([]string{
+			"const LIMIT = 10",
+			"dim gUnused = 5",
+			"type Point",
+			"    x as int",
+			"    y as int",
+			"end type",
+			"fn w(p as Point) as list[int]",
+			"    dim gUnused = 99",
+			"    return [p.x + gUnused, p.y + LIMIT]",
+			"end fn",
+			"fn main()",
+			"    dim j = start w(Point(1, 2))",
+			"    dim res = j.wait()",
+			"end fn",
+		}, "\n")
+		if _, err := AnalyzeSource(goodSrc, "good_job.cb"); err != nil {
+			t.Fatalf("expected valid sendable struct + list return + const + shadowed local to succeed, got: %v", err)
 		}
 	})
 
@@ -758,7 +824,7 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 		}
 	})
 
-	t.Run("start_job_rejects_fallible_arg_outside_try", func(t *testing.T) {
+	t.Run("start_rejects_fallible_arg_outside_try", func(t *testing.T) {
 		src := strings.Join([]string{
 			"fn failArg() as int can error",
 			"    return 1",
@@ -767,12 +833,12 @@ func TestConcurrencyAndRecursiveStructsSema(t *testing.T) {
 			"    print(x.toStr())",
 			"end fn",
 			"fn main()",
-			"    start job worker(failArg())",
+			"    dim j = start worker(failArg())",
 			"end fn",
 		}, "\n")
 		_, err := AnalyzeSource(src, "fallible_arg_job.cb")
 		if err == nil || !strings.Contains(err.Error(), "must be inside a 'try' block or a 'can error' function") {
-			t.Fatalf("expected fallible argument error in start job, got: %v", err)
+			t.Fatalf("expected fallible argument error in start, got: %v", err)
 		}
 	})
 }
