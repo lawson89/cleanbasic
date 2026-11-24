@@ -45,8 +45,8 @@ func (e *emitter) emitStmtList(stmts []ast.Statement, indent string, sb *strings
 
 func (e *emitter) emitErrorJumpOrReturn(sb *strings.Builder, indent, errExpr string) {
 	if e.currentTryID > 0 {
-		sb.WriteString(fmt.Sprintf("%s_tryErr_%d = %s\n", indent, e.currentTryID, errExpr))
-		sb.WriteString(fmt.Sprintf("%sgoto _catch_%d\n", indent, e.currentTryID))
+		sb.WriteString(fmt.Sprintf("%s_cb_tryErr_%d = %s\n", indent, e.currentTryID, errExpr))
+		sb.WriteString(fmt.Sprintf("%sgoto _cb_catch_%d\n", indent, e.currentTryID))
 		return
 	}
 	if e.currentFnSym != nil && !e.currentFnSym.ReturnType.IsVoid() {
@@ -76,10 +76,10 @@ func (e *emitter) emitFallibleCallExpr(sb *strings.Builder, expr ast.Expr, inden
 	}
 	callStr := e.emitCallExprRaw(call)
 	e.errCounter++
-	errVar := fmt.Sprintf("_err_%d", e.errCounter)
+	errVar := fmt.Sprintf("_cb_err_%d", e.errCounter)
 	valVar := ""
 	if ci.HasValue {
-		valVar = fmt.Sprintf("_val_%d", e.errCounter)
+		valVar = fmt.Sprintf("_cb_val_%d", e.errCounter)
 		sb.WriteString(fmt.Sprintf("%s%s, %s := %s\n", indent, valVar, errVar, callStr))
 	} else {
 		sb.WriteString(fmt.Sprintf("%s%s := %s\n", indent, errVar, callStr))
@@ -155,7 +155,7 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		if s.IsRange {
 			e.loopCounter++
 			lid := e.loopCounter
-			endVar := fmt.Sprintf("_cbEnd_%d", lid)
+			endVar := fmt.Sprintf("_cb_end_%d", lid)
 			varGo := s.VarName
 			sb.WriteString(fmt.Sprintf("%svar %s int64 = %s\n", indent, endVar, e.emitExpr(s.End)))
 			sb.WriteString(fmt.Sprintf("%sfor %s := %s; %s <= %s; %s++ {\n",
@@ -173,19 +173,19 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, v0, iterExpr))
 				} else {
 					e.loopCounter++
-					idxTmp := fmt.Sprintf("_cbIdx_%d", e.loopCounter)
+					idxTmp := fmt.Sprintf("_cb_idx_%d", e.loopCounter)
 					v1 := s.Vars[1]
 					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, v1, iterExpr))
 					sb.WriteString(fmt.Sprintf("%s\tvar %s int64 = int64(%s)\n", indent, v0, idxTmp))
 				}
 			case sema.KindStr:
 				e.loopCounter++
-				runeTmp := fmt.Sprintf("_cbRune_%d", e.loopCounter)
+				runeTmp := fmt.Sprintf("_cb_rune_%d", e.loopCounter)
 				if len(s.Vars) == 1 {
 					sb.WriteString(fmt.Sprintf("%sfor _, %s := range %s {\n", indent, runeTmp, iterExpr))
 					sb.WriteString(fmt.Sprintf("%s\tvar %s string = string(%s)\n", indent, v0, runeTmp))
 				} else {
-					idxTmp := fmt.Sprintf("_cbIdx_%d", e.loopCounter)
+					idxTmp := fmt.Sprintf("_cb_idx_%d", e.loopCounter)
 					v1 := s.Vars[1]
 					sb.WriteString(fmt.Sprintf("%sfor %s, %s := range %s {\n", indent, idxTmp, runeTmp, iterExpr))
 					sb.WriteString(fmt.Sprintf("%s\tvar %s int64 = int64(%s)\n", indent, v0, idxTmp))
@@ -230,23 +230,23 @@ func (e *emitter) emitStmt(sb *strings.Builder, stmt ast.Statement, indent strin
 		e.tryCounter++
 		tryID := e.tryCounter
 		prevTryID := e.currentTryID
-		sb.WriteString(fmt.Sprintf("%svar _tryErr_%d error\n", indent, tryID))
-		sb.WriteString(fmt.Sprintf("%s_ = _tryErr_%d\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%svar _cb_tryErr_%d error\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s_ = _cb_tryErr_%d\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s{\n", indent))
 		e.currentTryID = tryID
 		e.emitStmtList(s.TryBody, indent+"\t", sb)
 		e.currentTryID = prevTryID
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
-		sb.WriteString(fmt.Sprintf("%sif false {\n%s\tgoto _catch_%d\n%s}\n", indent, indent, tryID, indent))
-		sb.WriteString(fmt.Sprintf("%sgoto _end_try_%d\n", indent, tryID))
-		sb.WriteString(fmt.Sprintf("%s_catch_%d:\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%sif false {\n%s\tgoto _cb_catch_%d\n%s}\n", indent, indent, tryID, indent))
+		sb.WriteString(fmt.Sprintf("%sgoto _cb_end_try_%d\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s_cb_catch_%d:\n", indent, tryID))
 		sb.WriteString(fmt.Sprintf("%s{\n", indent))
 		catchGo := s.CatchVar
-		sb.WriteString(fmt.Sprintf("%s\tvar %s error = _tryErr_%d\n", indent, catchGo, tryID))
+		sb.WriteString(fmt.Sprintf("%s\tvar %s error = _cb_tryErr_%d\n", indent, catchGo, tryID))
 		sb.WriteString(fmt.Sprintf("%s\t_ = %s\n", indent, catchGo))
 		e.emitStmtList(s.CatchBody, indent+"\t", sb)
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
-		sb.WriteString(fmt.Sprintf("%s_end_try_%d:\n", indent, tryID))
+		sb.WriteString(fmt.Sprintf("%s_cb_end_try_%d:\n", indent, tryID))
 
 	case *ast.DeferStmt:
 		prevTryID := e.currentTryID

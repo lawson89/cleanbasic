@@ -4,6 +4,7 @@ go import "fmt"
 go import "io"
 go import "os"
 go import "os/exec"
+go import "slices"
 
 public type ExecResult
 	exitCode as int
@@ -16,7 +17,7 @@ func cbStdOsArgs() []string {
 	if len(os.Args) <= 1 {
 		return nil
 	}
-	return os.Args[1:]
+	return slices.Clone(os.Args[1:])
 }
 
 func cbStdOsExit(code int64) {

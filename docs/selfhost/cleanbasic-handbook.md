@@ -303,11 +303,11 @@ Because `dict[k]` is **not addressable**, you cannot pass `symTable[name]` to `b
 
 ### 5.5 Forbidden Go Reserved Words (`bootstrap/internal/parser/parser.go`)
 
-The bootstrap parser rejects Go keywords in **all** identifier positions (including struct fields/methods via `expectMemberIdent`), and rejects all 34 Go reserved/predeclared words in variable/function/type/param positions via `expectIdent`:
+The bootstrap parser rejects Go keywords in **all** identifier positions (including struct fields/methods via `expectMemberIdent`), and rejects all 43 Go/runtime reserved words plus the `_cb_` identifier prefix in variable/function/type/param positions via `expectIdent`:
 
 - **`goKeywords` (12 — forbidden everywhere, even member names):**
   `chan`, `default`, `fallthrough`, `func`, `goto`, `interface`, `map`, `package`, `range`, `struct`, `switch`, `var`
-- **`goReservedWords` (34 — includes all 12 `goKeywords` plus 22 Go predeclared/stdlib identifiers, forbidden as top-level/local/param/type/fn identifiers):**
-  `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`
+- **`goPredeclaredWords` (31 — combined with `goKeywords` for 43 total reserved words, plus any identifier starting with `_cb_`, forbidden as top-level/local/param/type/fn identifiers):**
+  `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `os`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`, `_cb_os`, `cb_main`, `cbDictGet`, `cbDictContains`, `cbJob`, `cbStartJob`, `cbVoidJob`, `cbStartVoidJob`
 
 > **Tip:** Avoid `str`, `type`, `fn`, `err`, `len`, `map`, `range`, `default`, `var`, `func`, `error`, `string` when naming variables or struct fields in `selfhost/`. Prefer `ty`, `fnSym`, `errMsg`, `count`, `table`, `isRange`, `defVal`, `text`.

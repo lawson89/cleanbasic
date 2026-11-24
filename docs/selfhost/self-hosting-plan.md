@@ -111,7 +111,7 @@ lexer --> token
 
 ### 3.2 Complete CleanBasic `AstArena` Blueprint
 
-All identifiers below are chosen to avoid CleanBasic keywords and all 34 Go reserved words (`goKeywords` / `goReservedWords`).
+All identifiers below are chosen to avoid CleanBasic keywords, all 43 Go/runtime reserved words (`goKeywords` / `goPredeclaredWords`), and the reserved `_cb_` prefix.
 
 ```cleanbasic
 // selfhost/ast.cb — Flat Arena AST & Symbol Pool Blueprint
@@ -665,7 +665,7 @@ public fn typeString(a as AstArena, typeId as int) as str
 - **Subtle Invariants:**
   - **Go Reserved Word Enforcement:**
     - `goKeywords` (**12** words): `chan`, `default`, `fallthrough`, `func`, `goto`, `interface`, `map`, `package`, `range`, `struct`, `switch`, `var`. Checked in `expectMemberIdent` (struct field names, enum variants, and `.` member access).
-    - `goReservedWords` (**34** words = 12 `goKeywords` + 22 Go predeclared/stdlib names: `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`). Checked in `expectIdent` (all variable, param, const, type, enum, fn, alias, and primary identifier positions).
+    - `goPredeclaredWords` (**31** words = 23 Go predeclared/stdlib names `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `os`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings` + 8 runtime/internal names `_cb_os`, `cb_main`, `cbDictGet`, `cbDictContains`, `cbJob`, `cbStartJob`, `cbVoidJob`, `cbStartVoidJob`) plus any identifier with the `_cb_` prefix (**43** total words). Checked in `expectIdent` (all variable, param, const, type, enum, fn, alias, and primary identifier positions).
   - **Operator Precedence Ladder (lowest to highest):**
     - Level 1: `or`
     - Level 2: `and`
@@ -705,7 +705,7 @@ fn parsePrimaryExpr(byref a as AstArena, byref p as Parser) as int can error
 ```
 
 #### Parity & Behavior Checklist
-- Exact same 12 `goKeywords` and 34 `goReservedWords` sets and error message: `"cannot use Go reserved word \"" + lexeme + "\" as an identifier"`.
+- Exact same 12 `goKeywords`, 31 `goPredeclaredWords` (43 total), and `_cb_` prefix rule with error message: `"cannot use Go reserved word \"" + lexeme + "\" as an identifier"`.
 - All top-level forms supported: `import "..." [as alias]`, `go import "..." [as alias]`, `GO_BLOCK`, `[public] const`, `[public] dim`, `[public] type Name = go "GoType"`, `[public] type Name ... end type`, `[public] enum Name ... end enum`, `[public] fn ... [as T] [can error] = go "Target"`, `[public] fn ... end fn`.
 - `for` disambiguates `for i = start to end` vs `for x in iter` vs `for k, v in iter`.
 - `parsePostfixExpr` handles `target[:]`, `target[start:]`, `target[:end]`, `target[start:end]`, and `target[index]`.
@@ -996,12 +996,12 @@ fn analyzeTopLevelVar(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, 
   - Runtime: `emitRuntimeHelpers` (`cbDictGet`, `cbDictContains`).
 - **Subtle Invariants:**
   - **Deterministic Imports:** `useImport` / `useGoImport` record imports during body emission; `formatImportLines()` deduplicates and sorts them lexicographically before emitting `package main` + `import (...)` at the top.
-  - **Unmangled Identifiers & `cb_main()` Wrapper:** Entry module symbols are unmangled, except `main` which is emitted as `cb_main()`. If entry `main` returns `int64`, emit `func main() { if code := cb_main(); code != 0 { os.Exit(int(code)) } }` (and record `"os"` import); if `void`, emit `func main() { cb_main() }`.
+  - **Unmangled Identifiers & `cb_main()` Wrapper:** Entry module symbols are unmangled, except `main` which is emitted as `cb_main()`. If entry `main` returns `int64`, emit `func main() { if code := cb_main(); code != 0 { _cb_os.Exit(int(code)) } }` (and record `_cb_os "os"` import); if `void`, emit `func main() { cb_main() }`.
   - **Recursive Struct `dict` Auto-Initialization:** `structNeedsFieldInit` recursively checks if a struct has any `dict` or nested struct field needing init; `emitZeroStruct` emits `TypeName{field: map[K]V{}}` for zero-init `dim`, zero-arg `TypeName()`, and error-return zero values, and `runtime.go` emits `cbJob[T]` / `cbVoidJob` on demand with eager-argument IIFE wrappers for `start`.
   - **On-Demand Runtime Helpers:** `cbDictGet` and `cbDictContains` are generic Go helpers emitted **only** when `usedDictGet` or `usedDictContains` is `true`.
   - **Column-1 `//line` Directives:** Emitted before each statement when `emitLineDirectives` is true and `pos.File != ""` and `pos.File != "<memory>"` and `pos.Line > 0`: `//line <slashPath>:<line>\n` (must start at column 1 with forward slashes).
-  - **`try/catch` Label Guard:** Emits `var _tryErr_N error`, `_ = _tryErr_N`, `tryBody` block, `if false { goto _catch_N }` (prevents Go `label _catch_N defined and not used` when `tryBody` has no fallible calls), `goto _end_try_N`, `_catch_N:`, `catchBody`, `_end_try_N:`.
-  - **Loop Temporaries & Unused Var Suppression:** Range loops evaluate `end` once into `_cbEnd_N`; `for idx, v in list` uses `_cbIdx_N`; `for ch in str` decodes runes via `_cbRune_N` + `string(_cbRune_N)`; every declared `dim` and loop variable emits `_ = v`.
+  - **`try/catch` Label Guard:** Emits `var _cb_tryErr_N error`, `_ = _cb_tryErr_N`, `tryBody` block, `if false { goto _cb_catch_N }` (prevents Go `label _cb_catch_N defined and not used` when `tryBody` has no fallible calls), `goto _cb_end_try_N`, `_cb_catch_N:`, `catchBody`, `_cb_end_try_N:`.
+  - **Loop Temporaries & Unused Var Suppression:** Range loops evaluate `end` once into `_cb_end_N`; `for idx, v in list` uses `_cb_idx_N`; `for ch in str` decodes runes via `_cb_rune_N` + `string(_cb_rune_N)`; every declared `dim` and loop variable emits `_ = v`.
 
 #### CleanBasic Design & Key Types/Functions
 ```cleanbasic

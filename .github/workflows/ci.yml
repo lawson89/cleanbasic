@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Vet
+        run: go vet -C bootstrap ./...
+
+      - name: Test with race detector
+        run: go test -C bootstrap -race ./...
+
+      - name: Build cb and smoke-test examples & tutorials
+        run: |
+          go build -C bootstrap -o cb ./cmd/cb
+          for f in tutorial/solutions/*.cb examples/cbgrep/main.cb; do
+            ./bootstrap/cb check "$f"
+          done
+          ./bootstrap/cb run examples/cbgrep/main.cb -i "cleanbasic" README.md

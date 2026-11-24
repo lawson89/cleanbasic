@@ -380,6 +380,9 @@ func (e *emitter) emitZeroStruct(t sema.Type) string {
 	}
 	goType := e.goSemaType(t)
 	sym := e.lookupStruct(t)
+	if sym != nil && sym.IsGoType {
+		return fmt.Sprintf("*new(%s)", goType)
+	}
 	if !e.structNeedsFieldInit(sym) {
 		return goType + "{}"
 	}

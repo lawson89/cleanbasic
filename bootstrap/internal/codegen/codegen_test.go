@@ -959,3 +959,119 @@ func TestEmitLineDirectiveRejectsControlCharsAndAliasesOsExit(t *testing.T) {
 		}
 	}
 }
+
+func TestEdgeCasesOpaqueGoTypePushEvalShadowAndMinInt64(t *testing.T) {
+	src := strings.Join([]string{
+		"import \"std/os\"",
+		"go import \"errors\"",
+		"go import \"fmt\"",
+		"go import \"io\"",
+		"go import \"os\" as go_os",
+		"go import \"strings\"",
+		"type Reader = go \"io.Reader\"",
+		"type Mode = go \"go_os.FileMode\"",
+		"fn newReader(flag as bool) as Reader can error = go \"cbNewReader\"",
+		"fn modeStr(m as Mode) as str = go \"cbModeStr\"",
+		"go",
+		"func cbNewReader(flag bool) (io.Reader, error) {",
+		"    if !flag {",
+		"        return nil, errors.New(\"bad reader\")",
+		"    }",
+		"    return strings.NewReader(\"ok\"), nil",
+		"}",
+		"func cbModeStr(m go_os.FileMode) string {",
+		"    return fmt.Sprintf(\"%d\", m)",
+		"}",
+		"end go",
+		"fn makeReader(fail as bool) as Reader can error",
+		"    if fail",
+		"        error(\"fail reader\")",
+		"    end if",
+		"    return newReader(true)",
+		"end fn",
+		"fn makeMode(fail as bool) as Mode can error",
+		"    if fail",
+		"        error(\"fail mode\")",
+		"    end if",
+		"    return Mode()",
+		"end fn",
+		"const MIN_I64 = -9223372036854775808",
+		"type Counter",
+		"    calls as int",
+		"end type",
+		"fn nextIdx(byref c as Counter) as int",
+		"    c.calls = c.calls + 1",
+		"    return 0",
+		"end fn",
+		"fn _a0(x as int) as int",
+		"    return x + 1",
+		"end fn",
+		"fn failIfNeg(v as int) as int can error",
+		"    if v < 0",
+		"        error(\"neg\")",
+		"    end if",
+		"    return v",
+		"end fn",
+		"fn main() as int",
+		"    dim m = Mode()",
+		"    dim gotReaderErr = false",
+		"    try",
+		"        dim r = makeReader(true)",
+		"    catch e",
+		"        gotReaderErr = e.msg == \"fail reader\"",
+		"    end try",
+		"    dim gotModeErr = false",
+		"    try",
+		"        dim m2 = makeMode(true)",
+		"    catch e",
+		"        gotModeErr = e.msg == \"fail mode\"",
+		"    end try",
+		"    dim c = Counter(0)",
+		"    dim buckets = [[10]]",
+		"    buckets[nextIdx(c)].push(42)",
+		"    dim j = start _a0(7)",
+		"    dim _err_1 = 0",
+		"    dim _tryErr_1 = 0",
+		"    try",
+		"        _err_1 = failIfNeg(5)",
+		"    catch ex",
+		"        _tryErr_1 = 1",
+		"    end try",
+		"    dim a1 = os.args()",
+		"    a1[0] = \"mutated\"",
+		"    dim a2 = os.args()",
+		"    print(gotReaderErr.toStr() + \":\" + gotModeErr.toStr() + \":\" + modeStr(m) + \":\" + c.calls.toStr() + \":\" + buckets[0][1].toStr() + \":\" + j.wait().toStr() + \":\" + _err_1.toStr() + \":\" + _tryErr_1.toStr() + \":\" + MIN_I64.toStr() + \":\" + a2[0])",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	tmpDir := t.TempDir()
+	cbPath := filepath.Join(tmpDir, "edge_cases.cb")
+	if err := os.WriteFile(cbPath, []byte(src), 0o600); err != nil {
+		t.Fatalf("write temp edge_cases.cb: %v", err)
+	}
+	prog, err := sema.LoadAndAnalyze(cbPath)
+	if err != nil {
+		t.Fatalf("LoadAndAnalyze failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGo failed: %v", err)
+	}
+
+	mainPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(mainPath, []byte(goCode), 0o600); err != nil {
+		t.Fatalf("write temp main.go: %v", err)
+	}
+	cmd := exec.Command("go", "run", mainPath, "origArg")
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, errBuf.String(), goCode)
+	}
+	got := strings.TrimSpace(outBuf.String())
+	want := "true:true:0:1:42:8:5:0:-9223372036854775808:origArg"
+	if got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"cleanbasic/bootstrap/internal/ast"
 	"cleanbasic/bootstrap/internal/lexer"
@@ -118,7 +119,7 @@ var goPredeclaredWords = map[string]bool{
 }
 
 func isGoReservedIdent(name string) bool {
-	return goKeywords[name] || goPredeclaredWords[name]
+	return goKeywords[name] || goPredeclaredWords[name] || strings.HasPrefix(name, "_cb_")
 }
 
 func (p *Parser) enterDepth(pos token.Position, context string) error {
@@ -1174,6 +1175,18 @@ func (p *Parser) parseNotExpr() (ast.Expr, error) {
 
 // UnaryExpr ::= ("+" | "-") UnaryExpr | PostfixExpr
 func (p *Parser) parseUnaryExpr() (ast.Expr, error) {
+	if p.cur().Kind == token.MINUS && p.peek(1).Kind == token.INT_LIT {
+		nextKind := p.peek(2).Kind
+		if nextKind != token.DOT && nextKind != token.LPAREN && nextKind != token.LBRACKET {
+			opTok := p.advance()
+			litTok := p.advance()
+			negRaw := "-" + litTok.Lexeme
+			if _, err := strconv.ParseInt(negRaw, 10, 64); err != nil {
+				return nil, &ParseError{Pos: opTok.Pos, Message: fmt.Sprintf("invalid integer literal %q: %v", negRaw, err)}
+			}
+			return &ast.IntLitExpr{Pos: opTok.Pos, Raw: negRaw}, nil
+		}
+	}
 	if p.cur().Kind == token.PLUS || p.cur().Kind == token.MINUS {
 		if err := p.enterDepth(p.cur().Pos, "in expression"); err != nil {
 			return nil, err

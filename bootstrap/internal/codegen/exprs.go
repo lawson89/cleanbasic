@@ -24,7 +24,13 @@ func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 		return fmt.Sprintf("int64(len(%s))", e.emitExpr(ci.Receiver))
 	case "list.push":
 		recv := e.emitExpr(ci.Receiver)
-		return fmt.Sprintf("%s = append(%s, %s)", recv, recv, e.emitExpr(ex.Args[0]))
+		arg := e.emitExpr(ex.Args[0])
+		if _, isIdent := ci.Receiver.(*ast.IdentExpr); isIdent {
+			return fmt.Sprintf("%s = append(%s, %s)", recv, recv, arg)
+		}
+		sliceGoType := e.goSemaType(ci.Receiver.ExprType())
+		elemGoType := e.goSemaType(ci.Receiver.ExprType().Elem())
+		return fmt.Sprintf("func(_cb_p *%s, _cb_v %s) { *_cb_p = append(*_cb_p, _cb_v) }(&%s, %s)", sliceGoType, elemGoType, recv, arg)
 	case "list.sort":
 		e.useImport("slices")
 		return fmt.Sprintf("slices.Sort(%s)", e.emitExpr(ci.Receiver))
@@ -276,7 +282,7 @@ func (e *emitter) emitStartExpr(ex *ast.StartExpr) string {
 	argExprs := make([]string, 0, len(rawArgs))
 	callArgs := make([]string, 0, len(rawArgs))
 	for i, argExpr := range rawArgs {
-		paramName := fmt.Sprintf("_a%d", i)
+		paramName := fmt.Sprintf("_cb_a%d", i)
 		paramDecls = append(paramDecls, fmt.Sprintf("%s %s", paramName, e.goSemaType(argExpr.ExprType())))
 		argExprs = append(argExprs, e.emitExpr(argExpr))
 		callArgs = append(callArgs, paramName)

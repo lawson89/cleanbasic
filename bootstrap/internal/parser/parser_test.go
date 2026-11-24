@@ -453,15 +453,34 @@ func TestParseRecursionDepthLimit(t *testing.T) {
 }
 
 func TestParseRejectsRuntimeAndOsReservedIdents(t *testing.T) {
-	for _, word := range []string{"os", "_cb_os", "cb_main", "cbDictGet", "cbJob"} {
+	for _, word := range []string{"os", "_cb_os", "_cb_a0", "_cb_err_1", "_cb_custom", "cb_main", "cbDictGet", "cbJob"} {
 		src := "fn main()\n    dim " + word + " = 1\nend fn\n"
 		if _, err := Parse(src, "reserved_runtime.cb"); err == nil || !strings.Contains(err.Error(), "cannot use Go reserved word") {
 			t.Fatalf("expected reserved word error for %q, got: %v", word, err)
 		}
 	}
 
+	validUserUnderscore := "fn _a0(x as int) as int\n    dim _err_1 = x\n    return _err_1\nend fn\n"
+	if _, err := Parse(validUserUnderscore, "valid_underscore.cb"); err != nil {
+		t.Fatalf("expected single-underscore identifiers to parse cleanly, got: %v", err)
+	}
+
 	validOsImport := "import \"std/os\" as os\nfn main()\n    dim r as os.ExecResult\n    dim code = os.run(\"echo\")\nend fn\n"
 	if _, err := Parse(validOsImport, "valid_os_import.cb"); err != nil {
 		t.Fatalf("expected import std/os as os and os.ExecResult to parse cleanly, got: %v", err)
+	}
+}
+
+func TestParseMinInt64AndOverflowLiterals(t *testing.T) {
+	validSrc := "const MIN_I64 = -9223372036854775808\nfn main() as int\n    dim x = -9223372036854775808\n    return x\nend fn\n"
+	if _, err := Parse(validSrc, "min_int64.cb"); err != nil {
+		t.Fatalf("expected -9223372036854775808 to parse cleanly, got: %v", err)
+	}
+
+	for _, badLit := range []string{"9223372036854775808", "-9223372036854775809"} {
+		src := "fn main()\n    dim x = " + badLit + "\nend fn\n"
+		if _, err := Parse(src, "overflow.cb"); err == nil || !strings.Contains(err.Error(), "invalid integer literal") {
+			t.Fatalf("expected invalid integer literal error for %s, got: %v", badLit, err)
+		}
 	}
 }

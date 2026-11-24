@@ -8,6 +8,8 @@
 *.so
 *.dylib
 /cb
+/bootstrap/cb
+/cbgrep
 
 # Test binary, built with `go test -c`
 *.test
