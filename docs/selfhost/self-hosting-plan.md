@@ -6,18 +6,18 @@ This document specifies the architecture, module layout, Flat Arena AST (`AstAre
 
 ## 1. Readiness Summary
 
-### 1.1 Bootstrap Codebase Footprint (6,845 Non-Test Go LOC)
+### 1.1 Bootstrap Codebase Footprint (6,873 Non-Test Go LOC)
 
 | Package / File | Files | Non-Test Go LOC | Role in Stage 0 (`cb0`) |
 | :--- | :--- | ---: | :--- |
 | `bootstrap/cmd/cb/main.go` | 1 | 336 | CLI (`check`, `emit`, `build`, `run`) & temp Go build job runner |
 | `bootstrap/internal/token/` | 1 | 215 | Token kinds, positions, single/two-word keyword tables |
 | `bootstrap/internal/lexer/` | 1 | 517 | Scanner, escapes, byte/string/number literals, `go ... end go` blocks |
-| `bootstrap/internal/ast/` | 1 | 669 | AST node interfaces, type representations, symbol structs |
+| `bootstrap/internal/ast/` | 1 | 670 | AST node interfaces, type representations, symbol structs |
 | `bootstrap/internal/parser/` | 1 | 1,437 | Recursive-descent + precedence-climbing parser, Go reserved word checks |
-| `bootstrap/internal/sema/` | 6 | 2,420 | Module loader, decl/type/expr/stmt/builtin semantic analysis |
-| `bootstrap/internal/codegen/` | 4 | 1,251 | Go emitter, zero/auto-init emission, runtime helpers, `//line` directives |
-| **Total** | **15** | **6,845** | Complete Stage 0 transpiler |
+| `bootstrap/internal/sema/` | 6 | 2,443 | Module loader, decl/type/expr/stmt/builtin semantic analysis |
+| `bootstrap/internal/codegen/` | 4 | 1,255 | Go emitter, zero/auto-init emission, runtime helpers, `//line` directives |
+| **Total** | **15** | **6,873** | Complete Stage 0 transpiler |
 
 ### 1.2 Test Suite & `-compiler=<bin>` Integration
 
@@ -331,6 +331,7 @@ public type FnSymbol
     goName as str
     modId as str
     isPublic as bool
+    isBuiltin as bool
     paramIds as list[int]
     retTypeId as int
     canErr as bool
@@ -894,12 +895,12 @@ public fn registerFnDecl(byref a as ast.AstArena, modId as int, declId as int) c
   - Built-ins (`builtins.go`): `finishBuiltinCall`, `finishFallibleBuiltinCall`, `inferBuiltinMethodCall`.
 - **Subtle Invariants:**
   - **Operators:** Unary `-`/`+` on `int`/`float`/`byte`; `not` on `bool`. Binary `+` on `int`, `float`, `byte`, or `str` (concatenation); `-`, `*`, `/` on `int`, `float`, `byte`; `%` on `int`, `byte`; comparisons (`<`, `<=`, `>`, `>=`) on `int`, `float`, `str`, `byte`; equality (`==`, `!=`) on any comparable type (plus `enum`); `and`/`or` on `bool`.
-  - **32 Built-in Methods Across 9 Receiver Kinds:**
+  - **34 Built-in Methods Across 9 Receiver Kinds:**
     - `list[T]`: `len() -> int`, `push(T) -> void` (requires mutable target), `join(str) -> str` (only `list[str]`), `sort() -> void` (only `int`/`float`/`str`/`byte`, requires mutable target).
     - `dict[K, V]`: `len() -> int`, `get(K, V) -> V`, `contains(K) -> bool`, `remove(K) -> void` (requires mutable target via `unwrapMutableDictTarget`).
     - `str`: `len() -> int`, `trim() -> str`, `toUpper() -> str`, `toLower() -> str`, `toStr() -> str`, `quote() -> str`, `toInt() -> int` (**fallible**), `toFloat() -> float` (**fallible**), `split(str) -> list[str]`, `contains(str) -> bool`, `startsWith(str) -> bool`, `endsWith(str) -> bool`, `indexOf(str) -> int`, `replace(str, str) -> str`.
-    - `int`: `toByte() -> byte`, `toChar() -> str`, `toStr() -> str`.
-    - `float`: `toStr() -> str`.
+    - `int`: `toByte() -> byte`, `toChar() -> str`, `toFloat() -> float`, `toStr() -> str`.
+    - `float`: `toInt() -> int`, `toStr() -> str`.
     - `bool`: `toStr() -> str`.
     - `byte`: `toInt() -> int`, `toStr() -> str`.
     - `job[T]` / `job`: `wait() -> T` (or `void`), `isDone() -> bool`, `waitTimeout(int) -> T` (**fallible**, or `void`).
@@ -1000,7 +1001,7 @@ fn analyzeReturnStmt(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, s
     6. **Pass 3:** Analyze all non-`go` function bodies (`analyzeFnBody`).
     7. **Pass 4 (Whole-Program):** Run `validateStartJobIsolation()` BFS across `ctx.startSites` and `ctx.fnCallees` to reject direct or transitive mutable global `dim` access from `start` jobs (`errors/11_start_mutable_global_access.cb`).
 - **Subtle Invariants:**
-  - **Built-in `print`:** Registered in each module's `funcs["print"]` with signature `print(msg as str) -> void` before `analyzeProgram`.
+  - **Built-in `print`:** Registered in each module's `funcs["print"]` with `isBuiltin = true` before `analyzeProgram`, accepting a single positional primitive (`str`, `int`, `float`, `bool`, or `byte`) in direct calls, UFCS (`(42).print()`), and `start print(...)`, while preserving normal local variable shadowing.
   - **Module Topological Order:** Dependencies are analyzed completely before dependents so imported `public` types, functions, constants, and globals are already resolved.
 
 #### CleanBasic Design & Key Types/Functions
@@ -1014,7 +1015,7 @@ fn analyzeTopLevelVar(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, 
 
 #### Parity & Behavior Checklist
 - Calls `modules.loadEntry(a, entryPath)` to obtain `topoOrder`.
-- Registers `print(msg as str)` in every module before running Pass 0..3.
+- Registers built-in `print(val)` (`isBuiltin = true`) in every module before running Pass 0..3.
 - Executes Pass 0 -> 0.5 -> 0.6 -> 1 -> 2 -> 3 in exact order for each module in `topoOrder`, followed by whole-program Pass 4 `validateStartJobIsolation()`.
 - Top-level `const` and `dim` initializers run with `tryDepth == 0` and `curFnSymId == -1`, rejecting top-level `can error` calls.
 
@@ -1086,7 +1087,7 @@ fn formatImportLines(ctx as EmitCtx) as list[str]
 
 #### Parity & Behavior Checklist
 - Emits modules in `topoOrder` (`modIds`), and declarations within each module in source order (`declIds`).
-- Handles all 32 built-in methods identically to `codegen/exprs.go` (including `fmt.Sprint`, `strings.*`, `strconv.Quote`, `strconv.ParseInt(..., 10, 64)`, `strconv.ParseFloat(..., 64)`, `slices.Sort`, `cbDictGet`, `cbDictContains`, `cbStartJob`, `cbStartVoidJob`, `wait()`, `waitTimeout()`, `isDone()`, `cancel()`, `isCanceled()`, `int64(len(...))`).
+- Handles all 34 built-in methods identically to `codegen/exprs.go` (including `int.toFloat` -> `float64(...)` and `float.toInt` -> `func(v float64) int64 { return int64(v) }(...)` to handle constant float literals safely) (including `fmt.Sprint`, `strings.*`, `strconv.Quote`, `strconv.ParseInt(..., 10, 64)`, `strconv.ParseFloat(..., 64)`, `slices.Sort`, `cbDictGet`, `cbDictContains`, `cbStartJob`, `cbStartVoidJob`, `wait()`, `waitTimeout()`, `isDone()`, `cancel()`, `isCanceled()`, `int64(len(...))`).
 - `emitArgExpr` handles `byref` forwarding: if arg is already a `byref` param (`ExprIdent` with `byRef == true`), pass `name` directly; otherwise pass `&expr`.
 - `emitGoBoundFn` emits a CleanBasic-callable wrapper forwarding parameters (and returning `error` / `(T, error)` if `canErr`) to `fn.goTarget`.
 
@@ -1232,7 +1233,7 @@ go build -o build/cb0 ./bootstrap/cmd/cb
 3. **Exit Gate:** All module type/function headers resolve across modules, non-comparable `dict` keys fail, and cyclic value structs fail cleanly without hanging.
 
 ### Step 7: Full Semantic Analysis (`selfhost/sema_exprs.cb` + `sema_stmts.cb` + `sema.cb`)
-1. **Build:** Implement `inferExpr`, 32 built-in methods, 4-tier UFCS, `inferStartExpr`, `analyzeStmt`, `blockAlwaysReturns`, Pass 2/3, and Pass 4 `validateStartJobIsolation()`. Wire `cb check` in `selfhost/main.cb` to `sema.loadAndAnalyze`.
+1. **Build:** Implement `inferExpr`, 34 built-in methods, primitive `print`, 4-tier UFCS, `inferStartExpr`, `analyzeStmt`, `blockAlwaysReturns`, Pass 2/3, and Pass 4 `validateStartJobIsolation()`. Wire `cb check` in `selfhost/main.cb` to `sema.loadAndAnalyze`.
 2. **Verify:** Build `cb1` and run `cb1 check` against every positive test, every error test, every tutorial file, `cbgrep`, and `selfhost/main.cb` itself:
    ```bash
    ./build/cb0 build selfhost/main.cb -o build/cb1
@@ -1246,7 +1247,7 @@ go build -o build/cb0 ./bootstrap/cmd/cb
 3. **Exit Gate:** `cb1 check` accepts 100% of valid CleanBasic programs in the repository (including `selfhost/main.cb`) and rejects all 11 `tests/cases/errors/*.cb` cases with the exact `// EXPECT_ERR:` substrings.
 
 ### Step 8: Go Code Emitter (`selfhost/codegen.cb`) & Stage 1 Test Suite Parity
-1. **Build:** Implement `codegen.cb` (types, recursive struct `dict`/`cancelToken` auto-init, expressions, 32 built-ins, `emitStartExpr` eager-capture IIFEs, fallible call lowering, `try/catch` labels, `//line` directives, 7 on-demand runtime helpers, sorted imports, and `cb_main` wrapper) and wire `transpileProgram` in `selfhost/main.cb`.
+1. **Build:** Implement `codegen.cb` (types, recursive struct `dict`/`cancelToken` auto-init, expressions, 34 built-ins, `emitStartExpr` eager-capture IIFEs, fallible call lowering, `try/catch` labels, `//line` directives, 7 on-demand runtime helpers, sorted imports, and `cb_main` wrapper) and wire `transpileProgram` in `selfhost/main.cb`.
 2. **Verify:**
    ```bash
    ./build/cb0 build selfhost/main.cb -o build/cb1

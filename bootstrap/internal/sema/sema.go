@@ -196,11 +196,12 @@ func Analyze(prog *ast.Program) (*TypedProgram, error) {
 			continue
 		}
 		a.mod = mod
-		// Register built-in single-argument print(msg as str) function in each module
+		// Register built-in single-argument print(val) function in each module
 		mod.Functions["print"] = &FnSymbol{
 			Name:       "print",
 			Params:     []ParamSymbol{{Name: "msg", Type: StrType}},
 			ReturnType: VoidType,
+			IsBuiltin:  true,
 		}
 		if err := a.analyzeProgram(mod.Program); err != nil {
 			return nil, err

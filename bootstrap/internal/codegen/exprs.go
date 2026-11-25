@@ -79,6 +79,10 @@ func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 		return fmt.Sprintf("strings.ReplaceAll(%s, %s, %s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]), e.emitExpr(ex.Args[1]))
 	case "int.toByte":
 		return fmt.Sprintf("byte(%s)", e.emitExpr(ci.Receiver))
+	case "int.toFloat":
+		return fmt.Sprintf("float64(%s)", e.emitExpr(ci.Receiver))
+	case "float.toInt":
+		return fmt.Sprintf("func(v float64) int64 { return int64(v) }(%s)", e.emitExpr(ci.Receiver))
 	case "byte.toInt":
 		return fmt.Sprintf("int64(%s)", e.emitExpr(ci.Receiver))
 	case "job.wait":
@@ -247,7 +251,7 @@ func (e *emitter) effectiveCallArgs(ex *ast.CallExpr, ci *sema.CallInfo) []ast.E
 }
 
 func (e *emitter) emitFnCallCode(fn *sema.FnSymbol, renderedArgs []string) string {
-	if fn.Name == "print" {
+	if fn.IsBuiltin && fn.Name == "print" {
 		e.useImport("fmt")
 		return fmt.Sprintf("fmt.Println(%s)", renderedArgs[0])
 	}

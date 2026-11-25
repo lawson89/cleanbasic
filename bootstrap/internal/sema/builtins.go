@@ -140,12 +140,19 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 		case "toChar":
 			t, err := a.finishBuiltinCall(e, recvExpr, "int.toChar", StrType, scope)
 			return t, true, err
+		case "toFloat":
+			t, err := a.finishBuiltinCall(e, recvExpr, "int.toFloat", FloatType, scope)
+			return t, true, err
 		case "toStr":
 			t, err := a.finishBuiltinCall(e, recvExpr, "int.toStr", StrType, scope)
 			return t, true, err
 		}
 	case KindFloat:
-		if method == "toStr" {
+		switch method {
+		case "toInt":
+			t, err := a.finishBuiltinCall(e, recvExpr, "float.toInt", IntType, scope)
+			return t, true, err
+		case "toStr":
 			t, err := a.finishBuiltinCall(e, recvExpr, "float.toStr", StrType, scope)
 			return t, true, err
 		}

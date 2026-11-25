@@ -38,7 +38,7 @@ Verified against `bootstrap/internal/sema/builtins.go` and `bootstrap/internal/s
 
 | Receiver / Global | Method / Call | Signature | Go Emission / Notes |
 | :--- | :--- | :--- | :--- |
-| Global | `print(msg)` | `(msg as str)` | Prints line to stdout (`fmt.Println`) |
+| Global | `print(val)` | `(val as str | int | float | bool | byte)` | Prints primitive value to stdout (`fmt.Println`), matching `.toStr()` formatting |
 | `list[T]` | `.len()` | `() as int` | `int64(len(xs))` |
 | `list[T]` | `.push(val)` | `(val as T)` | `xs = append(xs, val)`; requires mutable addressable `list` |
 | `list[str]` | `.join(sep)` | `(sep as str) as str` | `strings.Join(xs, sep)` |
@@ -63,7 +63,9 @@ Verified against `bootstrap/internal/sema/builtins.go` and `bootstrap/internal/s
 | `str` | `.replace(old, new)` | `(old as str, new as str) as str` | `strings.ReplaceAll(s, old, new)` |
 | `int` | `.toByte()` | `() as byte` | `byte(n)` |
 | `int` | `.toChar()` | `() as str` | `string(rune(n))` |
+| `int` | `.toFloat()` | `() as float` | `float64(n)` |
 | `int` | `.toStr()` | `() as str` | `strconv.FormatInt(n, 10)` |
+| `float` | `.toInt()` | `() as int` | `int64(f)` (truncates toward zero) |
 | `float` | `.toStr()` | `() as str` | `strconv.FormatFloat(f, 'g', -1, 64)` |
 | `bool` | `.toStr()` | `() as str` | `strconv.FormatBool(b)` |
 | `byte` | `.toInt()` | `() as int` | `int64(b)` |

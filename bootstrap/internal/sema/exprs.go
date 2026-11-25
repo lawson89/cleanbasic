@@ -394,8 +394,28 @@ func (a *analyzer) checkFallibleCall(e *ast.CallExpr, desc, outsideCtxMsg string
 	return nil
 }
 
+func isPrintablePrimitive(t Type) bool {
+	switch t.Kind {
+	case KindStr, KindInt, KindFloat, KindBool, KindByte:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *analyzer) finishFnCall(e *ast.CallExpr, fnSym *FnSymbol, scope *Scope) (Type, error) {
-	if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
+	if fnSym.IsBuiltin && fnSym.Name == "print" {
+		if len(e.Args) != 1 {
+			return VoidType, newSemaError(e.Pos, "function %q expects %d argument(s), got %d", fnSym.Name, 1, len(e.Args))
+		}
+		argType, err := a.inferExpr(e.Args[0], scope)
+		if err != nil {
+			return VoidType, err
+		}
+		if !isPrintablePrimitive(argType) {
+			return VoidType, newSemaError(e.Args[0].ExprPos(), "argument 1 (%q) to function %q has type %s, expected str, int, float, bool, or byte", "msg", fnSym.Name, argType.String())
+		}
+	} else if err := a.validateCallArgs(e, e.Args, fnSym.Params, fnSym.Name, fnSym.CanError, "function", scope); err != nil {
 		return VoidType, err
 	}
 	if a.currentFn != nil {
@@ -530,8 +550,14 @@ func (a *analyzer) inferMethodOrUFCSCall(e *ast.CallExpr, fa *ast.FieldAccessExp
 
 	// UFCS fallback: check current module first, then public functions in receiver type's defining module
 	var fnSym *FnSymbol
-	if cand, ok := a.mod.Functions[fa.Field]; ok && len(cand.Params) > 0 && cand.Params[0].Type.Equals(recvType) {
-		fnSym = cand
+	if cand, ok := a.mod.Functions[fa.Field]; ok && len(cand.Params) > 0 {
+		if cand.IsBuiltin && cand.Name == "print" {
+			if isPrintablePrimitive(recvType) {
+				fnSym = cand
+			}
+		} else if cand.Params[0].Type.Equals(recvType) {
+			fnSym = cand
+		}
 	} else if recvType.ModuleID != "" && recvType.ModuleID != a.mod.ID {
 		if defMod, ok := a.prog.ModuleByID[recvType.ModuleID]; ok {
 			if cand, ok := defMod.Functions[fa.Field]; ok && cand.Public && len(cand.Params) > 0 && cand.Params[0].Type.Equals(recvType) {

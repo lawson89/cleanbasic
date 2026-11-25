@@ -165,6 +165,7 @@ type FnSymbol struct {
 	ReturnType Type
 	CanError   bool
 	Public     bool
+	IsBuiltin  bool
 	Pos        token.Position
 }
 

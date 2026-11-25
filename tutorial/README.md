@@ -50,7 +50,7 @@ Then type-check or run any starter file or solution:
 ### Task
 Write a program that defines a constant `BOILING_C = 100.0`, converts `0.0`, `25.0`, and `BOILING_C` from Celsius to Fahrenheit using the formula `F = C * 9.0 / 5.0 + 32.0`, and prints each conversion.
 
-> **Tip:** CleanBasic is strictly typed—use float literals (`9.0`, `5.0`, `32.0`) when computing with `float` values.
+> **Tip:** CleanBasic is strictly typed—use float literals (`9.0`, `5.0`, `32.0`) when computing with `float` values (or convert explicitly with `.toFloat()` / `.toInt()`). `print(...)` accepts any primitive (`str`, `int`, `float`, `bool`, `byte`), while `+` string concatenation uses `.toStr()`.
 
 ### Expected Output
 ```text
@@ -128,7 +128,7 @@ fn main()
         else if i % 5 == 0
             print("Buzz")
         else
-            print(i.toStr())
+            print(i)
         end if
     end for
 end fn

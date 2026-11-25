@@ -946,9 +946,9 @@ func TestPreSelfHostingSimplificationsSema(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "print rejects non-str arg",
-			src:     "fn main()\n    print(42)\nend fn\n",
-			wantErr: "expected str",
+			name:    "print rejects non-primitive arg",
+			src:     "fn main()\n    print([1, 2])\nend fn\n",
+			wantErr: "expected str, int, float, bool, or byte",
 		},
 		{
 			name: "print rejects multiple args",
@@ -1286,6 +1286,114 @@ func TestCancelTokenAndJobTimeoutSema(t *testing.T) {
 			wantSub: "cannot be compared",
 		},
 	}
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := AnalyzeSource(tc.src, tc.name+".cb")
+			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantSub, err)
+			}
+		})
+	}
+}
+
+func TestNumericConversionsAndPrimitivePrintSema(t *testing.T) {
+	goodSrc := `fn main()
+    dim a as float = (42).toFloat()
+    dim b as float = (-7).toFloat()
+    dim c as int = (3.9).toInt()
+    dim d as int = (-3.9).toInt()
+    print("hello")
+    print(42)
+    print(3.5)
+    print(true)
+    print('A')
+    (42).print()
+    "hi".print()
+    dim j = start print(123)
+    j.wait()
+    dim x = a + b + c.toFloat() + d.toFloat()
+    print(x)
+end fn
+`
+	if _, err := AnalyzeSource(goodSrc, "numeric_print_ok.cb"); err != nil {
+		t.Fatalf("expected valid numeric conversion and primitive print program to pass sema, got: %v", err)
+	}
+
+	shadowSrc := `fn main() as int
+    dim print = 1
+    return print
+end fn
+`
+	if _, err := AnalyzeSource(shadowSrc, "print_shadow_ok.cb"); err != nil {
+		t.Fatalf("expected local variable shadowing print to pass sema, got: %v", err)
+	}
+
+	errCases := []struct {
+		name    string
+		src     string
+		wantSub string
+	}{
+		{
+			name: "int.toFloat rejects args",
+			src: `fn main()
+    dim x = (42).toFloat(1)
+end fn
+`,
+			wantSub: "expects 0 argument(s), got 1",
+		},
+		{
+			name: "float.toInt rejects args",
+			src: `fn main()
+    dim x = (3.14).toInt(1)
+end fn
+`,
+			wantSub: "expects 0 argument(s), got 1",
+		},
+		{
+			name: "print rejects 0 args",
+			src: `fn main()
+    print()
+end fn
+`,
+			wantSub: "expects 1 argument(s), got 0",
+		},
+		{
+			name: "print rejects 2 args",
+			src: `fn main()
+    print(1, 2)
+end fn
+`,
+			wantSub: "expects 1 argument(s), got 2",
+		},
+		{
+			name: "print rejects list arg",
+			src: `fn main()
+    print([1, 2])
+end fn
+`,
+			wantSub: "expected str, int, float, bool, or byte",
+		},
+		{
+			name: "print rejects struct arg",
+			src: `type Box
+    v as int
+end type
+fn main()
+    print(Box(1))
+end fn
+`,
+			wantSub: "expected str, int, float, bool, or byte",
+		},
+		{
+			name: "UFCS print rejects list receiver",
+			src: `fn main()
+    [1, 2].print()
+end fn
+`,
+			wantSub: `no method or UFCS function "print"`,
+		},
+	}
+
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := AnalyzeSource(tc.src, tc.name+".cb")

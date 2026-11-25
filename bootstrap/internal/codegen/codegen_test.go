@@ -1166,3 +1166,98 @@ func TestEmitGoCancelTokenAndJobTimeout(t *testing.T) {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 }
+
+func TestEmitGoNumericConversionsAndPrimitivePrint(t *testing.T) {
+	src := `fn main()
+    dim i = 42
+    dim negI = -7
+    dim f1 = i.toFloat()
+    dim f2 = negI.toFloat()
+    dim n1 = (3.9).toInt()
+    dim n2 = (-3.9).toInt()
+    print(i)
+    print(0.0)
+    print(32.0)
+    print(77.0)
+    print(212.0)
+    print(-3.5)
+    print(true)
+    print('A')
+    print("ok")
+    print(f1)
+    print(f2)
+    print(n1)
+    print(n2)
+    (99).print()
+    dim j = start print(123)
+    j.wait()
+    print(i.toStr())
+    print((0.0).toStr())
+    print((32.0).toStr())
+    print((77.0).toStr())
+    print((212.0).toStr())
+    print((-3.5).toStr())
+    print(true.toStr())
+    print('A'.toStr())
+end fn
+`
+
+	prog, err := sema.AnalyzeSource(src, "num_print.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	goCode, err := EmitGoWithOptions(prog, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGoWithOptions failed: %v", err)
+	}
+
+	for _, want := range []string{`"fmt"`, "float64(", "int64(", "fmt.Println("} {
+		if !strings.Contains(goCode, want) {
+			t.Errorf("expected generated Go to contain %q, got:\n%s", want, goCode)
+		}
+	}
+
+	tmpDir := t.TempDir()
+	mainPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(mainPath, []byte(goCode), 0o600); err != nil {
+		t.Fatalf("write temp main.go: %v", err)
+	}
+	cmd := exec.Command("go", "run", mainPath)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr:\n%s\ngo:\n%s", err, errBuf.String(), goCode)
+	}
+
+	wantLines := []string{
+		"42",
+		"0",
+		"32",
+		"77",
+		"212",
+		"-3.5",
+		"true",
+		"65",
+		"ok",
+		"42",
+		"-7",
+		"3",
+		"-3",
+		"99",
+		"123",
+		"42",
+		"0",
+		"32",
+		"77",
+		"212",
+		"-3.5",
+		"true",
+		"65",
+	}
+	got := strings.TrimSpace(outBuf.String())
+	want := strings.Join(wantLines, "\n")
+	if got != want {
+		t.Errorf("output mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}

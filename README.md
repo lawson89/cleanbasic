@@ -6,7 +6,7 @@ A statically typed, readable BASIC dialect that transpiles to clean, single-file
 
 ## Why CleanBasic?
 
-- **Readable BASIC syntax, Go performance:** Familiar block-delimited syntax (`fn ... end fn`, `if ... end if`, `type ... end type`) lowered 1:1 to idiomatic Go and compiled to native binaries.
+- **Readable BASIC syntax, Go performance:** Familiar block-delimited syntax (`fn ... end fn`, `if ... end if`, `type ... end type`) lowered 1:1 to idiomatic Go and compiled to native binaries, with explicit numeric conversions (`.toFloat()`, `.toInt()`, `.toStr()`) and `print(...)` across all primitive types.
 - **Zero-dependency toolchain:** Both the bootstrap compiler and emitted Go code rely strictly on the Go standard library.
 - **Explicit error handling & race-free concurrency:** `can error` / `try ... catch` error propagation, `defer`, and value-isolated `start` / `job[T]` tasks (`.wait()`, `.waitTimeout(ms)`, `.isDone()`) with explicit cooperative `cancelToken` cancellation (zero buffer sizing, race-free by construction).
 - **Direct Go interop:** Import any Go package with `go import "pkg" [as alias]` or embed Go bindings cleanly when needed.

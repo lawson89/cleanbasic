@@ -1,5 +1,12 @@
 // EXPECT_OUT: arithmetic: count=3
 // EXPECT_OUT: logic: true
+// EXPECT_OUT: 42
+// EXPECT_OUT: -3.5
+// EXPECT_OUT: true
+// EXPECT_OUT: 65
+// EXPECT_OUT: 10
+// EXPECT_OUT: 3
+// EXPECT_OUT: -3
 
 fn main() as int
     dim base = 10
@@ -14,5 +21,15 @@ fn main() as int
 
     dim ok = (x == 3) and not (x > 10) or false
     print("logic: " + ok.toStr())
+
+    print(42)
+    print(-3.5)
+    print(true)
+    print('A')
+
+    dim f = base.toFloat()
+    print(f)
+    print((3.9).toInt())
+    print((-3.9).toInt())
     return 0
 end fn
