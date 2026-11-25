@@ -135,7 +135,7 @@ If `params[0]` is `byref`, `target` must pass `checkMutableTarget`.
 
 ### 2.4 Module Imports & Visibility
 
-- `import "relative/path"` (auto-aliases to last path segment, e.g. `"std/fs"` -> `fs`) or `import "path" as alias`.
+- `import "relative/path.cb"` for local files (resolved relative to the importing file's directory; `.cb` suffix required, e.g. `import "token.cb"` -> `token`), `import "std/fs"` for standard library modules (auto-aliases to last path segment), or `import "path" as alias`.
 - Only symbols marked `public` (`public fn`, `public type`, `public enum`, `public const`, `public dim`) are visible across module boundaries.
 - **Emitted Go Naming:** Non-entry module symbols are sanitized as `<modID>__<SymbolName>` (e.g., `std_fs__readFile`, `token__Kind`), while entry module symbols keep their CleanBasic names.
 

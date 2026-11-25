@@ -6,23 +6,23 @@ This document specifies the architecture, module layout, Flat Arena AST (`AstAre
 
 ## 1. Readiness Summary
 
-### 1.1 Bootstrap Codebase Footprint (6,344 Non-Test Go LOC)
+### 1.1 Bootstrap Codebase Footprint (6,845 Non-Test Go LOC)
 
 | Package / File | Files | Non-Test Go LOC | Role in Stage 0 (`cb0`) |
 | :--- | :--- | ---: | :--- |
-| `bootstrap/cmd/cb/main.go` | 1 | 293 | CLI (`check`, `emit`, `build`, `run`) & temp Go build job runner |
-| `bootstrap/internal/token/` | 1 | 213 | Token kinds, positions, single/two-word keyword tables |
-| `bootstrap/internal/lexer/` | 1 | 512 | Scanner, escapes, byte/string/number literals, `go ... end go` blocks |
-| `bootstrap/internal/ast/` | 1 | 667 | AST node interfaces, type representations, symbol structs |
-| `bootstrap/internal/parser/` | 1 | 1,370 | Recursive-descent + precedence-climbing parser, Go reserved word checks |
-| `bootstrap/internal/sema/` | 6 | 2,288 | Module loader, decl/type/expr/stmt/builtin semantic analysis |
-| `bootstrap/internal/codegen/` | 4 | 1,001 | Go emitter, zero/auto-init emission, runtime helpers, `//line` directives |
-| **Total** | **15** | **6,344** | Complete Stage 0 transpiler |
+| `bootstrap/cmd/cb/main.go` | 1 | 336 | CLI (`check`, `emit`, `build`, `run`) & temp Go build job runner |
+| `bootstrap/internal/token/` | 1 | 215 | Token kinds, positions, single/two-word keyword tables |
+| `bootstrap/internal/lexer/` | 1 | 517 | Scanner, escapes, byte/string/number literals, `go ... end go` blocks |
+| `bootstrap/internal/ast/` | 1 | 669 | AST node interfaces, type representations, symbol structs |
+| `bootstrap/internal/parser/` | 1 | 1,437 | Recursive-descent + precedence-climbing parser, Go reserved word checks |
+| `bootstrap/internal/sema/` | 6 | 2,420 | Module loader, decl/type/expr/stmt/builtin semantic analysis |
+| `bootstrap/internal/codegen/` | 4 | 1,251 | Go emitter, zero/auto-init emission, runtime helpers, `//line` directives |
+| **Total** | **15** | **6,845** | Complete Stage 0 transpiler |
 
 ### 1.2 Test Suite & `-compiler=<bin>` Integration
 
 - **Unit Test Suites (5 packages):** `bootstrap/cmd/cb`, `bootstrap/internal/lexer`, `bootstrap/internal/parser`, `bootstrap/internal/sema`, `bootstrap/internal/codegen`.
-- **Integration & Error Test Suite:** `bootstrap/tests/runner_test.go` executes **19 test cases** under `tests/cases/` (11 positive end-to-end programs including multi-file modules, stdlib, concurrency, and Go interop; 8 compile-time error tests under `tests/cases/errors/`).
+- **Integration, Error & Tutorial Test Suite:** `bootstrap/tests/runner_test.go` executes **22 test cases** under `tests/cases/` (11 positive end-to-end programs including multi-file modules, stdlib, concurrency, and Go interop; 11 compile-time error tests `01`..`11` under `tests/cases/errors/`), plus `TestCliPrintUsageLongOnly` and **11** tutorial starter/solution pairs in `TestTutorialExercises` (**34 subtests total**, all wired to `-compiler=<bin>`).
 - **External Compiler Hook:** `bootstrap/tests/runner_test.go` (lines 18, 141–155) already supports `-compiler=<bin>`, invoking:
   ```text
   <bin> emit <entryPath> -o <outGoPath>
@@ -96,7 +96,23 @@ lexer --> token
 | `main.cb` | CLI (`check`, `emit`, `build`, `run`), `std/fs` + `std/os` build job runner | `cmd/cb/main.go` |
 
 **Why split `sema` into 4 files?**
-`bootstrap/internal/sema/` is **2,288 LOC**—36% of the entire compiler. Splitting into `sema_types.cb`, `sema_exprs.cb`, `sema_stmts.cb`, and `sema.cb` keeps each file focused (~400–600 LOC), prevents circular dependencies via a strict layering (`sema_types` -> `sema_exprs` -> `sema_stmts` -> `sema`), and makes milestone testing modular.
+`bootstrap/internal/sema/` is **2,420 LOC**—35% of the entire compiler. Splitting into `sema_types.cb`, `sema_exprs.cb`, `sema_stmts.cb`, and `sema.cb` keeps each file focused (~400–600 LOC), prevents circular dependencies via a strict layering (`sema_types` -> `sema_exprs` -> `sema_stmts` -> `sema`), and makes milestone testing modular.
+
+### 2.2 Core Go -> CleanBasic Translation Playbook
+
+Every file in `bootstrap/internal/` uses 7 Go idioms that do not exist directly in CleanBasic. Translate them mechanically using these rules:
+
+| Go Pattern in `bootstrap/` | CleanBasic Replacement in `selfhost/` | Why / Rule Reference |
+| :--- | :--- | :--- |
+| AST interfaces (`ast.Expr`, `ast.Statement`, `ast.TopLevelDecl`) & type switches | `int` arena indices (`-1` = nil) into `AstArena` `list[...]` pools + `select case a.exprs[id].kind` | No interfaces, pointers, or recursive value structs (`sema/decls.go:134`). |
+| Mutating pointer nodes (`expr.SetExprType(t)`, `call.CallInfo = ...`) | Pass `byref a as ast.AstArena` and mutate `a.exprs[id].semaTypeId = tyId` directly | `list[T]` indexing on a mutable `byref` struct is addressable (`sema/stmts.go:169`). |
+| Mutating map values (`mod.Structs[name].Fields = ...`) | Store `int` arena IDs in `dict[str, int]`, then mutate `a.structSyms[id].fieldIds.push(fid)` | `dict[k]` is **not addressable** in Go or CleanBasic (`sema/stmts.go:205`). |
+| Multi-return `(val, ok)` or `(val, err)` | Use `can error` for `(T, error)` functions; return `-1` sentinel IDs or small value structs (e.g., `CoalesceResult`) for `(T, bool)` | CleanBasic functions have a single return type. |
+| Nested fallible calls (`items.push(parseExpr())`) | Lift every `can error` call to its own line: `dim id = parseExpr(a, p)` then `items.push(id)` | Fallible calls may **only** appear at statement root (`sema/stmts.go:131`, `exprs.go:381`). |
+| `strings.Builder` (`sb.WriteString(...)`) | Pass `byref out as list[str]`, call `out.push(...)`, and finish with `out.join("")` | Avoids $O(N^2)$ string concatenation. |
+| `strconv.Quote(s)` / `slices.Sorted(maps.Keys(m))` | Use built-in `s.quote()` and `keys.sort()` on `list[str]` | Built into CleanBasic (`sema/builtins.go:53, 81`). |
+
+> **Identifier Safety Rule (`parser.go:94–124`):** Never name any variable, parameter, or struct field `type`, `str`, `fn`, `err`, `var`, `func`, `map`, `range`, `default`, `switch`, `struct`, `package`, `chan`, `len`, `error`, `string`, `fmt`, `os`, `sync`, `time`, or `_cb_*`. Use `ty`, `tyId`, `text`, `fnSym`, `errMsg`, `table`, `defVal`.
 
 ---
 
@@ -115,7 +131,7 @@ All identifiers below are chosen to avoid CleanBasic keywords, all 47 Go/runtime
 
 ```cleanbasic
 // selfhost/ast.cb — Flat Arena AST & Symbol Pool Blueprint
-import "selfhost/token"
+import "token.cb"
 
 public enum TypeKind
     TyVoid
@@ -129,6 +145,7 @@ public enum TypeKind
     TyList
     TyDict
     TyJob
+    TyCancelToken
     TyErr
 end enum
 
@@ -208,7 +225,6 @@ public type StmtNode
     hasElse as bool
     catchVar as str
     catchStmtIds as list[int]
-    callExprId as int
     goName as str
     catchGoName as str
 end type
@@ -229,6 +245,7 @@ public enum ExprKind
     ExprIndex
     ExprSlice
     ExprCall
+    ExprStart
 end enum
 
 public type ExprNode
@@ -251,6 +268,7 @@ public type ExprNode
     dictEntryIds as list[int]
     ctorTypeId as int
     callInfoId as int
+    callExprId as int
     byRef as bool
     goName as str
 end type
@@ -344,6 +362,7 @@ public type VarSymbol
     typeId as int
     isConst as bool
     isPublic as bool
+    isGlobal as bool
     byRef as bool
     pos as token.Position
 end type
@@ -442,12 +461,16 @@ Codegen passes `byref a as AstArena` (or `byref ctx as EmitCtx` alongside `a as 
 fn emitExpr(byref a as AstArena, byref ctx as EmitCtx, exprId as int) as str
     select case a.exprs[exprId].kind
         case ast.ExprKind.ExprIntLit
-            return "int64(" + a.exprs[exprId].intVal.toStr() + ")"
+            return "int64(" + a.exprs[exprId].text + ")"
         case ast.ExprKind.ExprIdent
+            dim name = a.exprs[exprId].text
             if a.exprs[exprId].goName != ""
-                return a.exprs[exprId].goName
+                name = a.exprs[exprId].goName
             end if
-            return a.exprs[exprId].text
+            if a.exprs[exprId].byRef
+                return "(*" + name + ")"
+            end if
+            return name
         case ast.ExprKind.ExprBinary
             dim lhs = emitExpr(a, ctx, a.exprs[exprId].leftId)
             dim rhs = emitExpr(a, ctx, a.exprs[exprId].rightId)
@@ -469,7 +492,7 @@ Each module below follows the acyclic import DAG in Section 2 and maps 1-to-1 to
 ### 4.1 `selfhost/token.cb` ← `bootstrap/internal/token/token.go`
 
 #### Go Reference Summary
-- **Source File:** `bootstrap/internal/token/token.go` (213 LOC)
+- **Source File:** `bootstrap/internal/token/token.go` (215 LOC)
 - **Key Types:**
   - `Position` (`File string`, `Line int`, `Column int`, 1-based) with `Position.String()` returning `file:line:col` (or `line:col` if `File == ""`).
   - `Kind` (`string`): **84 token kinds** grouped into:
@@ -523,14 +546,14 @@ public fn coalesceTwoWordKeyword(first as str, second as str) as CoalesceResult
 ```
 
 #### Parity & Behavior Checklist
-- All 83 `Kind` variants map 1-to-1 to `bootstrap/internal/token/token.go` and `kindString(k)` returns the exact Go `Kind` string (e.g. `"else if"`, `"INT_LIT"`, `"="`) for identical error diagnostics.
+- All 84 `Kind` variants map 1-to-1 to `bootstrap/internal/token/token.go` and `kindString(k)` returns the exact Go `Kind` string (e.g. `"else if"`, `"INT_LIT"`, `"="`) for identical error diagnostics.
 - `posString(p)` formats `file:line:col` when `p.file != ""`, else `line:col`.
-- `lookupIdent(word)` checks all 40 single-word keywords and returns `Kind.TokIdent` otherwise.
-- `coalesceTwoWordKeyword(first, second)` matches all 15 two-word pairs and returns `first + " " + second` as `lexeme`.
+- `lookupIdent(word)` checks all 42 single-word keywords and returns `Kind.TokIdent` otherwise.
+- `coalesceTwoWordKeyword(first, second)` matches all 14 two-word pairs and returns `first + " " + second` as `lexeme`.
 
 #### CleanBasic Translation Notes / Gotchas
 - **No Go Reserved Words in Enum Variants or Parameters:** Never name an enum variant `Error` or `Type` or `Go` without a prefix; `Tok*` avoids all collisions.
-- **Composite Key Workaround:** CleanBasic `dict` keys can be `str`—encode two-word pairs in a module-level `dict[str, Kind]` keyed by `first + " " + second` (e.g., `"else if"`, `"end fn"`, `"can error"`). Build or lazy-initialize the lookup `dict` inside a helper function if top-level `dict` literal syntax is verbose.
+- **Composite Key Workaround or Stateless `select case`:** CleanBasic `dict` keys can be `str`—encode two-word pairs in a module-level `dict[str, Kind]` keyed by `first + " " + second` (e.g., `"else if"`, `"end fn"`, `"can error"`), or use pure `select case` functions in `lookupIdent` / `coalesceTwoWordKeyword` to keep `token.cb` 100% stateless.
 - **Zero-Allocation `CoalesceResult`:** CleanBasic functions return a single value, so return `CoalesceResult(true, k, first + " " + second)` instead of Go's 3-tuple `(Kind, string, bool)`.
 
 #### Module Verification Gate
@@ -542,7 +565,7 @@ public fn coalesceTwoWordKeyword(first as str, second as str) as CoalesceResult
 ### 4.2 `selfhost/lexer.cb` ← `bootstrap/internal/lexer/lexer.go`
 
 #### Go Reference Summary
-- **Source File:** `bootstrap/internal/lexer/lexer.go` (512 LOC)
+- **Source File:** `bootstrap/internal/lexer/lexer.go` (517 LOC)
 - **Key Types:** `LexError` (`Pos`, `Message`; `Error()` formats `"%s: syntax error: %s"`), `Lexer` (`file`, `src`, `pos`, `line`, `col`).
 - **Core Functions:** `Tokenize(src, filename)`, `scanAll()`, `scanIdentifier()`, `scanNumber()`, `scanString()`, `scanEscapeSequence()`, `scanByteLiteral()`, `scanGoBlock(startPos)`, `isRestOfLineEmptyOrComment()`, `isEndGoDirective(trimmed)`, `scanNextToken()`, `coalesceKeywords(raw)`.
 - **Subtle Invariants:**
@@ -587,7 +610,7 @@ fn coalesceKeywords(raw as list[token.Token]) as list[token.Token]
 
 #### CleanBasic Translation Notes / Gotchas
 - **Byte Indexing:** In CleanBasic, `l.src[l.pos]` returns `byte` (not `str`). Compare against byte literals (`' '`, `'\n'`, `'0'`, `'9'`, `'a'`, `'z'`) and check `ch.toInt() >= 128` for non-ASCII rejection in `scanByteLiteral`.
-- **String Accumulation:** Use `list[str]` + `.join("")` or `ch.toStr()` / `intVal.toChar()` when building decoded string literals; avoid `str` concatenation in tight loops over huge inputs where `list[str].push(...)` + `.join("")` is cleaner.
+- **String Accumulation & UTF-8 Pass-Through:** Use `list[str]` + `.join("")` when building decoded string literals; push `decodedByte.toInt().toChar()` for ASCII escapes and slice `l.src[segStart:l.pos]` directly between escapes so multi-byte UTF-8 runes pass through untouched (matching `lexer.go:236–255`).
 - **Top-Level Fallible Call Rule:** Every call to `scanEscapeSequence`, `scanString`, `scanNumber`, `scanByteLiteral`, `scanGoBlock`, `scanNextToken`, and `scanAll` must be a top-level statement or RHS of `dim` / `=`—never nested inside `tokens.push(scanNextToken(l))`.
 
 #### Module Verification Gate
@@ -600,23 +623,23 @@ fn coalesceKeywords(raw as list[token.Token]) as list[token.Token]
 ### 4.3 `selfhost/ast.cb` ← `bootstrap/internal/ast/ast.go`
 
 #### Go Reference Summary
-- **Source File:** `bootstrap/internal/ast/ast.go` (667 LOC)
+- **Source File:** `bootstrap/internal/ast/ast.go` (669 LOC)
 - **Key Types:**
   - `Program` (`File string`, `Decls []TopLevelDecl`).
   - Interfaces: `TopLevelDecl`, `Statement`, `Expr`.
-  - Type System: `TypeKind` (13 kinds), `Type` (`Kind`, `Name`, `ModuleID`, `GoName`, `SubTypes []Type`), `Elem()`, `Key()`, `Val()`, `String()`, `IsVoid()`, `Equals(other)`, plus primitive constants (`VoidType`, `IntType`, `FloatType`, `StrType`, `BoolType`, `ByteType`, `CancelTokenType`, `ErrType`).
+  - Type System: `TypeKind` (14 kinds including `KindCancelToken`), `Type` (`Kind`, `Name`, `ModuleID`, `GoName`, `SubTypes []Type`), `Elem()`, `Key()`, `Val()`, `String()`, `IsVoid()`, `Equals(other)`, plus primitive constants (`VoidType`, `IntType`, `FloatType`, `StrType`, `BoolType`, `ByteType`, `CancelTokenType`, `ErrType`).
   - Symbol Structs: `ParamSymbol`, `FnSymbol`, `FieldSymbol`, `StructSymbol`, `EnumSymbol`, `CallKind` (5 kinds), `CallInfo`.
   - Decl Nodes (8): `ImportDecl`, `GoImportDecl`, `GoBlockDecl`, `ConstDecl`, `TypeDecl`, `EnumDecl`, `FnDecl`, `VarDecl` (implements both `TopLevelDecl` and `Statement`).
   - Stmt Nodes (13): `VarDecl`, `Assignment`, `ExprStmt`, `IfStmt`, `ForStmt` (range + for-in), `WhileStmt`, `SelectStmt`, `TryCatchStmt`, `DeferStmt`, `ReturnStmt`, `BreakStmt`, `ContinueStmt`.
-  - Expr Nodes (15): `IdentExpr`, `IntLitExpr`, `FloatLitExpr`, `StringLitExpr`, `ByteLitExpr`, `BoolLitExpr`, `ListLitExpr`, `DictLitExpr`, `TypedEmptyCtorExpr`, `UnaryExpr`, `BinaryExpr`, `FieldAccessExpr`, `IndexExpr`, `SliceExpr`, `CallExpr`.
+  - Expr Nodes (16): `IdentExpr`, `IntLitExpr`, `FloatLitExpr`, `StringLitExpr`, `ByteLitExpr`, `BoolLitExpr`, `ListLitExpr`, `DictLitExpr`, `TypedEmptyCtorExpr`, `UnaryExpr`, `BinaryExpr`, `FieldAccessExpr`, `IndexExpr`, `SliceExpr`, `CallExpr`, `StartExpr`.
 
 #### CleanBasic Design & Key Types/Functions
 - Uses the **16-pool `AstArena`** defined in Section 3.2 with `-1` as the "none / unset" ID sentinel.
-- **Primitive Type IDs:** Initialize 7 canonical primitive `TypeNode` entries at arena creation (`initArena() as AstArena`, with constants `TyIdVoid = 0` .. `TyIdErr = 6`) so primitive comparisons can check `typeId == ast.TyIdInt` or `a.types[typeId].kind`.
+- **Primitive Type IDs:** Initialize **8** canonical primitive `TypeNode` entries at arena creation (`initArena() as AstArena`, with constants `TyIdVoid = 0`, `TyIdInt = 1`, `TyIdFloat = 2`, `TyIdStr = 3`, `TyIdBool = 4`, `TyIdByte = 5`, `TyIdCancelToken = 6`, `TyIdErr = 7`) so primitive comparisons can check `typeId == ast.TyIdInt` or `a.types[typeId].kind`.
 - **Node Field Usage by Kind (Key Mappings):**
   - `DeclNode`: `DeclImport` (`path`, `alias`); `DeclGoImport` (`path`, `alias`); `DeclGoBlock` (`goCode`); `DeclConst` (`isPublic`, `name`, `typeId`, `valueExprId`); `DeclVar` (`isPublic`, `name`, `typeId`, `valueExprId`); `DeclType` (`isPublic`, `name`, `isGoDecl`, `goName`, `fieldIds`); `DeclEnum` (`isPublic`, `name`, `variants`); `DeclFn` (`isPublic`, `name`, `paramIds`, `retTypeId`, `canError`, `isGoDecl`, `goTarget`, `bodyStmtIds`).
-  - `StmtNode`: `StmtVarDecl` (`name`, `typeId`, `valueExprId`); `StmtAssign` (`targetExprId`, `valueExprId`); `StmtExpr` (`valueExprId`); `StmtIf` (`condExprId`, `bodyStmtIds`, `elseIfIds`, `hasElse`, `elseStmtIds`); `StmtForRange` (`name`, `startExprId`, `endExprId`, `bodyStmtIds`); `StmtForIn` (`loopVars`, `iterExprId`, `bodyStmtIds`); `StmtWhile` (`condExprId`, `bodyStmtIds`); `StmtSelect` (`targetExprId`, `caseIds`, `hasElse`, `elseStmtIds`); `StmtTryCatch` (`bodyStmtIds`, `catchVar`, `catchStmtIds`); `StmtDefer` (`bodyStmtIds`); `StmtStartJob` (`callExprId`); `StmtReturn` (`valueExprId`).
-  - `ExprNode`: `ExprIdent` (`text`, `goName`); `ExprIntLit` (`intVal`); `ExprFloatLit` (`floatVal`); `ExprStrLit` (`text`); `ExprByteLit` (`byteVal`); `ExprBoolLit` (`boolVal`); `ExprListLit` (`childExprIds`); `ExprDictLit` (`dictEntryIds`); `ExprTypedEmpty` (`ctorTypeId`); `ExprStart` (`callExprId`); `ExprUnary` (`op`, `rightId`); `ExprBinary` (`op`, `leftId`, `rightId`); `ExprFieldAccess` (`targetId`, `text`, `goName`); `ExprIndex` (`targetId`, `indexId`); `ExprSlice` (`targetId`, `startId`, `endId`); `ExprCall` (`targetId`, `childExprIds`, `callInfoId`).
+  - `StmtNode`: `StmtVarDecl` (`name`, `typeId`, `valueExprId`); `StmtAssign` (`targetExprId`, `valueExprId`); `StmtExpr` (`valueExprId`); `StmtIf` (`condExprId`, `bodyStmtIds`, `elseIfIds`, `hasElse`, `elseStmtIds`); `StmtForRange` (`name`, `startExprId`, `endExprId`, `bodyStmtIds`); `StmtForIn` (`loopVars`, `iterExprId`, `bodyStmtIds`); `StmtWhile` (`condExprId`, `bodyStmtIds`); `StmtSelect` (`targetExprId`, `caseIds`, `hasElse`, `elseStmtIds`); `StmtTryCatch` (`bodyStmtIds`, `catchVar`, `catchStmtIds`); `StmtDefer` (`bodyStmtIds`); `StmtReturn` (`valueExprId`).
+  - `ExprNode`: `ExprIdent` (`text`, `byRef`, `goName`); `ExprIntLit` (`text`, `intVal`); `ExprFloatLit` (`text`, `floatVal`); `ExprStrLit` (`text`); `ExprByteLit` (`byteVal`); `ExprBoolLit` (`boolVal`); `ExprListLit` (`childExprIds`); `ExprDictLit` (`dictEntryIds`); `ExprTypedEmpty` (`ctorTypeId`); `ExprStart` (`callExprId`); `ExprUnary` (`op`, `rightId`); `ExprBinary` (`op`, `leftId`, `rightId`); `ExprFieldAccess` (`targetId`, `text`, `goName`); `ExprIndex` (`targetId`, `indexId`); `ExprSlice` (`targetId`, `startId`, `endId`); `ExprCall` (`targetId`, `childExprIds`, `callInfoId`).
 - **Required Helpers:**
 ```cleanbasic
 public fn initArena() as AstArena
@@ -656,8 +679,8 @@ public fn typeString(a as AstArena, typeId as int) as str
 ### 4.4 `selfhost/parser.cb` ← `bootstrap/internal/parser/parser.go`
 
 #### Go Reference Summary
-- **Source File:** `bootstrap/internal/parser/parser.go` (1,370 LOC)
-- **Key Types:** `ParseError` (`Pos`, `Message`; `Error()` formats `"%s: syntax error: %s"`), `Parser` (`tokens []token.Token`, `pos int`, `file string`).
+- **Source File:** `bootstrap/internal/parser/parser.go` (1,437 LOC)
+- **Key Types:** `ParseError` (`Pos`, `Message`; `Error()` formats `"%s: syntax error: %s"`), `Parser` (`tokens []token.Token`, `pos int`, `file string`, `depth int` enforcing `maxParseDepth = 256` via `enterDepth`/`leaveDepth`).
 - **Core Functions:**
   - Top-level: `Parse(src, filename)`, `ParseProgram()`, `parseTopLevelDecl()`, `parseImportDecl()`, `parseGoImportDecl()`, `parseConstDecl()`, `parseTypeDecl()`, `parseEnumDecl()`, `parseFnDecl()`, `parseParamList()`, `parseType()`.
   - Statements: `parseStatement()`, `parseVarDecl()`, `parseAssignOrExprStmt()`, `parseIfStmt()`, `parseForStmt()`, `finishForStmt()`, `parseWhileStmt()`, `parseSelectStmt()`, `parseTryCatchStmt()`, `parseDeferStmt()`, `parseReturnStmt()`.
@@ -682,10 +705,13 @@ public fn typeString(a as AstArena, typeId as int) as str
 
 #### CleanBasic Design & Key Types/Functions
 ```cleanbasic
+const maxParseDepth as int = 256
+
 type Parser
     tokens as list[token.Token]
     pos as int
     file as str
+    depth as int
 end type
 
 public fn parse(byref a as AstArena, src as str, filename as str) as list[int] can error
@@ -713,7 +739,7 @@ fn parsePrimaryExpr(byref a as AstArena, byref p as Parser) as int can error
 
 #### CleanBasic Translation Notes / Gotchas
 - **`cur` / `peek` / `advance`:** Check `p.pos + offset >= p.tokens.len()` and return the final `TokEOF` token so out-of-bounds panics never occur.
-- **`str.toInt()` / `str.toFloat()` are `can error`:** Always call them as standalone `dim n = tok.lexeme.toInt()` statements inside `parsePrimaryExpr` (never nested inside `ast.ExprNode(...)`), catching or propagating the error with `syntax error:` position context if needed.
+- **Raw Lexeme Preservation & Base-0 Ints:** CleanBasic's `str.toInt()` parses base-10 (`strconv.ParseInt(s, 10, 64)`). To support `0x`/`0b`/`0o` integer literals like `parser.go` (`strconv.ParseInt(s, 0, 64)`), write a small `parseIntLiteral(raw as str) as int can error` helper—and always store the raw `tok.lexeme` in `ExprNode.text` for `ExprIntLit` and `ExprFloatLit` so codegen emits `int64(<raw>)` / `float64(<raw>)` directly. Always call `str.toInt()` / `str.toFloat()` as standalone `can error` statements (never nested).
 - **No Nested Fallible Calls:** Every `parse*` call returns `int` `can error`—always bind the returned ID to a `dim` variable before storing it into `childExprIds`, `DeclNode`, or `StmtNode`.
 
 #### Module Verification Gate
@@ -726,7 +752,7 @@ fn parsePrimaryExpr(byref a as AstArena, byref p as Parser) as int can error
 ### 4.5 `selfhost/modules.cb` ← `bootstrap/internal/sema/modules.go`
 
 #### Go Reference Summary
-- **Source File:** `bootstrap/internal/sema/modules.go` (289 LOC)
+- **Source File:** `bootstrap/internal/sema/modules.go` (320 LOC)
 - **Key Types:**
   - `ModuleInfo` (`ID`, `FilePath`, `SanitizedID`, `IsEntry`, `Program`, `Imports`, `Functions`, `Structs`, `Enums`, `GlobalVars`).
   - `moduleLoader` (`rootDir`, `state map[string]int` where `0=unvisited`, `1=visiting`, `2=done`, `modules map[string]*ModuleInfo`, `byID map[string]*ModuleInfo`, `topoOrder []*ModuleInfo`, `stack []string`).
@@ -736,7 +762,7 @@ fn parsePrimaryExpr(byref a as AstArena, byref p as Parser) as int can error
   - `canonicalID(absPath)`: relative path from `rootDir` using forward slashes, stripping `.cb`.
   - `loadEntry(entryPath, entryProg)`, `visitFile(absPath, preParsed, isEntry, overrideID)`, `getOrCreateStdlib(modPath, pos)`, `findStdlibFile(rootDir, modPath)`.
 - **Subtle Invariants:**
-  - **Default Import Alias:** For `std/foo/bar`, `path.Base` yields `bar`; for local `"combat/actions.cb"`, strips `.cb` after taking base name (`actions`). Duplicate aliases in the same module fail with `duplicate import alias`.
+  - **Relative `.cb` Resolution & Default Import Alias:** Non-`std/` imports resolve relative to the importing file's directory (`curDir`) and **require the `.cb` suffix** (e.g., `import "token.cb"`, `import "combat/actions.cb"`). For `std/foo/bar`, `path.Base` yields `bar`; for local `"combat/actions.cb"`, strips `.cb` after taking base name (`actions`). Duplicate aliases in the same module fail with `duplicate import alias`.
   - **DFS 3-State Cycle Detection & Topo Sort:** `state[key] == 1` during recursion reports `circular import detected: a -> b -> a`; `topoOrder` appends each module **after** all its dependencies are visited (dependencies before dependents).
   - **Stdlib Search Order:**
     1. `CB_STDLIB_DIR` environment variable.
@@ -785,9 +811,9 @@ fn findStdlibFile(rootDir as str, modPath as str) as str
 ### 4.6 `selfhost/sema_types.cb` ← `bootstrap/internal/sema/sema.go` & `decls.go`
 
 #### Go Reference Summary
-- **Source Files:** `bootstrap/internal/sema/sema.go` (234 LOC) and `bootstrap/internal/sema/decls.go` (442 LOC)
+- **Source Files:** `bootstrap/internal/sema/sema.go` (320 LOC) and `bootstrap/internal/sema/decls.go` (421 LOC)
 - **Key Types:**
-  - `SemaError` (`Pos`, `Message`; `Error()` formats `"%s: type error: %s"`).
+  - `SemaError` (`Pos`, `Message`; `Error()` formats `"%s: semantic error: %s"`).
   - `VarSymbol`, `Scope` (`parent *Scope`, `vars map[string]*VarSymbol`; `Define`, `Lookup`).
   - `analyzer` (`prog`, `mod`, `currentFn`, `loopDepth`, `tryDepth`, `deferDepth`, `allowedFallibleExpr`, `startCall`, `fnGlobalAccess`, `fnCallees`, `startSites`).
 - **Core Functions:**
@@ -801,6 +827,16 @@ fn findStdlibFile(rootDir as str, modPath as str) as str
 
 #### CleanBasic Design & Key Types/Functions
 ```cleanbasic
+public type GlobalAccessInfo
+    pos as token.Position
+    varName as str
+end type
+
+public type StartSite
+    pos as token.Position
+    calleeFnSymId as int
+end type
+
 public type SemaCtx
     modIds as list[int]
     curModId as int
@@ -810,6 +846,9 @@ public type SemaCtx
     deferDepth as int
     allowedFallibleExprId as int
     startCallId as int
+    fnGlobalAccess as dict[int, list[GlobalAccessInfo]]
+    fnCallees as dict[int, list[int]]
+    startSites as list[StartSite]
 end type
 
 public fn semaErr(pos as token.Position, msg as str) as str
@@ -829,7 +868,7 @@ public fn registerFnDecl(byref a as ast.AstArena, modId as int, declId as int) c
 ```
 
 #### Parity & Behavior Checklist
-- Error messages use exact `<pos>: type error: <msg>` prefix.
+- Error messages use exact `<pos>: semantic error: <msg>` prefix.
 - `resolveType` resolves imported qualified types (`modAlias.TypeName`) by checking `mod.imports[modAlias]` and verifying `isPublic` when crossing module boundaries.
 - `validateType` rejects non-comparable `dict` key types and `void` in variable/field/param positions.
 - `registerFnDecl` sets `goName = "cb_main"` when `mod.isEntry and fn.name == "main"` (otherwise `symbolGoName`).
@@ -847,13 +886,13 @@ public fn registerFnDecl(byref a as ast.AstArena, modId as int, declId as int) c
 ### 4.7 `selfhost/sema_exprs.cb` ← `bootstrap/internal/sema/exprs.go` & `builtins.go`
 
 #### Go Reference Summary
-- **Source Files:** `bootstrap/internal/sema/exprs.go` (557 LOC) and `bootstrap/internal/sema/builtins.go` (184 LOC)
+- **Source Files:** `bootstrap/internal/sema/exprs.go` (591 LOC) and `bootstrap/internal/sema/builtins.go` (201 LOC)
 - **Core Functions:**
   - `inferExpr(expr, scope)`, `inferUnaryExpr`, `inferBinaryExpr`, `inferListLitExpr`, `inferDictLitExpr`, `inferTypedEmptyCtorExpr`, `inferFieldAccessExpr`, `inferIndexExpr`, `inferSliceExpr`, `inferCallExpr`, `inFallibleContext`, `inferErrorCall`, `inferStructCtorCall`, `checkByRefArg`, `validateCallArgs`, `expectPositionalArgs`, `inferMethodOrUFCSCall`.
   - Built-ins (`builtins.go`): `finishBuiltinCall`, `finishFallibleBuiltinCall`, `inferBuiltinMethodCall`.
 - **Subtle Invariants:**
   - **Operators:** Unary `-`/`+` on `int`/`float`/`byte`; `not` on `bool`. Binary `+` on `int`, `float`, `byte`, or `str` (concatenation); `-`, `*`, `/` on `int`, `float`, `byte`; `%` on `int`, `byte`; comparisons (`<`, `<=`, `>`, `>=`) on `int`, `float`, `str`, `byte`; equality (`==`, `!=`) on any comparable type (plus `enum`); `and`/`or` on `bool`.
-  - **27 Built-in Methods Across 8 Receiver Kinds:**
+  - **32 Built-in Methods Across 9 Receiver Kinds:**
     - `list[T]`: `len() -> int`, `push(T) -> void` (requires mutable target), `join(str) -> str` (only `list[str]`), `sort() -> void` (only `int`/`float`/`str`/`byte`, requires mutable target).
     - `dict[K, V]`: `len() -> int`, `get(K, V) -> V`, `contains(K) -> bool`, `remove(K) -> void` (requires mutable target via `unwrapMutableDictTarget`).
     - `str`: `len() -> int`, `trim() -> str`, `toUpper() -> str`, `toLower() -> str`, `toStr() -> str`, `quote() -> str`, `toInt() -> int` (**fallible**), `toFloat() -> float` (**fallible**), `split(str) -> list[str]`, `contains(str) -> bool`, `startsWith(str) -> bool`, `endsWith(str) -> bool`, `indexOf(str) -> int`, `replace(str, str) -> str`.
@@ -863,10 +902,11 @@ public fn registerFnDecl(byref a as ast.AstArena, modId as int, declId as int) c
     - `byte`: `toInt() -> int`, `toStr() -> str`.
     - `job[T]` / `job`: `wait() -> T` (or `void`), `isDone() -> bool`, `waitTimeout(int) -> T` (**fallible**, or `void`).
     - `cancelToken`: `cancel() -> void`, `isCanceled() -> bool`.
-  - **UFCS 3-Step Lookup Order:** On `recv.method(args...)`:
-    1. If `recv` is an import alias (`ExprIdent` matching `mod.imports`), resolve module-qualified function `imp.funcs[method]` (must be `isPublic`).
+  - **UFCS 4-Step Lookup Order:** On `recv.method(args...)` (`inferMethodOrUFCSCall`, `sema/exprs.go:500–567`):
+    1. If `recv` is an import alias (`ExprIdent` matching `mod.imports` and not shadowed by a local variable), resolve module-qualified struct constructor `imp.structs[method]` or function `imp.funcs[method]` (must be `isPublic`).
     2. Otherwise infer `recv`'s type and check `inferBuiltinMethodCall`.
     3. Otherwise look up UFCS function `method` in `a.mod.funcs` (must accept `recvType` as first param).
+    4. Otherwise, if `recvType` is a struct/enum defined in another module `defMod`, look up `public fn method` in `defMod.funcs` (must accept `recvType` as first param).
   - **Struct Constructors:** Positional-only, accepting either `0` args (zero-init) or `len(fields)` args; rejects `type ... = go "..."` ctors with args.
   - **Fallible Call Context:** `can error` functions/methods and `error(msg)` require `inFallibleContext()` (`tryDepth > 0` or `currentFn.canErr`) AND `exprId == ctx.allowedFallibleExprId` (unless `exprId == ctx.startCallId`).
   - **`byref` Arguments:** `checkByRefArg` requires an addressable mutable target (`ExprIdent` non-const/non-loop-var, `ExprFieldAccess` on mutable struct, or `ExprIndex` on mutable `list`).
@@ -878,11 +918,13 @@ public fn checkMutableTarget(a as ast.AstArena, ctx as sema_types.SemaCtx, exprI
 public fn unwrapMutableDictTarget(a as ast.AstArena, exprId as int) as int
 fn inferBuiltinMethodCall(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, callId as int, recvId as int, recvTypeId as int, method as str, scopeId as int) as int can error
 fn inferMethodOrUFCSCall(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, callId as int, faId as int, scopeId as int) as int can error
+fn inferStartExpr(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, exprId as int, scopeId as int) as int can error
 fn validateCallArgs(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, callId as int, argIds as list[int], paramIds as list[int], fnName as str, canErr as bool, scopeId as int) can error
 ```
 
 #### Parity & Behavior Checklist
 - `ExprNode.semaTypeId` is always populated on every inferred expression (codegen relies on `a.exprs[id].semaTypeId`).
+- `ExprIdent` sets `a.exprs[id].byRef = varSym.byRef` and `a.exprs[id].goName = varSym.goName` (crucial for shadowed `byref` variables and cross-module globals in codegen), and records mutable global access (`varSym.isGlobal and not varSym.isConst`) in `ctx.fnGlobalAccess` when `ctx.curFnSymId >= 0`.
 - `ExprFieldAccess` handles: (1) import alias -> module-qualified `const`/`dim` (`goName` set to `sym.goName`), (2) `EnumName.Variant` (sets `semaTypeId` to enum type), (3) `errVar.msg` (on `KindErr`, returns `StrType`), (4) struct field lookup (rejects field access on `go` opaque types).
 - `ExprIndex` handles `list[T]` (index `int` -> `T`), `str` (index `int` -> `byte`), and `dict[K, V]` (index `K` -> `V`).
 - `ExprSlice` handles `list[T]` and `str` with optional `startId`/`endId` (`int`).
@@ -894,14 +936,14 @@ fn validateCallArgs(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, ca
 
 #### Module Verification Gate
 - `./build/cb0 check selfhost/sema_exprs.cb`
-- Verified together with `sema_stmts.cb` and `sema.cb` in Milestone M5 against all 11 positive + 8 error cases (especially `tests/cases/03_structs_and_ufcs.cb`, `04_containers_and_strings.cb`, `errors/03_type_mismatch.cb`, `errors/05_unhandled_can_error.cb`, `errors/06_nested_fallible_call.cb`, `errors/07_invalid_byref_arg.cb`).
+- Verified together with `sema_stmts.cb` and `sema.cb` in Step 7 against all 11 positive + 11 error cases (especially `tests/cases/03_structs_and_ufcs.cb`, `04_containers_and_strings.cb`, `errors/03_type_mismatch.cb`, `errors/05_unhandled_can_error.cb`, `errors/06_nested_fallible_call.cb`, `errors/07_invalid_byref_arg.cb`).
 
 ---
 
 ### 4.8 `selfhost/sema_stmts.cb` ← `bootstrap/internal/sema/stmts.go`
 
 #### Go Reference Summary
-- **Source File:** `bootstrap/internal/sema/stmts.go` (582 LOC)
+- **Source File:** `bootstrap/internal/sema/stmts.go` (525 LOC)
 - **Core Functions:**
   - `analyzeFnBody(fn)`, `blockAlwaysReturns(stmts)`, `analyzeStmt(stmt, scope)`, `inferStartExpr(e, scope)`, `validateStartJobIsolation()`, `inferRootExpr(expr, scope)`, `analyzeVarDecl(s, scope)`, `unwrapMutableDictTarget(expr)`, `checkMutableTarget(expr, scope)`, `analyzeAssignment(s, scope)`, `analyzeIfStmt(s, scope)`, `analyzeWhileStmt(s, scope)`, `analyzeForStmt(s, scope)`, `analyzeLoopBody(stmts, loopScope)`, `analyzeSelectStmt(s, scope)`, `analyzeTryCatchStmt(s, scope)`, `analyzeDeferStmt(s, scope)`, `analyzeReturnStmt(s, scope)`.
 - **Subtle Invariants:**
@@ -910,7 +952,7 @@ fn validateCallArgs(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, ca
   - **`inferStartExpr` & `validateStartJobIsolation`:** Rejects `can error` targets and `byref` parameters, enforces `isSendableType` on all arguments (and UFCS receiver), and performs a Pass 4 call-graph BFS to reject direct or transitive access to mutable module-level `dim` variables (while allowing `list`/`dict` returns and eager caller-goroutine argument capture in codegen).
   - **`defer` Isolation:** `analyzeDeferStmt` saves and zeroes `tryDepth` and `loopDepth`, increments `deferDepth`, and restores them on exit—so `return`, `break`, `continue`, and unhandled `can error` calls from enclosing `try`/`can error` functions are rejected inside `defer`.
   - **Loop Variable Immutability:** `for` range and `for-in` variables are defined with `isConst = true` in `loopScope` so mutating them is rejected.
-  - **`select case`:** Supports `int`, `str`, `byte`, and `enum` targets (rejects `bool`, `float`, structs, containers).
+  - **`select case`:** Accepts any `isComparableType` target (`int`, `float`, `str`, `byte`, `bool`, `enum`, and comparable value structs).
 
 #### CleanBasic Design & Key Types/Functions
 ```cleanbasic
@@ -944,16 +986,17 @@ fn analyzeReturnStmt(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, s
 ### 4.9 `selfhost/sema.cb` ← `bootstrap/internal/sema/sema.go` & `decls.go`
 
 #### Go Reference Summary
-- **Source Files:** `bootstrap/internal/sema/sema.go` (234 LOC) and `bootstrap/internal/sema/decls.go` (442 LOC)
+- **Source Files:** `bootstrap/internal/sema/sema.go` (320 LOC) and `bootstrap/internal/sema/decls.go` (421 LOC)
 - **Core Functions:**
   - `LoadAndAnalyze(entryPath)`, `AnalyzeSource(src, filename)`, `Analyze(prog)`.
-  - `analyzeProgram(prog)` executing the **strict 6-step pass order** per module in `topoOrder`:
+  - `analyzeProgram(prog)` executing the **strict 7-pass pipeline** (6 per-module passes in `topoOrder` + 1 whole-program pass):
     1. **Pass 0:** Pre-declare all `type` and `enum` names in `mod.structs` / `mod.enums`, checking for duplicates.
     2. **Pass 0.5:** Resolve struct field types (`resolveTypeDecl`) and enum variants (`resolveEnumDecl`).
     3. **Pass 0.6:** Reject direct/mutually recursive value struct fields (`checkRecursiveStructFields`), then validate `dict` key comparability in struct fields (`validateStructFieldTypes`).
     4. **Pass 1:** Register all top-level `fn` signatures (`registerFnDecl`), allowing mutual recursion and forward calls.
     5. **Pass 2:** Analyze top-level `const` and `dim` declarations in source order (`analyzeTopLevelConst`, `analyzeTopLevelVar`).
     6. **Pass 3:** Analyze all non-`go` function bodies (`analyzeFnBody`).
+    7. **Pass 4 (Whole-Program):** Run `validateStartJobIsolation()` BFS across `ctx.startSites` and `ctx.fnCallees` to reject direct or transitive mutable global `dim` access from `start` jobs (`errors/11_start_mutable_global_access.cb`).
 - **Subtle Invariants:**
   - **Built-in `print`:** Registered in each module's `funcs["print"]` with signature `print(msg as str) -> void` before `analyzeProgram`.
   - **Module Topological Order:** Dependencies are analyzed completely before dependents so imported `public` types, functions, constants, and globals are already resolved.
@@ -970,7 +1013,7 @@ fn analyzeTopLevelVar(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, 
 #### Parity & Behavior Checklist
 - Calls `modules.loadEntry(a, entryPath)` to obtain `topoOrder`.
 - Registers `print(msg as str)` in every module before running Pass 0..3.
-- Executes Pass 0 -> 0.5 -> 0.6 -> 1 -> 2 -> 3 in exact order for each module in `topoOrder`.
+- Executes Pass 0 -> 0.5 -> 0.6 -> 1 -> 2 -> 3 in exact order for each module in `topoOrder`, followed by whole-program Pass 4 `validateStartJobIsolation()`.
 - Top-level `const` and `dim` initializers run with `tryDepth == 0` and `curFnSymId == -1`, rejecting top-level `can error` calls.
 
 #### CleanBasic Translation Notes / Gotchas
@@ -978,17 +1021,17 @@ fn analyzeTopLevelVar(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, 
 
 #### Module Verification Gate
 - `./build/cb0 check selfhost/sema.cb`
-- Run a `cb0 run` semantic-check harness over **all 11 positive test files** (`tests/cases/*.cb` -> exit 0) and **all 8 error test files** (`tests/cases/errors/*.cb` -> exit 1 with matching `EXPECT_ERR` substring).
+- Run `cb1 check` over **all 11 positive test files** (`tests/cases/*.cb` -> exit 0) and **all 11 error test files** (`tests/cases/errors/*.cb` -> exit 1 with matching `EXPECT_ERR` substring).
 
 ---
 
 ### 4.10 `selfhost/codegen.cb` ← `bootstrap/internal/codegen/{codegen,exprs,stmts,runtime}.go`
 
 #### Go Reference Summary
-- **Source Files:** `codegen.go` (422 LOC), `exprs.go` (273 LOC), `stmts.go` (274 LOC), `runtime.go` (32 LOC) — **1,001 LOC total**.
+- **Source Files:** `codegen.go` (422 LOC), `exprs.go` (298 LOC), `stmts.go` (328 LOC), `runtime.go` (203 LOC) — **1,251 LOC total**.
 - **Key Types:**
   - `Options` (`EmitLineDirectives bool`).
-  - `emitter` (`emitLineDirectives`, `prog`, `currentMod`, `currentFnSym`, `imports map[string]bool`, `goImports map[string]string`, `usedDictGet`, `usedDictContains`, `currentFn`, `currentTryID`, `tryCounter`, `errCounter`, `loopCounter`).
+  - `emitter` (`emitLineDirectives`, `prog`, `currentMod`, `currentFnSym`, `imports map[string]bool`, `goImports map[string]string`, `usedDictGet`, `usedDictContains`, `usedJob`, `usedVoidJob`, `usedJobTimeout`, `usedVoidJobTimeout`, `usedCancelToken`, `currentFn`, `currentTryID`, `tryCounter`, `errCounter`, `loopCounter`).
 - **Core Functions:**
   - Entry: `EmitGo`, `EmitGoWithOptions`, `emitProgram`, `emitFnHeader`, `emitGoBoundFn`, `emitFn`.
   - Types & Zero-Init: `goSemaType`, `structNeedsFieldInit`, `emitZeroStruct`, `goSemaZeroValue`.
@@ -996,10 +1039,10 @@ fn analyzeTopLevelVar(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, 
   - Statements: `emitZeroOrInitVarDecl`, `emitStmtList`, `emitErrorJumpOrReturn`, `emitFallibleCallExpr`, `emitRhs`, `emitStmt`.
   - Runtime: `emitRuntimeHelpers` (`cbDictGet`, `cbDictContains`).
 - **Subtle Invariants:**
-  - **Deterministic Imports:** `useImport` / `useGoImport` record imports during body emission; `formatImportLines()` deduplicates and sorts them lexicographically before emitting `package main` + `import (...)` at the top.
+  - **Deterministic Imports & Helper Ordering:** `useImport` / `useGoImport` record imports during body emission, and `emitRuntimeHelpers()` may also record `"fmt"`, `"time"`, `"sync"`, and `_cb_atomic "sync/atomic"` when job/timeout/cancelToken helpers are used—so call `emitRuntimeHelpers()` **before** `formatImportLines()`, which deduplicates and sorts imports lexicographically.
   - **Unmangled Identifiers & `cb_main()` Wrapper:** Entry module symbols are unmangled, except `main` which is emitted as `cb_main()`. If entry `main` returns `int64`, emit `func main() { if code := cb_main(); code != 0 { _cb_os.Exit(int(code)) } }` (and record `_cb_os "os"` import); if `void`, emit `func main() { cb_main() }`.
   - **Recursive Struct `dict` & `cancelToken` Auto-Initialization:** `structNeedsFieldInit` recursively checks if a struct has any `dict`, `cancelToken`, or nested struct field needing init; `emitZeroStruct` emits `TypeName{field: map[K]V{}}` / `cbNewCancelToken()` for zero-init `dim`, zero-arg `TypeName()`, and error-return zero values, and `runtime.go` emits `cbJob[T]` / `cbVoidJob` (with `isDone()` and on-demand `waitTimeout(ms)`) and `cbCancelToken` / `cbNewCancelToken()` on demand with eager-argument IIFE wrappers for `start`.
-  - **On-Demand Runtime Helpers:** `cbDictGet` and `cbDictContains` are generic Go helpers emitted **only** when `usedDictGet` or `usedDictContains` is `true`.
+  - **On-Demand Runtime Helpers (7 flags):** `cbDictGet`, `cbDictContains`, `cbJob`, `cbVoidJob`, `waitTimeout` (typed & void), and `cbCancelToken` are emitted **only** when their corresponding `used*` flag is `true`.
   - **Column-1 `//line` Directives:** Emitted before each statement when `emitLineDirectives` is true and `pos.File != ""` and `pos.File != "<memory>"` and `pos.Line > 0`: `//line <slashPath>:<line>\n` (must start at column 1 with forward slashes).
   - **`try/catch` Label Guard:** Emits `var _cb_tryErr_N error`, `_ = _cb_tryErr_N`, `tryBody` block, `if false { goto _cb_catch_N }` (prevents Go `label _cb_catch_N defined and not used` when `tryBody` has no fallible calls), `goto _cb_end_try_N`, `_cb_catch_N:`, `catchBody`, `_cb_end_try_N:`.
   - **Loop Temporaries & Unused Var Suppression:** Range loops evaluate `end` once into `_cb_end_N`; `for idx, v in list` uses `_cb_idx_N`; `for ch in str` decodes runes via `_cb_rune_N` + `string(_cb_rune_N)`; every declared `dim` and loop variable emits `_ = v`.
@@ -1019,6 +1062,11 @@ public type EmitCtx
     goImports as dict[str, str]
     usedDictGet as bool
     usedDictContains as bool
+    usedJob as bool
+    usedVoidJob as bool
+    usedJobTimeout as bool
+    usedVoidJobTimeout as bool
+    usedCancelToken as bool
     curTryId as int
     tryCounter as int
     errCounter as int
@@ -1036,27 +1084,27 @@ fn formatImportLines(ctx as EmitCtx) as list[str]
 
 #### Parity & Behavior Checklist
 - Emits modules in `topoOrder` (`modIds`), and declarations within each module in source order (`declIds`).
-- Handles all 27 built-in methods identically to `codegen/exprs.go` (including `fmt.Sprint`, `strings.*`, `strconv.ParseInt(..., 0, 64)`, `strconv.ParseFloat(..., 64)`, `slices.Sort`, `cbDictGet`, `cbDictContains`, `<-ch`, `ch <- v`, `close(ch)`, `int64(len(...))`).
+- Handles all 32 built-in methods identically to `codegen/exprs.go` (including `fmt.Sprint`, `strings.*`, `strconv.Quote`, `strconv.ParseInt(..., 10, 64)`, `strconv.ParseFloat(..., 64)`, `slices.Sort`, `cbDictGet`, `cbDictContains`, `cbStartJob`, `cbStartVoidJob`, `wait()`, `waitTimeout()`, `isDone()`, `cancel()`, `isCanceled()`, `int64(len(...))`).
 - `emitArgExpr` handles `byref` forwarding: if arg is already a `byref` param (`ExprIdent` with `byRef == true`), pass `name` directly; otherwise pass `&expr`.
 - `emitGoBoundFn` emits a CleanBasic-callable wrapper forwarding parameters (and returning `error` / `(T, error)` if `canErr`) to `fn.goTarget`.
 
 #### CleanBasic Translation Notes / Gotchas
 - **String Building via `list[str]`:** Accumulate output chunks into `dim out = list[str]()` and call `out.join("")` at the end (far faster and cleaner than repeated `+=` string concatenation).
 - **Deterministic Import Sorting:** Collect `ctx.imports` keys (quoted) and `ctx.goImports` values into a `dim specs = list[str]()`, deduplicate via a `dict[str, bool]`, and call `specs.sort()` (leveraging CleanBasic's `list[str].sort()`!).
-- **Go String & Byte Escaping:** Write a helper `escapeGoString(s as str) as str` that escapes `\`, `"`, `\n`, `\r`, `\t`, and `\0` identically to Go's `%q` for `ExprStrLit`; `ExprByteLit` emits `byte(<int>)` (e.g., `byte(65)`) matching `bootstrap/internal/codegen/exprs.go:122`.
+- **Go String & Byte Escaping:** Use CleanBasic's built-in `s.quote()` (emits `strconv.Quote`) for `ExprStrLit` and `import` paths instead of writing a custom `escapeGoString` helper; `ExprByteLit` emits `byte(<int>)` (e.g., `byte(65)`) matching `bootstrap/internal/codegen/exprs.go:123`.
 
 #### Module Verification Gate
 - `./build/cb0 check selfhost/codegen.cb`
 - `./build/cb0 build selfhost/main.cb -o build/cb1`
-- `go test ./bootstrap/tests/... -v -args -compiler=../../build/cb1` (all 19 integration & error tests pass using `cb1`).
+- `go test ./bootstrap/tests/... -v -args -compiler=../../build/cb1` (all 34 subtests pass using `cb1`).
 
 ---
 
 ### 4.11 `selfhost/main.cb` ← `bootstrap/cmd/cb/main.go`
 
 #### Go Reference Summary
-- **Source File:** `bootstrap/cmd/cb/main.go` (293 LOC)
-- **Core Functions:** `main`, `run`, `runCheck`, `transpileProgram`, `syncFileIfChanged`, `prepareBuildJob`, `runGoBuildInDir`, `runEmit`, `runBuild`, `runExec` (dispatched by `"run"`), `parseFileAndOutArgs`, `printUsage`.
+- **Source File:** `bootstrap/cmd/cb/main.go` (336 LOC)
+- **Core Functions:** `main`, `run`, `runCheck`, `transpileProgram`, `syncFileIfChanged`, `prepareBuildJob`, `runGoBuildInDir`, `runEmit`, `defaultBuildOutputPath`, `runBuild`, `runExec` (dispatched by `"run"`), `parseFileAndOutArgs`, `printUsage`.
 - **Subtle Invariants:**
   - **Commands & Exit Codes:**
     - `-h`, `--help`, `help` -> prints usage to **stderr**, returns `0`.
@@ -1071,9 +1119,9 @@ fn formatImportLines(ctx as EmitCtx) as list[str]
 ```cleanbasic
 import "std/fs"
 import "std/os"
-import "selfhost/ast"
-import "selfhost/sema"
-import "selfhost/codegen"
+import "ast.cb"
+import "sema.cb"
+import "codegen.cb"
 
 fn main() as int
 fn run(args as list[str]) as int
@@ -1109,18 +1157,103 @@ fn printUsage()
 
 ---
 
-## 5. Phased Milestones (Milestone 0 through Milestone 7)
+## 5. Step-by-Step Implementation & Verification Blueprint (Step 0 through Step 9)
 
-| Milestone | Scope | `bootstrap/internal/` Reference | Verification Command |
-| :--- | :--- | :--- | :--- |
-| **M0: Skeleton & CLI** | `selfhost/main.cb` (`std/fs`, `std/os`) | `cmd/cb/main.go` | `cb0 check selfhost/main.cb` |
-| **M1: Token & Lexer** | `selfhost/token.cb`, `selfhost/lexer.cb` | `token/token.go`, `lexer/lexer.go` | `cb0 run` token-dump test on `tests/cases/01_hello_and_math.cb` |
-| **M2: Arena AST & Parser** | `selfhost/ast.cb`, `selfhost/parser.cb` | `ast/ast.go`, `parser/parser.go` | `cb0 check selfhost/parser.cb` + AST round-trip smoke test |
-| **M3: Module Loader** | `selfhost/modules.cb` (imports, stdlib, topo sort) | `sema/modules.go` | Multi-file import graph test on `07_multi_file_modules/main.cb` |
-| **M4: Sema Types & Decls** | `selfhost/sema_types.cb`, `selfhost/sema.cb` | `sema/sema.go`, `sema/decls.go` | `cb0 check selfhost/sema.cb` |
-| **M5: Sema Exprs & Stmts** | `selfhost/sema_exprs.cb`, `selfhost/sema_stmts.cb` | `sema/exprs.go`, `builtins.go`, `stmts.go` | `cb0 check` passes on all 11 positive + rejects all 8 error cases |
-| **M6: Go Codegen** | `selfhost/codegen.cb` | `codegen/*.go` | `cb0 build selfhost/main.cb -o build/cb1` + `runner_test.go -compiler=../../build/cb1` |
-| **M7: 3-Stage Fixed Point** | Full `cb0 -> cb1 -> cb2 -> stage3.go` | All packages | `diff -u build/stage2.go build/stage3.go` (0 diff) + full `runner_test.go` on `cb2` |
+First, build Stage 0 (`cb0`) once—this is your oracle throughout all 9 steps:
+
+```bash
+mkdir -p build selfhost/smoke
+go test ./bootstrap/...
+go build -o build/cb0 ./bootstrap/cmd/cb
+```
+
+### Step 0: CLI & Build-Runner Skeleton (`selfhost/main.cb`)
+1. **Build:** Implement `selfhost/main.cb` with full argument parsing (`check`, `emit`, `build`, `run`, `-h`, exit codes `0`/`1`/`2`), `prepareBuildJob`, and `runGoBuildInDir`, initially wiring `transpileProgram` to a stub returning `"package main\nfunc main() {}\n"`.
+2. **Verify:**
+   ```bash
+   ./build/cb0 build selfhost/main.cb -o build/cb1-step0
+   ./build/cb1-step0 --help                      # exit 0, usage on stderr
+   ./build/cb1-step0 unknown-cmd                 # exit 2
+   ./build/cb1-step0 emit tests/cases/01_hello_and_math.cb
+   ```
+3. **Exit Gate:** `cb1-step0` parses all CLI flag/error combinations identically to `bootstrap/cmd/cb/main_test.go` and successfully invokes `go build` in a temp `job-*` folder and cleans it up.
+
+### Step 1: Tokens & Keyword Tables (`selfhost/token.cb`)
+1. **Build:** Implement `Position`, `Kind` (all 84 variants), `Token`, `posString`, `kindString`, `lookupIdent`, and `coalesceTwoWordKeyword`.
+2. **Verify:** Write `selfhost/smoke/test_token.cb` checking all 42 single-word keywords, all 14 two-word pairs, non-matching pairs, and `posString`/`kindString`:
+   ```bash
+   ./build/cb0 check selfhost/token.cb
+   ./build/cb0 run selfhost/smoke/test_token.cb
+   ```
+3. **Exit Gate:** Every `Kind` round-trips to the exact string in `bootstrap/internal/token/token.go`.
+
+### Step 2: Lexer (`selfhost/lexer.cb`)
+1. **Build:** Implement `tokenize(src, filename)` covering numbers, escapes, byte literals, comments, newline normalization, `go ... end go` blocks, C-operator rejection (`&&`, `||`, `!`), and same-line keyword coalescing.
+2. **Verify:** Write `selfhost/smoke/test_lexer.cb` that lexes all 11 positive test files, `std/fs.cb`, `std/os.cb`, and `tutorial/solutions/ex11_cancellation_and_timeouts.cb` (testing `cancelToken` + `GO_BLOCK` + `BYTE_LIT`), plus `tests/cases/errors/01_lex_unterminated_string.cb`:
+   ```bash
+   ./build/cb0 run selfhost/smoke/test_lexer.cb
+   ```
+3. **Exit Gate:** Zero lex errors on every `.cb` file in `tests/cases/`, `std/`, and `tutorial/solutions/`; `01_lex_unterminated_string.cb` fails with `unterminated string literal`.
+
+### Step 3: Flat Arena AST & Type Helpers (`selfhost/ast.cb`)
+1. **Build:** Implement the 16-pool `AstArena` (including `TyCancelToken`, `ExprStart`, `VarSymbol.isGlobal`), `initArena()` (8 primitive types `0..7`), `-1`-initialized `new*` node constructors, `add*` helpers, `typeEquals`, and `typeString`.
+2. **Verify:** Write `selfhost/smoke/test_ast.cb` testing `initArena()`, `typeEquals` on `dict[str, list[int]]` and `job[int]` vs `job`, and `typeString`:
+   ```bash
+   ./build/cb0 check selfhost/ast.cb
+   ./build/cb0 run selfhost/smoke/test_ast.cb
+   ```
+3. **Exit Gate:** All node constructors default IDs to `-1` (verified by assertions) and `typeString` matches `ast.go:95–122`.
+
+### Step 4: Recursive-Descent & Precedence Parser (`selfhost/parser.cb`)
+1. **Build:** Implement `parse(byref a, src, filename)` for all declarations, statements, precedence levels, `start fn(...)`, `cancelToken()`, `list[T]()`, `dict[K,V]()`, Go reserved words, and `maxParseDepth = 256`.
+2. **Verify:** Write `selfhost/smoke/test_parser.cb` that parses every `.cb` file in the repo (`tests/cases/*.cb`, `tests/cases/07_multi_file_modules/**/*.cb`, `std/*.cb`, `tutorial/solutions/*.cb`, and `selfhost/*.cb` itself) and asserts `tests/cases/errors/02_parse_unclosed_if.cb` fails with `expected end if`:
+   ```bash
+   ./build/cb0 run selfhost/smoke/test_parser.cb
+   ```
+3. **Exit Gate:** `parser.cb` parses all repo `.cb` files (including `parser.cb` itself) with 0 errors and rejects `02_parse_unclosed_if.cb`, empty `[]`/`{}`, and Go reserved identifiers.
+
+### Step 5: Multi-File & Stdlib Module Loader (`selfhost/modules.cb`)
+1. **Build:** Implement `sanitizeModuleId`, `symbolGoName`, `findStdlibFile`, cycle detection, and `loadEntry`.
+2. **Verify:** Write `selfhost/smoke/test_modules.cb` loading `tests/cases/07_multi_file_modules/main.cb`, `tests/cases/08_stdlib.cb`, and `selfhost/parser.cb`, asserting `topoOrder` order and mangled `sanitizedId`:
+   ```bash
+   ./build/cb0 run selfhost/smoke/test_modules.cb
+   ```
+3. **Exit Gate:** Multi-file relative `.cb` imports, `std/*` discovery, duplicate alias errors, and cycle detection all pass.
+
+### Step 6: Sema Types, Declarations & Pass Skeleton (`selfhost/sema_types.cb` + stub `sema.cb`)
+1. **Build:** Implement `Scope`, `resolveType`, `validateType`, `isComparableType`, `isSendableType`, Pass 0, Pass 0.5, Pass 0.6, and Pass 1.
+2. **Verify:** Run `selfhost/smoke/test_sema_decls.cb` checking struct/enum/fn symbol tables across `07_multi_file_modules/main.cb`, `08_stdlib.cb`, and asserting `tests/cases/errors/08_recursive_struct_cycle.cb` fails with `recursive struct field`:
+   ```bash
+   ./build/cb0 run selfhost/smoke/test_sema_decls.cb
+   ```
+3. **Exit Gate:** All module type/function headers resolve across modules, non-comparable `dict` keys fail, and cyclic value structs fail cleanly without hanging.
+
+### Step 7: Full Semantic Analysis (`selfhost/sema_exprs.cb` + `sema_stmts.cb` + `sema.cb`)
+1. **Build:** Implement `inferExpr`, 32 built-in methods, 4-tier UFCS, `inferStartExpr`, `analyzeStmt`, `blockAlwaysReturns`, Pass 2/3, and Pass 4 `validateStartJobIsolation()`. Wire `cb check` in `selfhost/main.cb` to `sema.loadAndAnalyze`.
+2. **Verify:** Build `cb1` and run `cb1 check` against every positive test, every error test, every tutorial file, `cbgrep`, and `selfhost/main.cb` itself:
+   ```bash
+   ./build/cb0 build selfhost/main.cb -o build/cb1
+   for f in tests/cases/*.cb tests/cases/07_multi_file_modules/main.cb tutorial/solutions/*.cb examples/cbgrep/main.cb selfhost/main.cb; do
+     ./build/cb1 check "$f" || exit 1
+   done
+   for f in tests/cases/errors/*.cb; do
+     ./build/cb1 check "$f" && exit 1
+   done
+   ```
+3. **Exit Gate:** `cb1 check` accepts 100% of valid CleanBasic programs in the repository (including `selfhost/main.cb`) and rejects all 11 `tests/cases/errors/*.cb` cases with the exact `// EXPECT_ERR:` substrings.
+
+### Step 8: Go Code Emitter (`selfhost/codegen.cb`) & Stage 1 Test Suite Parity
+1. **Build:** Implement `codegen.cb` (types, recursive struct `dict`/`cancelToken` auto-init, expressions, 32 built-ins, `emitStartExpr` eager-capture IIFEs, fallible call lowering, `try/catch` labels, `//line` directives, 7 on-demand runtime helpers, sorted imports, and `cb_main` wrapper) and wire `transpileProgram` in `selfhost/main.cb`.
+2. **Verify:**
+   ```bash
+   ./build/cb0 build selfhost/main.cb -o build/cb1
+   go test ./bootstrap/tests/... -v -args -compiler=../../build/cb1
+   ```
+3. **Exit Gate:** `go test ./bootstrap/tests/... -v -args -compiler=../../build/cb1` passes **100% (34/34 subtests)**.
+
+### Step 9: 3-Stage Self-Hosting Fixed-Point Verification
+1. **Run the 3-Stage Bootstrap & Real-World Check:** See Section 6 below.
+2. **Final Exit Gate:** `diff -u build/stage2.go build/stage3.go` is empty (`0` diff), `cb2` passes all 34/34 subtests, and `cb2` builds and runs `examples/cbgrep/main.cb`.
 
 ---
 
@@ -1147,8 +1280,12 @@ go build -o build/cb0 ./bootstrap/cmd/cb
 # Fixed-point check: Stage 2 and Stage 3 generated Go must be byte-for-byte identical
 diff -u build/stage2.go build/stage3.go
 
-# Full integration & compile-error test suite executed using Stage 2 compiler
+# Full integration, error & tutorial test suite (34/34 subtests) executed using Stage 2 compiler
 go test ./bootstrap/tests/... -v -args -compiler=../../build/cb2
+
+# Real-world application verification: compile and run cbgrep with Stage 2 compiler
+./build/cb2 build examples/cbgrep/main.cb -o build/cbgrep2
+./build/cbgrep2 "func EmitGo" bootstrap/
 ```
 
 ### Fixed-Point Determinism Invariants
