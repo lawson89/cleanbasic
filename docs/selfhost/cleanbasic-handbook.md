@@ -20,7 +20,7 @@ This handbook is a practical, codebase-grounded reference for writing the self-h
 | `dict[K, V]` | `map[Go(K)]Go(V)` | `make` / `map[K]V{}` (non-nil, ready for writes) | No |
 | `job[T]` / `job` | `*cbJob[Go(T)]` / `*cbVoidJob` | `nil` (nil-safe `.wait()`, `.isDone()`, `.waitTimeout()`) | No |
 | `cancelToken` | `*cbCancelToken` | `cbNewCancelToken()` (non-nil, ready to use) | No |
-| `type S` (struct) | `S` (or `<mod>__S`) | `S{}` with recursive `dict` auto-init | Yes, if all fields are comparable and not `= go` |
+| `type S` (struct) | `S` (or `<mod>__S`) | `S{}` with recursive `dict` & `cancelToken` auto-init | Yes, if all fields are comparable and not `= go` |
 | `enum E` | `int64`-backed `type E int64` | `E(0)` (first declared variant) | Yes |
 
 > **Recursive Struct Field Auto-Initialization:**
@@ -169,7 +169,7 @@ If `params[0]` is `byref`, `target` must pass `checkMutableTarget`.
       os.eprintln("read failed: " + e.msg)
   end try
   ```
-- **Top-Level-Only Fallible Call Rule (`sema/stmts.go`):** A `can error` call (or `.toInt()` / `.toFloat()`) may **only** appear as the **direct top-level expression** of:
+- **Top-Level-Only Fallible Call Rule (`sema/stmts.go`):** A `can error` call (or `.toInt()`, `.toFloat()`, or `job.waitTimeout(ms)`) may **only** appear as the **direct top-level expression** of:
   1. An expression statement: `fs.writeFile(p, text)`
   2. A `dim` initializer: `dim n = s.toInt()`
   3. An assignment RHS: `n = s.toInt()`

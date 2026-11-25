@@ -3,6 +3,8 @@ import "std/fs"
 import "std/os"
 import "std/regex"
 
+const MAX_PARALLEL_JOBS = 16
+
 type GrepConfig
     fixedNeedle as str
     ignoreCase as bool
@@ -11,7 +13,29 @@ type GrepConfig
     invertMatch as bool
     fixedStrings as bool
     showFilename as bool
+    quiet as bool
     re as regex.Regex
+end type
+
+type SearchTask
+    filePath as str
+    regexPattern as str
+    fixedNeedle as str
+    ignoreCase as bool
+    lineNumber as bool
+    countOnly as bool
+    invertMatch as bool
+    fixedStrings as bool
+    showFilename as bool
+    quiet as bool
+    tok as cancelToken
+end type
+
+type FileSearchResult
+    outputLines as list[str]
+    matches as int
+    errMsg as str
+    canceled as bool
 end type
 
 fn lineMatches(cfg as GrepConfig, line as str) as bool
@@ -31,14 +55,14 @@ fn lineMatches(cfg as GrepConfig, line as str) as bool
     return matched
 end fn
 
-fn searchText(cfg as GrepConfig, label as str, content as str) as int
+fn searchLines(cfg as GrepConfig, label as str, content as str, tok as cancelToken, byref outLines as list[str], byref canceled as bool) as int
     dim normalized = content.replace("\r\n", "\n")
     if normalized.len() == 0
-        if cfg.countOnly
+        if cfg.countOnly and not cfg.quiet
             if cfg.showFilename
-                print(label + ":0")
+                outLines.push(label + ":0")
             else
-                print("0")
+                outLines.push("0")
             end if
         end if
         return 0
@@ -52,9 +76,17 @@ fn searchText(cfg as GrepConfig, label as str, content as str) as int
 
     dim matches = 0
     for idx = 0 to limit - 1
+        if tok.isCanceled()
+            canceled = true
+            return matches
+        end if
         dim line = lines[idx]
         if lineMatches(cfg, line)
             matches = matches + 1
+            if cfg.quiet
+                tok.cancel()
+                return matches
+            end if
             if not cfg.countOnly
                 dim prefix = ""
                 if cfg.showFilename
@@ -63,19 +95,55 @@ fn searchText(cfg as GrepConfig, label as str, content as str) as int
                 if cfg.lineNumber
                     prefix = prefix + (idx + 1).toStr() + ":"
                 end if
-                print(prefix + line)
+                outLines.push(prefix + line)
             end if
         end if
     end for
 
-    if cfg.countOnly
+    if cfg.countOnly and not cfg.quiet
         if cfg.showFilename
-            print(label + ":" + matches.toStr())
+            outLines.push(label + ":" + matches.toStr())
         else
-            print(matches.toStr())
+            outLines.push(matches.toStr())
         end if
     end if
     return matches
+end fn
+
+fn searchFileWorker(task as SearchTask) as FileSearchResult
+    if task.tok.isCanceled()
+        return FileSearchResult(list[str](), 0, "", true)
+    end if
+
+    dim content = ""
+    try
+        content = fs.readFile(task.filePath)
+    catch e
+        return FileSearchResult(list[str](), 0, e.msg, false)
+    end try
+
+    dim cfg = GrepConfig()
+    cfg.fixedNeedle = task.fixedNeedle
+    cfg.ignoreCase = task.ignoreCase
+    cfg.lineNumber = task.lineNumber
+    cfg.countOnly = task.countOnly
+    cfg.invertMatch = task.invertMatch
+    cfg.fixedStrings = task.fixedStrings
+    cfg.showFilename = task.showFilename
+    cfg.quiet = task.quiet
+
+    if not cfg.fixedStrings
+        try
+            cfg.re = regex.compile(task.regexPattern)
+        catch e
+            return FileSearchResult(list[str](), 0, e.msg, false)
+        end try
+    end if
+
+    dim outLines = list[str]()
+    dim canceled = false
+    dim matches = searchLines(cfg, task.filePath, content, task.tok, outLines, canceled)
+    return FileSearchResult(outLines, matches, "", canceled)
 end fn
 
 fn collectFiles(target as str, recursive as bool, byref outFiles as list[str]) can error
@@ -113,6 +181,8 @@ fn main() as int
     p.addFlag("invert-match", "v", "Select non-matching lines")
     p.addFlag("fixed-strings", "F", "Interpret pattern as a fixed literal string")
     p.addFlag("recursive", "r", "Recursively search directories")
+    p.addFlag("quiet", "q", "Suppress normal output; exit 0 on first match")
+    p.addOption("timeout", "t", "Maximum wait time in milliseconds per batch (0 = no timeout)", "0")
     p.addArg("pattern", "Pattern to search for")
 
     dim parsed = cli.ParsedArgs()
@@ -135,6 +205,19 @@ fn main() as int
     dim invertMatch = parsed.hasFlag("invert-match")
     dim fixedStrings = parsed.hasFlag("fixed-strings")
     dim recursive = parsed.hasFlag("recursive")
+    dim quiet = parsed.hasFlag("quiet")
+
+    dim timeoutMs = 0
+    try
+        timeoutMs = parsed.getOption("timeout").toInt()
+    catch e
+        print("cbgrep: invalid --timeout value: " + parsed.getOption("timeout"))
+        return 2
+    end try
+    if timeoutMs < 0
+        print("cbgrep: invalid --timeout value (must be >= 0)")
+        return 2
+    end if
 
     dim cfg = GrepConfig()
     cfg.ignoreCase = ignoreCase
@@ -143,7 +226,9 @@ fn main() as int
     cfg.invertMatch = invertMatch
     cfg.fixedStrings = fixedStrings
     cfg.showFilename = false
+    cfg.quiet = quiet
 
+    dim regexPattern = pattern
     if fixedStrings
         if ignoreCase
             cfg.fixedNeedle = pattern.toLower()
@@ -151,7 +236,6 @@ fn main() as int
             cfg.fixedNeedle = pattern
         end if
     else
-        dim regexPattern = pattern
         if ignoreCase
             regexPattern = "(?i)" + pattern
         end if
@@ -171,10 +255,19 @@ fn main() as int
         end for
     end if
 
+    dim tok = cancelToken()
+
     if targets.len() == 0
         try
             dim stdinText = os.readStdin()
-            dim matched = searchText(cfg, "(standard input)", stdinText)
+            dim outLines = list[str]()
+            dim canceled = false
+            dim matched = searchLines(cfg, "(standard input)", stdinText, tok, outLines, canceled)
+            if not quiet
+                for line in outLines
+                    print(line)
+                end for
+            end if
             if matched > 0
                 return 0
             end if
@@ -200,16 +293,54 @@ fn main() as int
     end if
 
     dim totalMatches = 0
-    for filePath in files
-        try
-            dim content = fs.readFile(filePath)
-            dim fileMatches = searchText(cfg, filePath, content)
-            totalMatches = totalMatches + fileMatches
-        catch e
-            print("cbgrep: " + filePath + ": " + e.msg)
-            return 2
-        end try
-    end for
+    dim idx = 0
+    while idx < files.len()
+        if tok.isCanceled()
+            break
+        end if
+
+        dim batchEnd = idx + MAX_PARALLEL_JOBS
+        if batchEnd > files.len()
+            batchEnd = files.len()
+        end if
+
+        dim batch = list[job[FileSearchResult]]()
+        for k = idx to batchEnd - 1
+            dim task = SearchTask(files[k], regexPattern, cfg.fixedNeedle, cfg.ignoreCase, cfg.lineNumber, cfg.countOnly, cfg.invertMatch, cfg.fixedStrings, cfg.showFilename, cfg.quiet, tok)
+            batch.push(start searchFileWorker(task))
+        end for
+
+        for k = 0 to batch.len() - 1
+            dim j = batch[k]
+            dim res = FileSearchResult()
+            if timeoutMs > 0
+                try
+                    res = j.waitTimeout(timeoutMs)
+                catch e
+                    tok.cancel()
+                    print("cbgrep: search timed out after " + timeoutMs.toStr() + "ms")
+                    return 2
+                end try
+            else
+                res = j.wait()
+            end if
+
+            if res.errMsg != ""
+                tok.cancel()
+                print("cbgrep: " + files[idx + k] + ": " + res.errMsg)
+                return 2
+            end if
+
+            if not quiet
+                for outLine in res.outputLines
+                    print(outLine)
+                end for
+            end if
+            totalMatches = totalMatches + res.matches
+        end for
+
+        idx = batchEnd
+    end while
 
     if totalMatches > 0
         return 0

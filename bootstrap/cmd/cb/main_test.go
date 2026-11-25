@@ -248,6 +248,33 @@ func TestCBGrepExample(t *testing.T) {
 	if err := missingFileCmd.Run(); err == nil || missingFileCmd.ProcessState.ExitCode() != 2 {
 		t.Errorf("missing file exit code = %v, want 2", err)
 	}
+
+	// (f) -q / --quiet early exit with empty stdout and --timeout handling
+	outF, err := exec.Command(cbgrepBin, "-r", "-q", "-i", "hello", searchDir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cbgrep -r -q failed: %v\n%s", err, string(outF))
+	}
+	if strings.TrimSpace(string(outF)) != "" {
+		t.Errorf("-q should produce empty output, got %q", string(outF))
+	}
+
+	outTimeout, err := exec.Command(cbgrepBin, "-r", "--timeout", "5000", "-n", "nested", searchDir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cbgrep --timeout 5000 failed: %v\n%s", err, string(outTimeout))
+	}
+	if !strings.Contains(string(outTimeout), betaPath+":1:nested match 99") {
+		t.Errorf("--timeout 5000 missing expected match in output:\n%s", string(outTimeout))
+	}
+
+	badTimeoutCmd := exec.Command(cbgrepBin, "--timeout", "abc", "hello", alphaPath)
+	if err := badTimeoutCmd.Run(); err == nil || badTimeoutCmd.ProcessState.ExitCode() != 2 {
+		t.Errorf("non-numeric --timeout exit code = %v, want 2", err)
+	}
+
+	negTimeoutCmd := exec.Command(cbgrepBin, "-t", "-1", "hello", alphaPath)
+	if err := negTimeoutCmd.Run(); err == nil || negTimeoutCmd.ProcessState.ExitCode() != 2 {
+		t.Errorf("negative --timeout exit code = %v, want 2", err)
+	}
 }
 
 func TestDefaultBuildOutputPath(t *testing.T) {

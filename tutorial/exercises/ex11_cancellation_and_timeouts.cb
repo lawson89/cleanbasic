@@ -1,0 +1,27 @@
+type WorkerTask
+    id as int
+    tok as cancelToken
+end type
+
+fn sumChunk(low as int, high as int) as int
+    // TODO: Return the sum of integers from low to high inclusive
+    return 0
+end fn
+
+fn waitForStop(task as WorkerTask) as str
+    // TODO: Loop while not task.tok.isCanceled(), then return
+    // "worker <id> canceled"
+    return ""
+end fn
+
+fn main()
+    // TODO:
+    // 1. Create a token with cancelToken()
+    // 2. Start sumChunk(1, 10) and wait for it with waitTimeout(5000) inside try/catch,
+    //    printing "fast sum: <sum>"
+    // 3. Start two waitForStop workers sharing WorkerTask(1, tok) and WorkerTask(2, tok)
+    // 4. Print "w1 done before cancel: " + w1.isDone().toStr()
+    // 5. Try w1.waitTimeout(15); in catch, set timedOut = true and call tok.cancel()
+    // 6. Print "timed out: <timedOut>", w1.wait(), w2.wait(), and
+    //    "w1 done after wait: " + w1.isDone().toStr()
+end fn

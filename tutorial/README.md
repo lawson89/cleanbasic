@@ -1,4 +1,4 @@
-# CleanBasic Tutorial: 10 Progressive Exercises
+# CleanBasic Tutorial: 11 Progressive Exercises
 
 This tutorial is a hands-on introduction to CleanBasic. Each exercise has:
 - a compilable starter file under `exercises/` with `// TODO:` comments, and
@@ -37,6 +37,7 @@ Then type-check or run any starter file or solution:
 | 8 | Explicit Error Handling (`can error`, `try / catch`) | [ex08_error_handling.cb](exercises/ex08_error_handling.cb) | [ex08_error_handling.cb](solutions/ex08_error_handling.cb) |
 | 9 | Resource Cleanup with `defer` | [ex09_defer_cleanup.cb](exercises/ex09_defer_cleanup.cb) | [ex09_defer_cleanup.cb](solutions/ex09_defer_cleanup.cb) |
 | 10 | Race-Free Concurrency (`start`, `job[T]`, `.wait()`) | [ex10_concurrency_jobs.cb](exercises/ex10_concurrency_jobs.cb) | [ex10_concurrency_jobs.cb](solutions/ex10_concurrency_jobs.cb) |
+| 11 | Cooperative Cancellation & Timeouts (`cancelToken`, `waitTimeout`, `isDone`) | [ex11_cancellation_and_timeouts.cb](exercises/ex11_cancellation_and_timeouts.cb) | [ex11_cancellation_and_timeouts.cb](solutions/ex11_cancellation_and_timeouts.cb) |
 
 ---
 
@@ -581,6 +582,92 @@ fn main()
     end for
 
     print("primes in 1..400: " + total.toStr())
+end fn
+```
+
+</details>
+
+---
+
+## Exercise 11: Cooperative Cancellation & Timeouts (`cancelToken`, `waitTimeout`, `isDone`)
+
+**Concepts:** `cancelToken()`, `tok.isCanceled()`, `tok.cancel()`, `job.isDone()`, `job.waitTimeout(ms)`, `try / catch`
+
+**Files:** [Starter](exercises/ex11_cancellation_and_timeouts.cb) | [Solution](solutions/ex11_cancellation_and_timeouts.cb)
+
+### Task
+Define `WorkerTask` with `id as int` and `tok as cancelToken`, plus `sumChunk(low as int, high as int) as int` and `waitForStop(task as WorkerTask) as str`.
+In `main()`:
+1. Create a token with `cancelToken()`.
+2. Start `sumChunk(1, 10)` and wait for it with `waitTimeout(5000)` inside `try / catch`, printing `fast sum: 55`.
+3. Start two `waitForStop` workers sharing `WorkerTask(1, tok)` and `WorkerTask(2, tok)`.
+4. Print `w1.isDone()` before cancellation.
+5. Wait on `w1` with `waitTimeout(15)` inside `try / catch`; in `catch`, record the timeout and call `tok.cancel()` to fan out cancellation to both workers.
+6. Print `timed out: true`, both `.wait()` results, and `w1.isDone()` after `.wait()`.
+
+### Expected Output
+```text
+fast sum: 55
+w1 done before cancel: false
+timed out: true
+worker 1 canceled
+worker 2 canceled
+w1 done after wait: true
+```
+
+<details>
+<summary>Show Solution</summary>
+
+```cleanbasic
+type WorkerTask
+    id as int
+    tok as cancelToken
+end type
+
+fn sumChunk(low as int, high as int) as int
+    dim total = 0
+    for n = low to high
+        total = total + n
+    end for
+    return total
+end fn
+
+fn waitForStop(task as WorkerTask) as str
+    dim ticks = 0
+    while not task.tok.isCanceled()
+        ticks = ticks + 1
+    end while
+    return "worker " + task.id.toStr() + " canceled"
+end fn
+
+fn main()
+    dim tok = cancelToken()
+
+    dim fastJob = start sumChunk(1, 10)
+    try
+        dim fastSum = fastJob.waitTimeout(5000)
+        print("fast sum: " + fastSum.toStr())
+    catch e
+        print("fast job failed: " + e.msg)
+    end try
+
+    dim w1 = start waitForStop(WorkerTask(1, tok))
+    dim w2 = start waitForStop(WorkerTask(2, tok))
+
+    print("w1 done before cancel: " + w1.isDone().toStr())
+
+    dim timedOut = false
+    try
+        dim unused = w1.waitTimeout(15)
+    catch e
+        timedOut = true
+        tok.cancel()
+    end try
+
+    print("timed out: " + timedOut.toStr())
+    print(w1.wait())
+    print(w2.wait())
+    print("w1 done after wait: " + w1.isDone().toStr())
 end fn
 ```
 

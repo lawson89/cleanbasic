@@ -32,9 +32,16 @@ fn worker(id as int) as str
 end fn
 
 fn main()
+    dim tok = cancelToken()
     dim j1 = start worker(1)
     dim j2 = start worker(2)
-    print(j1.wait())
+
+    try
+        print(j1.waitTimeout(5000))
+    catch e
+        tok.cancel()
+        print("timed out: " + e.msg)
+    end try
     print(j2.wait())
 end fn
 ```
@@ -56,11 +63,11 @@ go build -C bootstrap -o cb ./cmd/cb
 - `cb build <file.cb> [-o bin]` — Compile a CleanBasic program into a native executable binary.
 - `cb run <file.cb> [--] [args...]` — Compile and run a CleanBasic program immediately, forwarding trailing arguments and `stdin`.
 
-New to CleanBasic? Start with the [10-Exercise CleanBasic Tutorial](tutorial/README.md).
+New to CleanBasic? Start with the [11-Exercise CleanBasic Tutorial](tutorial/README.md).
 
 ## Example: `cbgrep`
 
-[`examples/cbgrep/main.cb`](examples/cbgrep/main.cb) is a CleanBasic `grep` utility using `std/cli`, `std/fs`, `std/os`, and `std/regex`.
+[`examples/cbgrep/main.cb`](examples/cbgrep/main.cb) is a CleanBasic `grep` utility using `std/cli`, `std/fs`, `std/os`, `std/regex`, and bounded parallel workers (`start` / `job[T]` / `cancelToken` / `waitTimeout`).
 
 ### Supported Flags
 
@@ -70,6 +77,8 @@ New to CleanBasic? Start with the [10-Exercise CleanBasic Tutorial](tutorial/REA
 - `-v`, `--invert-match` — Select non-matching lines
 - `-F`, `--fixed-strings` — Treat pattern as a literal substring instead of a regex
 - `-r`, `--recursive` — Recursively search directories (skipping `.git`)
+- `-q`, `--quiet` — Suppress normal output and cancel remaining workers on first match
+- `-t`, `--timeout <ms>` — Maximum wait time in milliseconds per parallel batch (`0` = no timeout)
 
 ### Running `cbgrep`
 
@@ -94,7 +103,7 @@ go test ./...
 
 ## Documentation
 
-- [10-Exercise CleanBasic Tutorial](tutorial/README.md)
+- [11-Exercise CleanBasic Tutorial](tutorial/README.md)
 - [Language Specification (Go Backend Edition)](docs/cleanbasic_language_specification_go_backend_edition.md)
 - [Self-Hosting Handbook](docs/selfhost/cleanbasic-handbook.md)
 - [Self-Hosting Implementation Plan](docs/selfhost/self-hosting-plan.md)

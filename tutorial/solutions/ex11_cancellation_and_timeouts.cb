@@ -1,0 +1,50 @@
+type WorkerTask
+    id as int
+    tok as cancelToken
+end type
+
+fn sumChunk(low as int, high as int) as int
+    dim total = 0
+    for n = low to high
+        total = total + n
+    end for
+    return total
+end fn
+
+fn waitForStop(task as WorkerTask) as str
+    dim ticks = 0
+    while not task.tok.isCanceled()
+        ticks = ticks + 1
+    end while
+    return "worker " + task.id.toStr() + " canceled"
+end fn
+
+fn main()
+    dim tok = cancelToken()
+
+    dim fastJob = start sumChunk(1, 10)
+    try
+        dim fastSum = fastJob.waitTimeout(5000)
+        print("fast sum: " + fastSum.toStr())
+    catch e
+        print("fast job failed: " + e.msg)
+    end try
+
+    dim w1 = start waitForStop(WorkerTask(1, tok))
+    dim w2 = start waitForStop(WorkerTask(2, tok))
+
+    print("w1 done before cancel: " + w1.isDone().toStr())
+
+    dim timedOut = false
+    try
+        dim unused = w1.waitTimeout(15)
+    catch e
+        timedOut = true
+        tok.cancel()
+    end try
+
+    print("timed out: " + timedOut.toStr())
+    print(w1.wait())
+    print(w2.wait())
+    print("w1 done after wait: " + w1.isDone().toStr())
+end fn

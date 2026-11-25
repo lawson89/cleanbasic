@@ -270,6 +270,10 @@ func TestTutorialExercises(t *testing.T) {
 			file:    "ex10_concurrency_jobs.cb",
 			wantOut: "primes in 1..400: 78",
 		},
+		{
+			file:    "ex11_cancellation_and_timeouts.cb",
+			wantOut: "fast sum: 55\nw1 done before cancel: false\ntimed out: true\nworker 1 canceled\nworker 2 canceled\nw1 done after wait: true",
+		},
 	}
 
 	expectedSet := make(map[string]bool, len(cases))

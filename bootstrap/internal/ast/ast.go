@@ -122,7 +122,7 @@ func (t Type) String() string {
 }
 
 func (t Type) IsVoid() bool {
-	return t.Kind == "" || t.Kind == KindVoid
+	return (t.Kind == "" && t.Name == "") || t.Kind == KindVoid
 }
 
 func (t Type) Equals(other Type) bool {

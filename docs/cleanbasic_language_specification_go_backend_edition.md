@@ -20,7 +20,7 @@ The CleanBasic bootstrap transpiler is structured as a clean, multi-package Go p
 
 * **Procedural Purity & Value Semantics:** CleanBasic strictly bans classes, inheritance, exceptions, and raw user pointers. Structs and primitives use value semantics by default, explicit `byref` pointers (`*T`) for mutation, and local/prelude Unified Function Call Syntax (UFCS).
 
-* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are rejected by the parser; empty containers always use typed constructors (`list[T]()` and `dict[K, V]()`).
+* **Streamlined Static Rules (No Bidirectional Inference):** Expressions compute their types strictly bottom-up. Untyped empty collection literals (`[]`, `{}`) are rejected by the parser; empty containers and tokens always use typed zero-argument constructors (`list[T]()`, `dict[K, V]()`, and `cancelToken()`).
 
 * **English-Over-Symbols:** C-style logical operators (`&&`, `||`, `!`) are forbidden at the lexer level and replaced with `and`, `or`, and `not`.
 
@@ -107,7 +107,7 @@ PostfixExpr     ::= PrimaryExpr
 PrimaryExpr     ::= Literal | QualifiedIdent | StartExpr | TypedEmptyCtor | "(" Expr ")"
 StartExpr       ::= "start" PostfixExpr   (* PostfixExpr must be a CallExpr *)
 
-TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
+TypedEmptyCtor  ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]" | "cancelToken") "(" ")"
 CallArgList     ::= Expr ("," Expr)* [","]
 
 Literal         ::= NumberLiteral | StringLiteral | ByteLiteral
@@ -336,14 +336,50 @@ CleanBasic provides panic-free, data-race-free concurrency built around `start` 
   * **Returning `list` and `dict` is Safe:** Because a `job[T]` finishes before `.wait()` returns and `job[T]` itself is non-sendable, worker functions may safely construct and return `list[T]`, `dict[K, V]`, or structs containing them.
   * **No `byref`, `can error`, or Mutable Globals:** `start` rejects functions with `byref` parameters, `can error` functions (workers handle errors internally with `try/catch`), and any function that directly or transitively reads or writes a mutable module-level `dim` variable (top-level `const` remains allowed).
 
+```cleanbasic
+type WorkerConfig
+    id as int
+    tok as cancelToken
+end type
+
+fn scanWorker(cfg as WorkerConfig) as str
+    dim step = 0
+    while step < 100
+        if cfg.tok.isCanceled()
+            return "worker " + cfg.id.toStr() + " canceled"
+        end if
+        step = step + 1
+    end while
+    return "worker " + cfg.id.toStr() + " finished"
+end fn
+
+fn main()
+    dim tok = cancelToken()
+    dim j1 = start scanWorker(WorkerConfig(1, tok))
+    dim j2 = start scanWorker(WorkerConfig(2, tok))
+
+    if not j1.isDone()
+        try
+            dim res = j1.waitTimeout(25)
+            print(res)
+        catch e
+            tok.cancel()
+        end try
+    end if
+
+    print(j1.wait())
+    print(j2.wait())
+end fn
+```
+
 ### 7. Pure Value Structs & Recursive Trees (`list[T]`)
 
 User-defined `type` structs map 1:1 to native Go value structs with zero hidden pointer indirection:
 
-* Structs are always passed and assigned by value, guaranteeing value-copy isolation and zero-nil safety (with `dict` fields recursively auto-initialized on zero-initialized `dim s as S` and `S()`).
+* Structs are always passed and assigned by value, guaranteeing value-copy isolation and zero-nil safety (with `dict` and `cancelToken` fields recursively auto-initialized on zero-initialized `dim s as S` and `S()`).
 * Direct or mutually recursive value cycles (e.g. `Node -> Node` or `Expr <-> Block`) are rejected at compile time with a clear diagnostic.
 * Recursive trees, ASTs, and linked structures model child nodes using `list[T]` (or `dict[K, T]`), which provide fixed-size reference headers in Go.
-* Structs containing `list` or `dict` fields cannot be compared directly with raw `==` or `!=`.
+* Structs containing `list`, `dict`, `job`, `cancelToken`, `err`, or opaque `= go` fields cannot be compared directly with raw `==` or `!=`.
 ### 8. Deterministic Standard-Library Build Workspace
 
 When running `cb build` or `cb run`, the CLI maintains a deterministic standard-library Go build workspace at `<userCacheDir>/cleanbasic/work-default/go.mod` (falling back to `os.TempDir()`), writing each transpiled `main.go` into a temporary `job-*` subdirectory inside that workspace for fast `go build` execution.
