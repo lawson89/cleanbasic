@@ -4,6 +4,7 @@ go import "fmt"
 go import "io"
 go import "os"
 go import "os/exec"
+go import "runtime" as cb_std_os_runtime
 go import "slices"
 
 public type ExecResult
@@ -91,6 +92,10 @@ func cbStdOsCacheDir() string {
 	}
 	return dir
 }
+
+func cbStdOsPlatform() string {
+	return cb_std_os_runtime.GOOS
+}
 end go
 
 public fn args() as list[str] = go "cbStdOsArgs"
@@ -105,3 +110,4 @@ public fn writeStdout(msg as str) = go "cbStdOsWriteStdout"
 public fn execInDir(dir as str, cmd as str, args as list[str]) as int can error = go "cbStdOsExecInDir"
 public fn cacheDir() as str = go "cbStdOsCacheDir"
 public fn executable() as str can error = go "os.Executable"
+public fn platform() as str = go "cbStdOsPlatform"

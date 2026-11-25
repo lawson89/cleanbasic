@@ -20,6 +20,9 @@
 // EXPECT_OUT: writeStdout=ab
 // EXPECT_OUT: sorted=alpha,beta,gamma:1,2,3
 // EXPECT_OUT: structDict=10:20
+// EXPECT_OUT: platformNonEmpty=true
+// EXPECT_OUT: atomic=v1:v1:v2:true
+// EXPECT_OUT: rename=false:true:v2
 
 import "std/fs"
 import "std/os"
@@ -158,6 +161,34 @@ fn main() as int
     dim bag2 = Bag()
     bag2.scores["y"] = 20
     print("structDict=" + bag1.scores["x"].toStr() + ":" + bag2.scores["y"].toStr())
+
+    print("platformNonEmpty=" + (os.platform().len() > 0).toStr())
+
+    dim atomicDir = dir + "/atomic_sub"
+    dim atomicFile = atomicDir + "/data.txt"
+    dim renamedFile = atomicDir + "/moved.txt"
+    try
+        fs.mkdirAll(atomicDir)
+        fs.writeFileAtomic(atomicFile, "v1")
+        dim a1 = fs.readFile(atomicFile)
+        fs.writeFileAtomic(atomicFile, "v1")
+        dim a2 = fs.readFile(atomicFile)
+        fs.writeFileAtomic(atomicFile, "v2")
+        dim a3 = fs.readFile(atomicFile)
+        dim atomicEntries = fs.listDir(atomicDir)
+        dim noLeftoverTmp = atomicEntries.len() == 1 and atomicEntries[0] == "data.txt"
+        print("atomic=" + a1 + ":" + a2 + ":" + a3 + ":" + noLeftoverTmp.toStr())
+
+        fs.rename(atomicFile, renamedFile)
+        dim oldGone = fs.exists(atomicFile)
+        dim newExists = fs.exists(renamedFile)
+        dim movedContent = fs.readFile(renamedFile)
+        print("rename=" + oldGone.toStr() + ":" + newExists.toStr() + ":" + movedContent)
+        fs.removeAll(atomicDir)
+    catch e
+        print("atomic/rename error: " + e.msg)
+        return 1
+    end try
 
     return 0
 end fn

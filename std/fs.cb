@@ -1,3 +1,4 @@
+go import "bytes"
 go import "os"
 go import "path/filepath"
 
@@ -52,6 +53,46 @@ func cbStdFsJoin(a, b string) string {
 func cbStdFsMkdirTemp(pattern string) (string, error) {
 	return os.MkdirTemp("", pattern)
 }
+
+func cbStdFsWriteFileAtomic(path string, content string) error {
+	data := []byte(content)
+	existing, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(existing, data) {
+		return nil
+	}
+
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		if current, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(current, data) {
+			return nil
+		}
+		return err
+	}
+	cleanupTmp = false
+	return nil
+}
 end go
 
 public fn readFile(path as str) as str can error = go "cbStdFsReadFile"
@@ -71,3 +112,5 @@ public fn mkdirTemp(pattern as str) as str can error = go "cbStdFsMkdirTemp"
 public fn mkdirTempIn(dir as str, pattern as str) as str can error = go "os.MkdirTemp"
 public fn removeAll(path as str) can error = go "os.RemoveAll"
 public fn rel(basePath as str, targPath as str) as str can error = go "filepath.Rel"
+public fn rename(oldPath as str, newPath as str) can error = go "os.Rename"
+public fn writeFileAtomic(path as str, content as str) can error = go "cbStdFsWriteFileAtomic"

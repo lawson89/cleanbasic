@@ -191,7 +191,7 @@ end defer
 
 ## 4. Standard Library API Reference
 
-### 4.1 `std/fs` (17 public functions)
+### 4.1 `std/fs` (19 public functions)
 
 | Function | Signature | Notes |
 | :--- | :--- | :--- |
@@ -212,8 +212,10 @@ end defer
 | `mkdirTempIn` | `(dir as str, pattern as str) as str can error` | `os.MkdirTemp(dir, pattern)` |
 | `removeAll` | `(path as str) can error` | `os.RemoveAll` |
 | `rel` | `(basePath as str, targPath as str) as str can error` | `filepath.Rel` |
+| `rename` | `(oldPath as str, newPath as str) can error` | `os.Rename` |
+| `writeFileAtomic` | `(path as str, content as str) can error` | Skips write if unchanged; temp file + `os.Rename` |
 
-### 4.2 `std/os` (12 public functions + `ExecResult`)
+### 4.2 `std/os` (13 public functions + `ExecResult`)
 
 ```cleanbasic
 public type ExecResult
@@ -237,6 +239,7 @@ end type
 | `execInDir` | `(dir as str, cmd as str, args as list[str]) as int can error` | Streams stdio, returns exit code |
 | `cacheDir` | `() as str` | `os.UserCacheDir()` (fallback `os.TempDir()`) |
 | `executable` | `() as str can error` | `os.Executable` |
+| `platform` | `() as str` | `runtime.GOOS` (e.g., `"linux"`, `"darwin"`, `"windows"`) |
 
 ### 4.3 `std/cli` (`Parser`, `ParsedArgs`, 10 public functions)
 

@@ -386,5 +386,5 @@ When running `cb build` or `cb run`, the CLI maintains a deterministic standard-
 
 ### 9. Standard Library Highlights (`std/fs`, `std/os`)
 
-* **`std/fs`**: File I/O and path helpers including `fs.rel(basePath as str, targPath as str) as str can error` (wrapping `filepath.Rel`), `fs.join`, `fs.base`, `fs.dir`, `fs.ext`, `fs.clean`, `fs.abs`, `fs.exists`, `fs.isDir`, `fs.isSymlink`, `fs.readFile`, `fs.writeFile`, `fs.listDir`, `fs.mkdirAll`, `fs.mkdirTemp`, `fs.mkdirTempIn`, and `fs.removeAll`.
-* **`std/os`**: Process, environment, and path helpers including `os.executable() as str can error` (wrapping `os.Executable`), `os.args`, `os.exit`, `os.getEnv`, `os.cwd`, `os.cacheDir`, `os.exec`, `os.execInDir`, `os.readStdin`, `os.writeStdout`, `os.eprint`, and `os.eprintln`.
+* **`std/fs`**: File I/O and path helpers including `fs.rel(basePath as str, targPath as str) as str can error` (wrapping `filepath.Rel`), `fs.join`, `fs.base`, `fs.dir`, `fs.ext`, `fs.clean`, `fs.abs`, `fs.exists`, `fs.isDir`, `fs.isSymlink`, `fs.readFile`, `fs.writeFile`, `fs.writeFileAtomic`, `fs.rename`, `fs.listDir`, `fs.mkdirAll`, `fs.mkdirTemp`, `fs.mkdirTempIn`, and `fs.removeAll`.
+* **`std/os`**: Process, environment, and path helpers including `os.executable() as str can error` (wrapping `os.Executable`), `os.platform() as str`, `os.args`, `os.exit`, `os.getEnv`, `os.cwd`, `os.cacheDir`, `os.exec`, `os.execInDir`, `os.readStdin`, `os.writeStdout`, `os.eprint`, and `os.eprintln`.

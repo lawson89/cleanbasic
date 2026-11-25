@@ -31,11 +31,13 @@ This document specifies the architecture, module layout, Flat Arena AST (`AstAre
 
 ### 1.3 Completed Pre-Self-Hosting Ergonomic Improvements
 
-Four language and stdlib improvements were landed specifically to make `selfhost/` clean and idiomatic:
+Six language and stdlib improvements were landed specifically to make `selfhost/` clean, idiomatic, and 100% pure CleanBasic without inline Go blocks:
 1. **`fs.mkdirTempIn(dir, pattern)`** (`std/fs.cb`): Creates temporary build directories inside `os.cacheDir()` or a target workspace.
 2. **`os.writeStdout(msg)`** (`std/os.cb`): Writes raw strings to stdout without a trailing newline (essential for `cb emit` stdout mode or raw diagnostics).
 3. **`list.sort()`** (`sema/builtins.go`, `codegen/exprs.go`): In-place `slices.Sort` on `list[int]`, `list[float]`, `list[str]`, and `list[byte]`, enabling deterministic sorted `import` and declaration emission.
 4. **Recursive Struct `dict` Auto-Initialization** (`codegen/codegen.go`, `codegen/stmts.go`): Zero-initialized structs (`dim a as AstArena`, `AstArena()`, and error-return zero values) recursively initialize all `dict` fields—eliminating manual map initialization boilerplate across `AstArena`, `Scope`, and `ModuleInfo`.
+5. **`os.platform()`** (`std/os.cb`): Returns `runtime.GOOS` (e.g. `"linux"`, `"darwin"`, `"windows"`) so `defaultBuildOutputPath` and `runExec` can append `.exe` on Windows in pure CleanBasic.
+6. **`fs.rename(oldPath, newPath)` & `fs.writeFileAtomic(path, content)`** (`std/fs.cb`): Enables race-safe, idempotent `go.mod` synchronization in `prepareBuildJob` without inline `go ... end go` blocks.
 
 ---
 
@@ -1113,7 +1115,7 @@ fn formatImportLines(ctx as EmitCtx) as list[str]
     - `build <file.cb> [-o <bin>]` -> defaults `outPath` to `filepath.Base(filePath)` without extension (or `"a.out"` if empty), resolves `absOut`, prepares temp job dir, runs `go build -o <absOut> .`, cleans up temp dir.
     - `run <file.cb> [args...]` -> strips optional `--` separator after `file.cb`, compiles `cbprog` (or `cbprog.exe` on Windows) in temp job dir, executes it forwarding stdin/stdout/stderr, propagates child exit code.
     - Missing args / unknown flag / unknown command / missing `-o` value -> prints error + usage to stderr, returns `2`.
-  - **Shared Build Workspace:** `os.UserCacheDir()` + `cleanbasic/work-default`, `syncFileIfChanged("go.mod", "module cbmain\n\ngo 1.23\n")`, `os.MkdirTemp(workspaceDir, "job-*")` with `defer os.RemoveAll(jobDir)`.
+  - **Shared Build Workspace:** `os.cacheDir()` + `cleanbasic/work-default`, `fs.writeFileAtomic("go.mod", "module cbmain\n\ngo 1.23\n")`, `fs.mkdirTempIn(workspaceDir, "job-*")` with `defer fs.removeAll(jobDir)`.
 
 #### CleanBasic Design & Key Types/Functions
 ```cleanbasic
@@ -1139,7 +1141,8 @@ fn printUsage()
 #### Parity & Behavior Checklist
 - CLI flag parsing matches `bootstrap/cmd/cb/main.go` (`check`, `emit`, `build`, `run`, `-h`, `--help`, `help`, `-o <path>`, `--`, exit codes `0`, `1`, `2`).
 - `runEmit` uses `os.writeStdout(goCode)` when `-o` is omitted (no extra trailing newline added by `print`).
-- `prepareBuildJob` uses `os.cacheDir()` -> `fs.join(..., "cleanbasic/work-default")`, `fs.mkdirAll`, `syncFileIfChanged`, `fs.mkdirTempIn(workspaceDir, "job-*")`, and cleans up `jobDir` with `defer` + `try/catch` around `fs.removeAll`.
+- `prepareBuildJob` uses `os.cacheDir()` -> `fs.join(..., "cleanbasic/work-default")`, `fs.mkdirAll`, `fs.writeFileAtomic`, `fs.mkdirTempIn(workspaceDir, "job-*")`, and cleans up `jobDir` with `defer` + `try/catch` around `fs.removeAll`.
+- `defaultBuildOutputPath` and `runExec` use `os.platform() == "windows"` to append `.exe` / `a.exe` / `cbprog.exe` without inline Go.
 - `runGoBuildInDir` invokes `os.execInDir(jobDir, "go", ["build", "-o", absOut, "."])`.
 
 #### CleanBasic Translation Notes / Gotchas
