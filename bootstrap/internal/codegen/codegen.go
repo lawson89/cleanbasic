@@ -80,6 +80,9 @@ type emitter struct {
 	usedDictContains   bool
 	usedJob            bool
 	usedVoidJob        bool
+	usedJobTimeout     bool
+	usedVoidJobTimeout bool
+	usedCancelToken    bool
 	currentFn          *ast.FnDecl
 	currentTryID       int
 	tryCounter         int
@@ -345,6 +348,9 @@ func (e *emitter) goSemaType(t sema.Type) string {
 		}
 		e.usedJob = true
 		return fmt.Sprintf("*cbJob[%s]", e.goSemaType(t.Elem()))
+	case sema.KindCancelToken:
+		e.usedCancelToken = true
+		return "*cbCancelToken"
 	default:
 		return "any"
 	}
@@ -363,7 +369,7 @@ func (e *emitter) structNeedsFieldInit(s *sema.StructSymbol) bool {
 	}
 	for _, f := range s.Fields {
 		switch f.Type.Kind {
-		case sema.KindDict:
+		case sema.KindDict, sema.KindCancelToken:
 			return true
 		case sema.KindStruct:
 			if e.structNeedsFieldInit(e.lookupStruct(f.Type)) {
@@ -391,6 +397,9 @@ func (e *emitter) emitZeroStruct(t sema.Type) string {
 		switch f.Type.Kind {
 		case sema.KindDict:
 			inits = append(inits, fmt.Sprintf("%s: %s{}", f.Name, e.goSemaType(f.Type)))
+		case sema.KindCancelToken:
+			e.usedCancelToken = true
+			inits = append(inits, fmt.Sprintf("%s: cbNewCancelToken()", f.Name))
 		case sema.KindStruct:
 			if e.structNeedsFieldInit(e.lookupStruct(f.Type)) {
 				inits = append(inits, fmt.Sprintf("%s: %s", f.Name, e.emitZeroStruct(f.Type)))
@@ -416,6 +425,9 @@ func (e *emitter) goSemaZeroValue(t sema.Type) string {
 		return "nil"
 	case sema.KindList, sema.KindDict, sema.KindJob:
 		return "nil"
+	case sema.KindCancelToken:
+		e.usedCancelToken = true
+		return "cbNewCancelToken()"
 	case sema.KindEnum:
 		return e.goSemaType(t) + "(0)"
 	case sema.KindStruct:

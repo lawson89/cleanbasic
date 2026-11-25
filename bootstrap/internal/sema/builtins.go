@@ -164,8 +164,24 @@ func (a *analyzer) inferBuiltinMethodCall(e *ast.CallExpr, recvExpr ast.Expr, re
 			return t, true, err
 		}
 	case KindJob:
-		if method == "wait" {
+		switch method {
+		case "wait":
 			t, err := a.finishBuiltinCall(e, recvExpr, "job.wait", recvType.Elem(), scope)
+			return t, true, err
+		case "isDone":
+			t, err := a.finishBuiltinCall(e, recvExpr, "job.isDone", BoolType, scope)
+			return t, true, err
+		case "waitTimeout":
+			t, err := a.finishFallibleBuiltinCall(e, recvExpr, "job.waitTimeout", recvType.Elem(), scope, IntType)
+			return t, true, err
+		}
+	case KindCancelToken:
+		switch method {
+		case "cancel":
+			t, err := a.finishBuiltinCall(e, recvExpr, "cancelToken.cancel", VoidType, scope)
+			return t, true, err
+		case "isCanceled":
+			t, err := a.finishBuiltinCall(e, recvExpr, "cancelToken.isCanceled", BoolType, scope)
 			return t, true, err
 		}
 	}

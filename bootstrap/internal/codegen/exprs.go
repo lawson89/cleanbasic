@@ -83,6 +83,19 @@ func (e *emitter) emitBuiltinCall(ex *ast.CallExpr, ci *sema.CallInfo) string {
 		return fmt.Sprintf("int64(%s)", e.emitExpr(ci.Receiver))
 	case "job.wait":
 		return fmt.Sprintf("%s.wait()", e.emitExpr(ci.Receiver))
+	case "job.isDone":
+		return fmt.Sprintf("%s.isDone()", e.emitExpr(ci.Receiver))
+	case "job.waitTimeout":
+		if ci.Receiver.ExprType().Elem().IsVoid() {
+			e.usedVoidJobTimeout = true
+		} else {
+			e.usedJobTimeout = true
+		}
+		return fmt.Sprintf("%s.waitTimeout(%s)", e.emitExpr(ci.Receiver), e.emitExpr(ex.Args[0]))
+	case "cancelToken.cancel":
+		return fmt.Sprintf("%s.cancel()", e.emitExpr(ci.Receiver))
+	case "cancelToken.isCanceled":
+		return fmt.Sprintf("%s.isCanceled()", e.emitExpr(ci.Receiver))
 	case "int.toStr":
 		e.useImport("strconv")
 		return fmt.Sprintf("strconv.FormatInt(%s, 10)", e.emitExpr(ci.Receiver))
@@ -164,6 +177,10 @@ func (e *emitter) emitExpr(expr ast.Expr) string {
 		return fmt.Sprintf("%s{%s}", goT, strings.Join(entries, ", "))
 
 	case *ast.TypedEmptyCtorExpr:
+		if ex.ExprType().Kind == sema.KindCancelToken {
+			e.usedCancelToken = true
+			return "cbNewCancelToken()"
+		}
 		return fmt.Sprintf("%s{}", e.goSemaType(ex.ExprType()))
 
 	case *ast.FieldAccessExpr:

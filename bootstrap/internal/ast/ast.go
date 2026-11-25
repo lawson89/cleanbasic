@@ -35,18 +35,19 @@ type Expr interface {
 type TypeKind string
 
 const (
-	KindVoid   TypeKind = "void"
-	KindInt    TypeKind = "int"
-	KindFloat  TypeKind = "float"
-	KindStr    TypeKind = "str"
-	KindBool   TypeKind = "bool"
-	KindByte   TypeKind = "byte"
-	KindStruct TypeKind = "struct"
-	KindEnum   TypeKind = "enum"
-	KindList   TypeKind = "list"
-	KindDict   TypeKind = "dict"
-	KindJob    TypeKind = "job"
-	KindErr    TypeKind = "err"
+	KindVoid        TypeKind = "void"
+	KindInt         TypeKind = "int"
+	KindFloat       TypeKind = "float"
+	KindStr         TypeKind = "str"
+	KindBool        TypeKind = "bool"
+	KindByte        TypeKind = "byte"
+	KindStruct      TypeKind = "struct"
+	KindEnum        TypeKind = "enum"
+	KindList        TypeKind = "list"
+	KindDict        TypeKind = "dict"
+	KindJob         TypeKind = "job"
+	KindCancelToken TypeKind = "cancelToken"
+	KindErr         TypeKind = "err"
 )
 
 // Type represents a syntactic or resolved semantic type in CleanBasic.
@@ -81,13 +82,14 @@ func (t Type) Val() Type {
 }
 
 var (
-	VoidType  = Type{Kind: KindVoid}
-	IntType   = Type{Kind: KindInt}
-	FloatType = Type{Kind: KindFloat}
-	StrType   = Type{Kind: KindStr}
-	BoolType  = Type{Kind: KindBool}
-	ByteType  = Type{Kind: KindByte}
-	ErrType   = Type{Kind: KindErr}
+	VoidType        = Type{Kind: KindVoid}
+	IntType         = Type{Kind: KindInt}
+	FloatType       = Type{Kind: KindFloat}
+	StrType         = Type{Kind: KindStr}
+	BoolType        = Type{Kind: KindBool}
+	ByteType        = Type{Kind: KindByte}
+	CancelTokenType = Type{Kind: KindCancelToken}
+	ErrType         = Type{Kind: KindErr}
 )
 
 func (t Type) String() string {

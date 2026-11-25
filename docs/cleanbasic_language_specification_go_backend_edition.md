@@ -121,6 +121,7 @@ Type            ::= "int" | "float" | "str" | "bool" | "byte" | "err"
                   | "list" "[" Type "]"
                   | "dict" "[" Type "," Type "]"
                   | "job" ["[" Type "]"]
+                  | "cancelToken"
                   | QualifiedIdent
 
 IdentList       ::= Identifier ("," Identifier)*
@@ -140,7 +141,7 @@ Every `.cb` file is implicitly a module. Everything is private by default; the `
 
 * **Go Identifier Mapping & Native Go Interop:** Entry-module declarations and struct fields emit 1:1 with their exact CleanBasic names (Go keywords and reserved Go identifiers are rejected by the parser); imported module declarations emit with module-qualified names (`<sanitizedModuleId>__<name>`, e.g., `entities_hero__Player`). Native Go interop uses `go import "pkg" [as alias]`, verbatim top-level `go ... end go` blocks, `[public] type Name = go "GoType"`, and `[public] fn name(...) ... = go "target"` (supporting native `error` returns for `can error` bindings).
 
-* **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `float`, `bool`, `byte`, `list`, `dict`, `job`, `err`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
+* **Defining-Module & Local UFCS:** Unified Function Call Syntax (`obj.method(arg)`) resolves against the **built-in prelude** (`str`, `int`, `float`, `bool`, `byte`, `list`, `dict`, `job`, `cancelToken`, `err`), functions declared in the **current module**, and `public fn`s declared in the **defining module** of `obj`'s `type` or `enum`. Unrelated external module functions must still be called with their explicit module alias (`mod.helper(arg)`).
 
 **player.cb (The Library Module)**
 
@@ -164,7 +165,7 @@ end fn
 
 CleanBasic enforces strict bottom-up type inference:
 
-* **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim j as job[int]`), zero-initializing primitives/lists/jobs, initializing `dict` to an empty writable map, and recursively initializing `dict` fields on zero-initialized structs (`dim s as MyStruct` and 0-arg `MyStruct()`). Top-level `[public] dim` declarations are also supported for module-level mutable state.
+* **Inferred & Zero-Initialized Declarations:** `dim x = 10` and `dim hero = player.Player("Alice", 10)` infer their type directly from the right-hand expression. `dim` may also omit `= Expr` when an explicit `as Type` is given (`dim x as int`, `dim m as dict[str, int]`, `dim j as job[int]`, `dim tok as cancelToken`), zero-initializing primitives/lists/jobs, initializing `dict` to an empty writable map and `cancelToken` (or `cancelToken()`) to an active token, and recursively initializing `dict` and `cancelToken` fields on zero-initialized structs (`dim s as MyStruct` and 0-arg `MyStruct()`). Top-level `[public] dim` declarations are also supported for module-level mutable state.
 
 * **Explicit Empty Collections:** Untyped `[]` and `{}` literals are rejected by the parser. Empty containers always use typed constructors (`dim scores = dict[str, int]()` and `dim items = list[str]()`).
 
@@ -313,19 +314,25 @@ end fn
 
 ```
 
-### 6. Race-Free Concurrency (`start`, `job[T]`, `.wait()`)
+### 6. Race-Free Concurrency (`start`, `job[T]`, `.wait()`, `waitTimeout`, `isDone`, `cancelToken`)
 
-CleanBasic provides panic-free, data-race-free concurrency built around `start` expressions, typed `job[T]` (and void `job`) handles, and `.wait()`:
+CleanBasic provides panic-free, data-race-free concurrency built around `start` expressions, typed `job[T]` (and void `job`) handles, timed/non-blocking waits, and explicit cooperative `cancelToken` cancellation:
 
 * **Starting Background Jobs (`start` Expression):**
   * `start fnCall(...)` launches `fnCall(...)` in a background goroutine and immediately returns a handle of type `job[T]` (if `fnCall` returns `T`) or `job` (if `fnCall` returns `void`).
   * `start` is a primary expression, so it can be assigned (`dim j = start work(x)`), appended to a list (`jobs.push(start work(i))`), or used as a standalone statement (`start notify()`).
   * **Eager Argument Capture:** All arguments (including a UFCS receiver) are evaluated and copied on the caller goroutine *before* the worker goroutine starts, preventing loop-variable and post-`start` mutation races.
-* **Waiting for Results (`.wait()`):**
-  * `j.wait()` blocks until the job completes and returns `T` (or `void` for `job`).
-  * `.wait()` is infallible, idempotent (safe to call multiple times), and nil-safe on zero-initialized `dim j as job[T]` (returns the zero value of `T` without panicking).
+* **Waiting & Polling (`.wait()`, `.waitTimeout(ms)`, `.isDone()`):**
+  * `j.wait()` blocks until the job completes and returns `T` (or `void` for `job`). It is infallible, idempotent, and nil-safe on zero-initialized `dim j as job[T]` (returns the zero value of `T`).
+  * `j.waitTimeout(ms as int) [as T] can error` waits up to `ms` milliseconds. If the job finishes in time (or `j` is zero-initialized), it returns the result immediately; otherwise it raises a timeout `err` (enforcing the standard fallible statement-root rule so callers can `try ... catch e` and move on without hanging on a stuck worker).
+  * `j.isDone() as bool` is a non-blocking poll returning `true` if the job has completed (or is zero-initialized) and `false` while running.
+* **Cooperative Cancellation (`cancelToken`):**
+  * `dim tok as cancelToken` (or `dim tok = cancelToken()`) creates a ready-to-use cancellation token; `cancelToken` fields inside structs are also auto-initialized recursively.
+  * `tok.cancel()` signals cancellation idempotently and safely from any goroutine (without requiring `byref`).
+  * `tok.isCanceled() as bool` performs a lock-free atomic check suitable for tight `for`/`while` loops.
+  * `cancelToken` is non-comparable (`==` / `!=` rejected) and sendable across `start`—either directly or inside value structs—allowing both single-worker and multi-worker fan-out cancellation from one `tok.cancel()`.
 * **Compile-Time Race-Free Isolation Rules:**
-  * **Value-Only Arguments:** Every argument passed to `start` (including UFCS receivers) must be sendable: primitives (`int`, `float`, `str`, `bool`, `byte`), `err`, `enum`, and non-`go` `type` structs whose fields are all recursively sendable. Passing `list[T]`, `dict[K, V]`, `job[T]`, opaque `= go` types, or structs containing them is rejected at compile time.
+  * **Value-Only Arguments:** Every argument passed to `start` (including UFCS receivers) must be sendable: primitives (`int`, `float`, `str`, `bool`, `byte`), `err`, `enum`, `cancelToken`, and non-`go` `type` structs whose fields are all recursively sendable. Passing `list[T]`, `dict[K, V]`, `job[T]`, opaque `= go` types, or structs containing them is rejected at compile time.
   * **Returning `list` and `dict` is Safe:** Because a `job[T]` finishes before `.wait()` returns and `job[T]` itself is non-sendable, worker functions may safely construct and return `list[T]`, `dict[K, V]`, or structs containing them.
   * **No `byref`, `can error`, or Mutable Globals:** `start` rejects functions with `byref` parameters, `can error` functions (workers handle errors internally with `try/catch`), and any function that directly or transitively reads or writes a mutable module-level `dim` variable (top-level `const` remains allowed).
 

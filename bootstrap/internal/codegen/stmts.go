@@ -26,7 +26,9 @@ func (e *emitter) emitZeroOrInitVarDecl(sb *strings.Builder, varGo string, d *as
 	switch d.Type.Kind {
 	case ast.KindDict:
 		sb.WriteString(fmt.Sprintf("%svar %s %s = %s{}\n", indent, varGo, goType, goType))
-
+	case ast.KindCancelToken:
+		e.usedCancelToken = true
+		sb.WriteString(fmt.Sprintf("%svar %s %s = cbNewCancelToken()\n", indent, varGo, goType))
 	case ast.KindStruct:
 		if e.structNeedsFieldInit(e.lookupStruct(*d.Type)) {
 			sb.WriteString(fmt.Sprintf("%svar %s %s = %s\n", indent, varGo, goType, e.emitZeroStruct(*d.Type)))

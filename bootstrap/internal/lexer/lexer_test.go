@@ -27,6 +27,7 @@ func TestTwoWordKeywords(t *testing.T) {
 		"start",
 		"mailbox",
 		"job",
+		"cancelToken",
 	}, "\n")
 
 	toks, err := Tokenize(src, "keywords.cb")
@@ -51,6 +52,7 @@ func TestTwoWordKeywords(t *testing.T) {
 		token.START, token.NEWLINE,
 		token.IDENT, token.NEWLINE,
 		token.JOB, token.NEWLINE,
+		token.CANCEL_TOKEN, token.NEWLINE,
 		token.EOF,
 	}
 

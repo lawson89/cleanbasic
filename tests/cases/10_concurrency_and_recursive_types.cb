@@ -9,6 +9,10 @@
 // EXPECT_OUT: zero_wait=0
 // EXPECT_OUT: repeat=42:42
 // EXPECT_OUT: void_done=true
+// EXPECT_OUT: is_done=true:true
+// EXPECT_OUT: fast_timeout=42:void_ok
+// EXPECT_OUT: cancel_timeout=false:true:99:true
+// EXPECT_OUT: fanout_cancel=true:11:21
 
 type TreeNode
     val as int
@@ -29,6 +33,11 @@ end type
 type BoxedPair
     a as int
     b as int
+end type
+
+type WorkerConfig
+    id as int
+    tok as cancelToken
 end type
 
 fn bumpVal(byref n as TreeNode, v as int)
@@ -58,6 +67,18 @@ fn addOne(x as int) as int
 end fn
 
 fn touchVoid()
+end fn
+
+fn waitForCancel(tok as cancelToken) as int
+    while not tok.isCanceled()
+    end while
+    return 99
+end fn
+
+fn fanoutWorker(cfg as WorkerConfig) as int
+    while not cfg.tok.isCanceled()
+    end while
+    return cfg.id
 end fn
 
 fn main() as int
@@ -131,6 +152,45 @@ fn main() as int
     vj.wait()
     vj.wait()
     print("void_done=true")
+
+    // 8. job.isDone() on zero-initialized and completed jobs
+    print("is_done=" + nilJob.isDone().toStr() + ":" + repJob.isDone().toStr())
+
+    // 9. job.waitTimeout(ms) succeeding on fast typed and void jobs
+    dim fastJob = start doubleVal(21)
+    dim fastVoid = start touchVoid()
+    try
+        dim fastRes = fastJob.waitTimeout(5000)
+        fastVoid.waitTimeout(5000)
+        print("fast_timeout=" + fastRes.toStr() + ":void_ok")
+    catch e
+        print("fast_timeout_err=" + e.msg)
+    end try
+
+    // 10. Cooperative cancellation + deterministic waitTimeout + idempotent cancel()
+    dim tok as cancelToken
+    dim slowJob = start waitForCancel(tok)
+    dim beforeDone = slowJob.isDone()
+    dim timedOut = false
+    try
+        dim unused = slowJob.waitTimeout(15)
+    catch e
+        timedOut = true
+        tok.cancel()
+        tok.cancel()
+    end try
+    dim slowRes = slowJob.wait()
+    print("cancel_timeout=" + beforeDone.toStr() + ":" + timedOut.toStr() + ":" + slowRes.toStr() + ":" + slowJob.isDone().toStr())
+
+    // 11. Fan-out cancellation via zero-initialized cancelToken inside value struct
+    dim cfg = WorkerConfig(11, cancelToken())
+    dim cfg2 = WorkerConfig()
+    cfg2.id = 21
+    cfg2.tok = cfg.tok
+    dim w1 = start fanoutWorker(cfg)
+    dim w2 = start fanoutWorker(cfg2)
+    cfg.tok.cancel()
+    print("fanout_cancel=" + cfg.tok.isCanceled().toStr() + ":" + w1.wait().toStr() + ":" + w2.wait().toStr())
 
     return 0
 end fn

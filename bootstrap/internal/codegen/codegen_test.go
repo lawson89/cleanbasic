@@ -1075,3 +1075,94 @@ func TestEdgeCasesOpaqueGoTypePushEvalShadowAndMinInt64(t *testing.T) {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 }
+
+func TestEmitGoCancelTokenAndJobTimeout(t *testing.T) {
+	isDoneOnlySrc := strings.Join([]string{
+		"fn work() as int",
+		"    return 7",
+		"end fn",
+		"fn main() as int",
+		"    dim j = start work()",
+		"    dim v = j.wait()",
+		"    if j.isDone()",
+		"        return v - 7",
+		"    end if",
+		"    return 1",
+		"end fn",
+	}, "\n")
+	prog1, err := sema.AnalyzeSource(isDoneOnlySrc, "isdone_only.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	go1, err := EmitGoWithOptions(prog1, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGoWithOptions failed: %v", err)
+	}
+	for _, unwanted := range []string{`"time"`, `"sync"`, `"sync/atomic"`, "_cb_atomic", "cbCancelToken", "waitTimeout"} {
+		if strings.Contains(go1, unwanted) {
+			t.Errorf("did not expect %q when cancelToken and waitTimeout are unused, got:\n%s", unwanted, go1)
+		}
+	}
+
+	fullSrc := strings.Join([]string{
+		"const atomic = 42",
+		"type Cfg",
+		"    tok as cancelToken",
+		"end type",
+		"fn waitCancel(tok as cancelToken) as int",
+		"    while not tok.isCanceled()",
+		"    end while",
+		"    return atomic",
+		"end fn",
+		"fn fastVoid()",
+		"end fn",
+		"fn main() as int",
+		"    dim cfg = Cfg()",
+		"    dim j = start waitCancel(cfg.tok)",
+		"    dim runningDone = j.isDone()",
+		"    dim timedOut = false",
+		"    try",
+		"        dim unused = j.waitTimeout(15)",
+		"    catch e",
+		"        timedOut = true",
+		"        cfg.tok.cancel()",
+		"        cfg.tok.cancel()",
+		"    end try",
+		"    dim res = j.wait()",
+		"    dim vj = start fastVoid()",
+		"    try",
+		"        vj.waitTimeout(5000)",
+		"    catch e",
+		"        return 1",
+		"    end try",
+		`    print(runningDone.toStr() + ":" + timedOut.toStr() + ":" + res.toStr() + ":" + j.isDone().toStr() + ":" + cfg.tok.isCanceled().toStr())`,
+		"    return 0",
+		"end fn",
+	}, "\n")
+	prog2, err := sema.AnalyzeSource(fullSrc, "cancel_timeout_race.cb")
+	if err != nil {
+		t.Fatalf("AnalyzeSource failed: %v", err)
+	}
+	go2, err := EmitGoWithOptions(prog2, Options{EmitLineDirectives: false})
+	if err != nil {
+		t.Fatalf("EmitGoWithOptions failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	mainPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(mainPath, []byte(go2), 0o600); err != nil {
+		t.Fatalf("write temp main.go: %v", err)
+	}
+	cmd := exec.Command("go", "run", "-race", mainPath)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run -race failed: %v\nstderr:\n%s\ngo:\n%s", err, errBuf.String(), go2)
+	}
+	got := strings.TrimSpace(outBuf.String())
+	want := "false:true:42:true:true"
+	if got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}

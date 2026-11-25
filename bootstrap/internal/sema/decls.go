@@ -174,7 +174,7 @@ func (a *analyzer) validateStructFieldTypes() error {
 
 func (a *analyzer) structReaches(t Type, target *StructSymbol, visited map[string]bool) bool {
 	switch t.Kind {
-	case KindList, KindDict, KindJob:
+	case KindList, KindDict, KindJob, KindCancelToken:
 		return false
 	case KindStruct:
 		s := a.lookupStruct(t)
@@ -393,7 +393,7 @@ func (a *analyzer) validateType(t Type) error {
 
 func (a *analyzer) resolveTypeNodes(t Type) (Type, error) {
 	switch t.Kind {
-	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindStruct, KindEnum:
+	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindCancelToken, KindStruct, KindEnum:
 		return t, nil
 	case KindList:
 		elem, err := a.resolveTypeNodes(t.SubTypes[0])

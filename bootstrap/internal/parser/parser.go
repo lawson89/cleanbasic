@@ -112,10 +112,11 @@ var goPredeclaredWords = map[string]bool{
 	"fmt": true, "int64": true, "len": true, "make": true,
 	"new": true, "nil": true, "os": true, "panic": true, "println": true,
 	"recover": true, "rune": true, "slices": true, "strconv": true, "string": true,
-	"strings": true,
+	"strings": true, "sync": true, "time": true,
 	"_cb_os":  true,
 	"cb_main": true, "cbDictGet": true, "cbDictContains": true,
 	"cbJob": true, "cbStartJob": true, "cbVoidJob": true, "cbStartVoidJob": true,
+	"cbCancelToken": true, "cbNewCancelToken": true,
 }
 
 func isGoReservedIdent(name string) bool {
@@ -568,7 +569,7 @@ func (p *Parser) parseType() (ast.Type, error) {
 	defer p.leaveDepth()
 	tok := p.cur()
 	switch tok.Kind {
-	case token.INT, token.FLOAT, token.STR, token.BOOL, token.BYTE, token.ERR:
+	case token.INT, token.FLOAT, token.STR, token.BOOL, token.BYTE, token.ERR, token.CANCEL_TOKEN:
 		p.advance()
 		return ast.Type{
 			Pos:  tok.Pos,
@@ -1317,7 +1318,7 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 		p.advance()
 		return &ast.IdentExpr{Pos: tok.Pos, Name: tok.Lexeme}, nil
 
-	case token.LIST, token.DICT:
+	case token.LIST, token.DICT, token.CANCEL_TOKEN:
 		return p.parseTypedEmptyCtor()
 
 	case token.START:
@@ -1345,7 +1346,7 @@ func (p *Parser) parsePrimaryExpr() (ast.Expr, error) {
 	}
 }
 
-// TypedEmptyCtor ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]") "(" ")"
+// TypedEmptyCtor ::= ("list" "[" Type "]" | "dict" "[" Type "," Type "]" | "cancelToken") "(" ")"
 func (p *Parser) parseTypedEmptyCtor() (ast.Expr, error) {
 	startPos := p.cur().Pos
 	ctorType, err := p.parseType()

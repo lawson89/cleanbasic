@@ -484,3 +484,41 @@ func TestParseMinInt64AndOverflowLiterals(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCancelTokenAndReservedWords(t *testing.T) {
+	src := strings.Join([]string{
+		"fn worker(tok as cancelToken) as int",
+		"    if tok.isCanceled()",
+		"        return 0",
+		"    end if",
+		"    return 1",
+		"end fn",
+		"fn main() as int",
+		"    dim tok as cancelToken",
+		"    dim tok2 = cancelToken()",
+		"    dim j = start worker(tok)",
+		"    dim done = j.isDone()",
+		"    try",
+		"        dim v = j.waitTimeout(50)",
+		"        print(v.toStr())",
+		"    catch e",
+		"        tok.cancel()",
+		"        tok2.cancel()",
+		"    end try",
+		"    if done",
+		"        return 0",
+		"    end if",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	if _, err := Parse(src, "cancel_token.cb"); err != nil {
+		t.Fatalf("expected cancelToken and job timeout syntax to parse cleanly, got: %v", err)
+	}
+
+	for _, word := range []string{"cbCancelToken", "cbNewCancelToken", "sync", "time"} {
+		badSrc := "fn main()\n    dim " + word + " = 1\nend fn\n"
+		if _, err := Parse(badSrc, "reserved_cancel.cb"); err == nil || !strings.Contains(err.Error(), "cannot use Go reserved word") {
+			t.Fatalf("expected reserved word error for %q, got: %v", word, err)
+		}
+	}
+}

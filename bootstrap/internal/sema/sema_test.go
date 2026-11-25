@@ -1215,3 +1215,83 @@ func TestFindStdlibFileHardening(t *testing.T) {
 		t.Fatalf("findStdlibFile hijacked by untrusted ancestor %q", rogueFile)
 	}
 }
+
+func TestCancelTokenAndJobTimeoutSema(t *testing.T) {
+	goodSrc := strings.Join([]string{
+		"type WorkerCfg",
+		"    id as int",
+		"    tok as cancelToken",
+		"end type",
+		"const SHARED_TOK = cancelToken()",
+		"fn worker(cfg as WorkerCfg) as int",
+		"    if cfg.tok.isCanceled()",
+		"        return cfg.id",
+		"    end if",
+		"    return cfg.id + 1",
+		"end fn",
+		"fn voidWorker(tok as cancelToken)",
+		"    tok.cancel()",
+		"end fn",
+		"fn main() as int",
+		"    dim cfg = WorkerCfg()",
+		"    dim j = start worker(cfg)",
+		"    dim vj = start voidWorker(SHARED_TOK)",
+		"    dim done = j.isDone()",
+		"    try",
+		"        dim ans = j.waitTimeout(100)",
+		"        vj.waitTimeout(100)",
+		"        if done",
+		"            return ans",
+		"        end if",
+		"    catch e",
+		"        cfg.tok.cancel()",
+		"        SHARED_TOK.cancel()",
+		"        print(e.msg)",
+		"    end try",
+		"    return 0",
+		"end fn",
+	}, "\n")
+	if _, err := AnalyzeSource(goodSrc, "cancel_ok.cb"); err != nil {
+		t.Fatalf("expected valid cancelToken and waitTimeout program to pass sema, got: %v", err)
+	}
+
+	errCases := []struct {
+		name    string
+		src     string
+		wantSub string
+	}{
+		{
+			name:    "waitTimeout outside try/can error",
+			src:     "fn w() as int\n    return 1\nend fn\nfn main()\n    dim j = start w()\n    dim x = j.waitTimeout(10)\nend fn\n",
+			wantSub: "must be inside a 'try' block or a 'can error' function",
+		},
+		{
+			name:    "void waitTimeout outside try/can error",
+			src:     "fn w()\nend fn\nfn main()\n    dim j = start w()\n    j.waitTimeout(10)\nend fn\n",
+			wantSub: "must be inside a 'try' block or a 'can error' function",
+		},
+		{
+			name:    "waitTimeout nested in expression",
+			src:     "fn w() as int\n    return 1\nend fn\nfn main()\n    dim j = start w()\n    try\n        dim x = 1 + j.waitTimeout(10)\n    catch e\n    end try\nend fn\n",
+			wantSub: "may only appear as a top-level statement expression",
+		},
+		{
+			name:    "waitTimeout wrong arg type",
+			src:     "fn w() as int\n    return 1\nend fn\nfn main()\n    dim j = start w()\n    try\n        dim x = j.waitTimeout(true)\n    catch e\n    end try\nend fn\n",
+			wantSub: "job.waitTimeout() argument 1 must be int, got bool",
+		},
+		{
+			name:    "cancelToken equality rejected",
+			src:     "fn main()\n    dim a as cancelToken\n    dim b as cancelToken\n    dim eq = (a == b)\nend fn\n",
+			wantSub: "cannot be compared",
+		},
+	}
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := AnalyzeSource(tc.src, tc.name+".cb")
+			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantSub, err)
+			}
+		})
+	}
+}

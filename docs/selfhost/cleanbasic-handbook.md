@@ -18,12 +18,13 @@ This handbook is a practical, codebase-grounded reference for writing the self-h
 | `err` | `error` | `nil` | No |
 | `list[T]` | `[]Go(T)` | `nil` (safe for `.len()`, `.push()`, `for-in`) | No |
 | `dict[K, V]` | `map[Go(K)]Go(V)` | `make` / `map[K]V{}` (non-nil, ready for writes) | No |
-| `job[T]` / `job` | `*cbJob[Go(T)]` / `*cbVoidJob` | `nil` (nil-safe `.wait()`) | No |
+| `job[T]` / `job` | `*cbJob[Go(T)]` / `*cbVoidJob` | `nil` (nil-safe `.wait()`, `.isDone()`, `.waitTimeout()`) | No |
+| `cancelToken` | `*cbCancelToken` | `cbNewCancelToken()` (non-nil, ready to use) | No |
 | `type S` (struct) | `S` (or `<mod>__S`) | `S{}` with recursive `dict` auto-init | Yes, if all fields are comparable and not `= go` |
 | `enum E` | `int64`-backed `type E int64` | `E(0)` (first declared variant) | Yes |
 
 > **Recursive Struct Field Auto-Initialization:**
-> In `bootstrap/internal/codegen/codegen.go` (`structNeedsFieldInit` / `emitZeroStruct`) and `stmts.go` (`emitZeroOrInitVarDecl`), any zero-initialized CleanBasic struct—whether created via `dim s as S`, `S()` (0-arg constructor), or an error-return zero value—automatically initializes all `dict` fields to `map[K]V{}`, **recursively** through nested struct fields. You do **not** need manual `s.table = dict[str, int]()` boilerplate for struct-owned dictionaries.
+> In `bootstrap/internal/codegen/codegen.go` (`structNeedsFieldInit` / `emitZeroStruct`) and `stmts.go` (`emitZeroOrInitVarDecl`), any zero-initialized CleanBasic struct—whether created via `dim s as S`, `S()` (0-arg constructor), or an error-return zero value—automatically initializes all `dict` fields to `map[K]V{}` and `cancelToken` fields to `cbNewCancelToken()`, **recursively** through nested struct fields. You do **not** need manual `s.table = dict[str, int]()` boilerplate for struct-owned dictionaries.
 
 ### 1.2 Indexing & Slicing
 
@@ -68,6 +69,10 @@ Verified against `bootstrap/internal/sema/builtins.go` and `bootstrap/internal/s
 | `byte` | `.toInt()` | `() as int` | `int64(b)` |
 | `byte` | `.toStr()` | `() as str` | `strconv.FormatInt(int64(b), 10)` |
 | `job[T]` / `job` | `.wait()` | `() as T` / `()` | `j.wait()` |
+| `job[T]` / `job` | `.isDone()` | `() as bool` | `j.isDone()` |
+| `job[T]` / `job` | `.waitTimeout(ms)` | `(int) as T can error` / `(int) can error` | `j.waitTimeout(ms)` |
+| `cancelToken` | `.cancel()` | `()` | `t.cancel()` |
+| `cancelToken` | `.isCanceled()` | `() as bool` | `t.isCanceled()` |
 | `err` | `.msg` | field `str` | `e.Error()` |
 
 ---
@@ -122,7 +127,7 @@ Verified against `bootstrap/internal/sema/stmts.go` (`checkMutableTarget`):
 
 When evaluating `target.name(args...)` (`bootstrap/internal/sema/exprs.go` `inferMethodOrUFCSCall`):
 1. **Module-qualified call:** If `target` is an imported module alias, resolve `mod.StructName(...)` or `mod.fnName(...)` (requires `public`).
-2. **Built-in method:** Check built-in methods on `target`'s type (`list`, `dict`, `str`, `int`, `float`, `bool`, `byte`, `job`).
+2. **Built-in method:** Check built-in methods on `target`'s type (`list`, `dict`, `str`, `int`, `float`, `bool`, `byte`, `job`, `cancelToken`).
 3. **Current module UFCS:** Look up `name` in the current module's functions where `params[0].Type.Equals(recvType)`.
 4. **Defining module UFCS:** If `target`'s type was defined in another module `M`, look up `public fn name` in `M` where `params[0].Type.Equals(recvType)`.
 
@@ -303,11 +308,11 @@ Because `dict[k]` is **not addressable**, you cannot pass `symTable[name]` to `b
 
 ### 5.5 Forbidden Go Reserved Words (`bootstrap/internal/parser/parser.go`)
 
-The bootstrap parser rejects Go keywords in **all** identifier positions (including struct fields/methods via `expectMemberIdent`), and rejects all 43 Go/runtime reserved words plus the `_cb_` identifier prefix in variable/function/type/param positions via `expectIdent`:
+The bootstrap parser rejects Go keywords in **all** identifier positions (including struct fields/methods via `expectMemberIdent`), and rejects all 47 Go/runtime reserved words plus the `_cb_` identifier prefix in variable/function/type/param positions via `expectIdent`:
 
 - **`goKeywords` (12 — forbidden everywhere, even member names):**
   `chan`, `default`, `fallthrough`, `func`, `goto`, `interface`, `map`, `package`, `range`, `struct`, `switch`, `var`
-- **`goPredeclaredWords` (31 — combined with `goKeywords` for 43 total reserved words, plus any identifier starting with `_cb_`, forbidden as top-level/local/param/type/fn identifiers):**
-  `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `os`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`, `_cb_os`, `cb_main`, `cbDictGet`, `cbDictContains`, `cbJob`, `cbStartJob`, `cbVoidJob`, `cbStartVoidJob`
+- **`goPredeclaredWords` (35 — combined with `goKeywords` for 47 total reserved words, plus any identifier starting with `_cb_`, forbidden as top-level/local/param/type/fn identifiers):**
+  `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `os`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`, `sync`, `time`, `_cb_os`, `cb_main`, `cbDictGet`, `cbDictContains`, `cbJob`, `cbStartJob`, `cbVoidJob`, `cbStartVoidJob`, `cbCancelToken`, `cbNewCancelToken`
 
 > **Tip:** Avoid `str`, `type`, `fn`, `err`, `len`, `map`, `range`, `default`, `var`, `func`, `error`, `string` when naming variables or struct fields in `selfhost/`. Prefer `ty`, `fnSym`, `errMsg`, `count`, `table`, `isRange`, `defVal`, `text`.

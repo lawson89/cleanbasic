@@ -111,7 +111,7 @@ lexer --> token
 
 ### 3.2 Complete CleanBasic `AstArena` Blueprint
 
-All identifiers below are chosen to avoid CleanBasic keywords, all 43 Go/runtime reserved words (`goKeywords` / `goPredeclaredWords`), and the reserved `_cb_` prefix.
+All identifiers below are chosen to avoid CleanBasic keywords, all 47 Go/runtime reserved words (`goKeywords` / `goPredeclaredWords`), and the reserved `_cb_` prefix.
 
 ```cleanbasic
 // selfhost/ast.cb — Flat Arena AST & Symbol Pool Blueprint
@@ -472,18 +472,18 @@ Each module below follows the acyclic import DAG in Section 2 and maps 1-to-1 to
 - **Source File:** `bootstrap/internal/token/token.go` (213 LOC)
 - **Key Types:**
   - `Position` (`File string`, `Line int`, `Column int`, 1-based) with `Position.String()` returning `file:line:col` (or `line:col` if `File == ""`).
-  - `Kind` (`string`): **83 token kinds** grouped into:
+  - `Kind` (`string`): **84 token kinds** grouped into:
     - Special (2): `EOF`, `NEWLINE`.
     - Identifiers & Literals (7): `IDENT`, `INT_LIT`, `FLOAT_LIT`, `STRING_LIT`, `BYTE_LIT`, `TRUE`, `FALSE`.
     - Single-word Keywords (27): `IMPORT`, `AS`, `PUBLIC`, `CONST`, `DIM`, `TYPE`, `ENUM`, `FN`, `GO`, `BYREF`, `IF`, `ELSE`, `FOR`, `TO`, `IN`, `WHILE`, `CASE`, `TRY`, `CATCH`, `DEFER`, `RETURN`, `BREAK`, `CONTINUE`, `AND`, `OR`, `NOT`, `START`.
-    - Built-in Type / Container Keywords (9): `INT`, `FLOAT`, `STR`, `BOOL`, `BYTE`, `ERR`, `LIST`, `DICT`, `JOB`.
+    - Built-in Type / Container Keywords (10): `INT`, `FLOAT`, `STR`, `BOOL`, `BYTE`, `ERR`, `LIST`, `DICT`, `JOB`, `CANCEL_TOKEN`.
     - Transitional Single Words (3): `END`, `SELECT`, `CAN`.
     - Two-word Coalesced Keywords (14): `ELSE_IF`, `END_FN`, `END_IF`, `END_FOR`, `END_WHILE`, `END_SELECT`, `END_TRY`, `END_DEFER`, `END_TYPE`, `END_ENUM`, `GO_IMPORT`, `SELECT_CASE`, `CASE_ELSE`, `CAN_ERROR`.
     - Verbatim Go Block (1): `GO_BLOCK`.
     - Operators & Punctuation (20): `ASSIGN`, `EQ`, `NEQ`, `LT`, `GT`, `LTE`, `GTE`, `PLUS`, `MINUS`, `STAR`, `SLASH`, `PERCENT`, `DOT`, `COMMA`, `COLON`, `LPAREN`, `RPAREN`, `LBRACKET`, `RBRACKET`, `LBRACE`, `RBRACE`.
   - `Token` (`Kind Kind`, `Lexeme string`, `Pos Position`).
 - **Core Functions & Tables:**
-  - `singleWordKeywords`: `map[string]Kind` with **41 entries** (27 keywords + 9 built-in types + 3 transitional words + `true`/`false`).
+  - `singleWordKeywords`: `map[string]Kind` with **42 entries** (27 keywords + 10 built-in types + 3 transitional words + `true`/`false`).
   - `twoWordKeywords`: `map[twoWordKey]Kind` with **14 pairs**.
   - `LookupIdent(word string) Kind` and `CoalesceTwoWordKeyword(first, second string) (Kind, string, bool)`.
 
@@ -491,7 +491,7 @@ Each module below follows the acyclic import DAG in Section 2 and maps 1-to-1 to
 - Define `public enum Kind` with unambiguous `Tok*` variant names (avoiding CleanBasic keywords and Go reserved words like `type`, `func`, `map`, `range`, `switch`, `default`, `error`):
   - `TokEOF`, `TokNewline`, `TokIdent`, `TokIntLit`, `TokFloatLit`, `TokStrLit`, `TokByteLit`, `TokTrue`, `TokFalse`
   - `TokImport`, `TokAs`, `TokPublic`, `TokConst`, `TokDim`, `TokType`, `TokEnum`, `TokFn`, `TokGo`, `TokByref`, `TokIf`, `TokElse`, `TokFor`, `TokTo`, `TokIn`, `TokWhile`, `TokCase`, `TokTry`, `TokCatch`, `TokDefer`, `TokReturn`, `TokBreak`, `TokContinue`, `TokAnd`, `TokOr`, `TokNot`, `TokStart`
-  - `TokInt`, `TokFloat`, `TokStr`, `TokBool`, `TokByte`, `TokErr`, `TokList`, `TokDict`, `TokJob`
+  - `TokInt`, `TokFloat`, `TokStr`, `TokBool`, `TokByte`, `TokErr`, `TokList`, `TokDict`, `TokJob`, `TokCancelToken`
   - `TokEnd`, `TokSelect`, `TokCan`
   - `TokElseIf`, `TokEndFn`, `TokEndIf`, `TokEndFor`, `TokEndWhile`, `TokEndSelect`, `TokEndTry`, `TokEndDefer`, `TokEndType`, `TokEndEnum`, `TokGoImport`, `TokSelectCase`, `TokCaseElse`, `TokCanError`
   - `TokGoBlock`
@@ -604,7 +604,7 @@ fn coalesceKeywords(raw as list[token.Token]) as list[token.Token]
 - **Key Types:**
   - `Program` (`File string`, `Decls []TopLevelDecl`).
   - Interfaces: `TopLevelDecl`, `Statement`, `Expr`.
-  - Type System: `TypeKind` (12 kinds), `Type` (`Kind`, `Name`, `ModuleID`, `GoName`, `SubTypes []Type`), `Elem()`, `Key()`, `Val()`, `String()`, `IsVoid()`, `Equals(other)`, plus primitive constants (`VoidType`, `IntType`, `FloatType`, `StrType`, `BoolType`, `ByteType`, `ErrType`).
+  - Type System: `TypeKind` (13 kinds), `Type` (`Kind`, `Name`, `ModuleID`, `GoName`, `SubTypes []Type`), `Elem()`, `Key()`, `Val()`, `String()`, `IsVoid()`, `Equals(other)`, plus primitive constants (`VoidType`, `IntType`, `FloatType`, `StrType`, `BoolType`, `ByteType`, `CancelTokenType`, `ErrType`).
   - Symbol Structs: `ParamSymbol`, `FnSymbol`, `FieldSymbol`, `StructSymbol`, `EnumSymbol`, `CallKind` (5 kinds), `CallInfo`.
   - Decl Nodes (8): `ImportDecl`, `GoImportDecl`, `GoBlockDecl`, `ConstDecl`, `TypeDecl`, `EnumDecl`, `FnDecl`, `VarDecl` (implements both `TopLevelDecl` and `Statement`).
   - Stmt Nodes (13): `VarDecl`, `Assignment`, `ExprStmt`, `IfStmt`, `ForStmt` (range + for-in), `WhileStmt`, `SelectStmt`, `TryCatchStmt`, `DeferStmt`, `ReturnStmt`, `BreakStmt`, `ContinueStmt`.
@@ -665,7 +665,7 @@ public fn typeString(a as AstArena, typeId as int) as str
 - **Subtle Invariants:**
   - **Go Reserved Word Enforcement:**
     - `goKeywords` (**12** words): `chan`, `default`, `fallthrough`, `func`, `goto`, `interface`, `map`, `package`, `range`, `struct`, `switch`, `var`. Checked in `expectMemberIdent` (struct field names, enum variants, and `.` member access).
-    - `goPredeclaredWords` (**31** words = 23 Go predeclared/stdlib names `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `os`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings` + 8 runtime/internal names `_cb_os`, `cb_main`, `cbDictGet`, `cbDictContains`, `cbJob`, `cbStartJob`, `cbVoidJob`, `cbStartVoidJob`) plus any identifier with the `_cb_` prefix (**43** total words). Checked in `expectIdent` (all variable, param, const, type, enum, fn, alias, and primary identifier positions).
+    - `goPredeclaredWords` (**35** words = 25 Go predeclared/stdlib names `any`, `append`, `close`, `copy`, `delete`, `error`, `errors`, `float64`, `fmt`, `int64`, `len`, `make`, `new`, `nil`, `os`, `panic`, `println`, `recover`, `rune`, `slices`, `strconv`, `string`, `strings`, `sync`, `time` + 10 runtime/internal names `_cb_os`, `cb_main`, `cbDictGet`, `cbDictContains`, `cbJob`, `cbStartJob`, `cbVoidJob`, `cbStartVoidJob`, `cbCancelToken`, `cbNewCancelToken`) plus any identifier with the `_cb_` prefix (**47** total words). Checked in `expectIdent` (all variable, param, const, type, enum, fn, alias, and primary identifier positions).
   - **Operator Precedence Ladder (lowest to highest):**
     - Level 1: `or`
     - Level 2: `and`
@@ -705,11 +705,11 @@ fn parsePrimaryExpr(byref a as AstArena, byref p as Parser) as int can error
 ```
 
 #### Parity & Behavior Checklist
-- Exact same 12 `goKeywords`, 31 `goPredeclaredWords` (43 total), and `_cb_` prefix rule with error message: `"cannot use Go reserved word \"" + lexeme + "\" as an identifier"`.
+- Exact same 12 `goKeywords`, 35 `goPredeclaredWords` (47 total), and `_cb_` prefix rule with error message: `"cannot use Go reserved word \"" + lexeme + "\" as an identifier"`.
 - All top-level forms supported: `import "..." [as alias]`, `go import "..." [as alias]`, `GO_BLOCK`, `[public] const`, `[public] dim`, `[public] type Name = go "GoType"`, `[public] type Name ... end type`, `[public] enum Name ... end enum`, `[public] fn ... [as T] [can error] = go "Target"`, `[public] fn ... end fn`.
 - `for` disambiguates `for i = start to end` vs `for x in iter` vs `for k, v in iter`.
 - `parsePostfixExpr` handles `target[:]`, `target[start:]`, `target[:end]`, `target[start:end]`, and `target[index]`.
-- `parseTypedEmptyCtor` handles `list[T]()` and `dict[K, V]()`.
+- `parseTypedEmptyCtor` handles `list[T]()`, `dict[K, V]()`, and `cancelToken()`.
 
 #### CleanBasic Translation Notes / Gotchas
 - **`cur` / `peek` / `advance`:** Check `p.pos + offset >= p.tokens.len()` and return the final `TokEOF` token so out-of-bounds panics never occur.
@@ -794,8 +794,8 @@ fn findStdlibFile(rootDir as str, modPath as str) as str
   - Scope & Type Helpers: `NewScope`, `Scope.Define`, `Scope.Lookup`, `lookupStruct`, `isComparableType`.
   - Declaration & Type Resolution: `predeclareType`, `resolveTypeDecl`, `checkRecursiveStructFields`, `validateStructFieldTypes`, `structReaches`, `resolveEnumDecl`, `registerFnDecl`, `resolveVarDeclType`, `registerTopLevelVar`, `analyzeTopLevelConst`, `analyzeTopLevelVar`, `resolveType`, `validateType`, `resolveTypeNodes`.
 - **Subtle Invariants:**
-  - **Recursive Value Struct Cycle Detection:** `structReaches(t, target, visited)` returns `false` for `KindList`, `KindDict`, and `KindJob`, and recursively traverses `KindStruct` fields (skipping `IsGoType`) to reject direct or mutually recursive value struct fields (`type Node ... next as Node`).
-  - **`isComparableType` / `isSendableType`:** `isComparableType` returns `true` for `int`, `float`, `str`, `byte`, `bool`, `enum`, and non-`go` `struct` types whose fields are all recursively comparable; `isSendableType` returns `true` for those plus `err`, and `false` for `void`, `list`, `dict`, `job`, and `type ... = go "..."`.
+  - **Recursive Value Struct Cycle Detection:** `structReaches(t, target, visited)` returns `false` for `KindList`, `KindDict`, `KindJob`, and `KindCancelToken`, and recursively traverses `KindStruct` fields (skipping `IsGoType`) to reject direct or mutually recursive value struct fields (`type Node ... next as Node`).
+  - **`isComparableType` / `isSendableType`:** `isComparableType` returns `true` for `int`, `float`, `str`, `byte`, `bool`, `enum`, and non-`go` `struct` types whose fields are all recursively comparable (returning `false` for `cancelToken`); `isSendableType` returns `true` for those plus `err` and `cancelToken`, and `false` for `void`, `list`, `dict`, `job`, and `type ... = go "..."`.
   - **`validateStructFieldTypes`:** Runs **after** `checkRecursiveStructFields` (Pass 0.6) so `isComparableType` on `dict[K, V]` fields never infinite-loops on cyclic structs.
   - **Function & Param Validation:** `registerFnDecl` checks duplicate param names, resolves param/return types, sets `goName = a.mod.symbolGoName(fn.Name)` (or `"cb_main"` for entry `main`, or `fn.GoTarget` for `= go "..."`), and rejects `byref` on `go`-bound functions.
 
@@ -861,7 +861,8 @@ public fn registerFnDecl(byref a as ast.AstArena, modId as int, declId as int) c
     - `float`: `toStr() -> str`.
     - `bool`: `toStr() -> str`.
     - `byte`: `toInt() -> int`, `toStr() -> str`.
-    - `job[T]` / `job`: `wait() -> T` (or `void`).
+    - `job[T]` / `job`: `wait() -> T` (or `void`), `isDone() -> bool`, `waitTimeout(int) -> T` (**fallible**, or `void`).
+    - `cancelToken`: `cancel() -> void`, `isCanceled() -> bool`.
   - **UFCS 3-Step Lookup Order:** On `recv.method(args...)`:
     1. If `recv` is an import alias (`ExprIdent` matching `mod.imports`), resolve module-qualified function `imp.funcs[method]` (must be `isPublic`).
     2. Otherwise infer `recv`'s type and check `inferBuiltinMethodCall`.
@@ -997,7 +998,7 @@ fn analyzeTopLevelVar(byref a as ast.AstArena, byref ctx as sema_types.SemaCtx, 
 - **Subtle Invariants:**
   - **Deterministic Imports:** `useImport` / `useGoImport` record imports during body emission; `formatImportLines()` deduplicates and sorts them lexicographically before emitting `package main` + `import (...)` at the top.
   - **Unmangled Identifiers & `cb_main()` Wrapper:** Entry module symbols are unmangled, except `main` which is emitted as `cb_main()`. If entry `main` returns `int64`, emit `func main() { if code := cb_main(); code != 0 { _cb_os.Exit(int(code)) } }` (and record `_cb_os "os"` import); if `void`, emit `func main() { cb_main() }`.
-  - **Recursive Struct `dict` Auto-Initialization:** `structNeedsFieldInit` recursively checks if a struct has any `dict` or nested struct field needing init; `emitZeroStruct` emits `TypeName{field: map[K]V{}}` for zero-init `dim`, zero-arg `TypeName()`, and error-return zero values, and `runtime.go` emits `cbJob[T]` / `cbVoidJob` on demand with eager-argument IIFE wrappers for `start`.
+  - **Recursive Struct `dict` & `cancelToken` Auto-Initialization:** `structNeedsFieldInit` recursively checks if a struct has any `dict`, `cancelToken`, or nested struct field needing init; `emitZeroStruct` emits `TypeName{field: map[K]V{}}` / `cbNewCancelToken()` for zero-init `dim`, zero-arg `TypeName()`, and error-return zero values, and `runtime.go` emits `cbJob[T]` / `cbVoidJob` (with `isDone()` and on-demand `waitTimeout(ms)`) and `cbCancelToken` / `cbNewCancelToken()` on demand with eager-argument IIFE wrappers for `start`.
   - **On-Demand Runtime Helpers:** `cbDictGet` and `cbDictContains` are generic Go helpers emitted **only** when `usedDictGet` or `usedDictContains` is `true`.
   - **Column-1 `//line` Directives:** Emitted before each statement when `emitLineDirectives` is true and `pos.File != ""` and `pos.File != "<memory>"` and `pos.Line > 0`: `//line <slashPath>:<line>\n` (must start at column 1 with forward slashes).
   - **`try/catch` Label Guard:** Emits `var _cb_tryErr_N error`, `_ = _cb_tryErr_N`, `tryBody` block, `if false { goto _cb_catch_N }` (prevents Go `label _cb_catch_N defined and not used` when `tryBody` has no fallible calls), `goto _cb_end_try_N`, `_cb_catch_N:`, `catchBody`, `_cb_end_try_N:`.

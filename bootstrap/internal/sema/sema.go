@@ -14,31 +14,33 @@ import (
 type TypeKind = ast.TypeKind
 
 const (
-	KindVoid   = ast.KindVoid
-	KindInt    = ast.KindInt
-	KindFloat  = ast.KindFloat
-	KindStr    = ast.KindStr
-	KindBool   = ast.KindBool
-	KindByte   = ast.KindByte
-	KindStruct = ast.KindStruct
-	KindEnum   = ast.KindEnum
-	KindList   = ast.KindList
-	KindDict   = ast.KindDict
-	KindJob    = ast.KindJob
-	KindErr    = ast.KindErr
+	KindVoid        = ast.KindVoid
+	KindInt         = ast.KindInt
+	KindFloat       = ast.KindFloat
+	KindStr         = ast.KindStr
+	KindBool        = ast.KindBool
+	KindByte        = ast.KindByte
+	KindStruct      = ast.KindStruct
+	KindEnum        = ast.KindEnum
+	KindList        = ast.KindList
+	KindDict        = ast.KindDict
+	KindJob         = ast.KindJob
+	KindCancelToken = ast.KindCancelToken
+	KindErr         = ast.KindErr
 )
 
 // Type represents a resolved semantic type in CleanBasic.
 type Type = ast.Type
 
 var (
-	VoidType  = ast.VoidType
-	IntType   = ast.IntType
-	FloatType = ast.FloatType
-	StrType   = ast.StrType
-	BoolType  = ast.BoolType
-	ByteType  = ast.ByteType
-	ErrType   = ast.ErrType
+	VoidType        = ast.VoidType
+	IntType         = ast.IntType
+	FloatType       = ast.FloatType
+	StrType         = ast.StrType
+	BoolType        = ast.BoolType
+	ByteType        = ast.ByteType
+	CancelTokenType = ast.CancelTokenType
+	ErrType         = ast.ErrType
 )
 
 // ParamSymbol, FnSymbol, FieldSymbol, StructSymbol, EnumSymbol, CallKind, and CallInfo
@@ -278,7 +280,7 @@ func (a *analyzer) validateStartJobIsolation() error {
 
 func (a *analyzer) isSendableType(t Type, visited map[string]bool) bool {
 	switch t.Kind {
-	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindEnum:
+	case KindInt, KindFloat, KindStr, KindBool, KindByte, KindErr, KindEnum, KindCancelToken:
 		return true
 	case KindStruct:
 		sym := a.lookupStruct(t)
@@ -308,7 +310,7 @@ func (a *analyzer) isComparableType(t Type) bool {
 	switch t.Kind {
 	case KindInt, KindFloat, KindStr, KindByte, KindBool, KindEnum:
 		return true
-	case KindVoid, KindList, KindDict, KindJob, KindErr:
+	case KindVoid, KindList, KindDict, KindJob, KindCancelToken, KindErr:
 		return false
 	case KindStruct:
 		sym := a.lookupStruct(t)

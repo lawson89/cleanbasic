@@ -42,6 +42,18 @@ func (j *cbJob[T]) wait() T {
 	return j.val
 }
 
+func (j *cbJob[T]) isDone() bool {
+	if j == nil {
+		return true
+	}
+	select {
+	case <-j.done:
+		return true
+	default:
+		return false
+	}
+}
+
 `
 
 	cbVoidJobRuntimeHelper = `type cbVoidJob struct {
@@ -64,6 +76,98 @@ func (j *cbVoidJob) wait() {
 	<-j.done
 }
 
+func (j *cbVoidJob) isDone() bool {
+	if j == nil {
+		return true
+	}
+	select {
+	case <-j.done:
+		return true
+	default:
+		return false
+	}
+}
+
+`
+
+	cbJobTimeoutRuntimeHelper = `func (j *cbJob[T]) waitTimeout(ms int64) (T, error) {
+	if j == nil {
+		var zero T
+		return zero, nil
+	}
+	select {
+	case <-j.done:
+		return j.val, nil
+	default:
+	}
+	if ms <= 0 {
+		var zero T
+		return zero, fmt.Errorf("job timed out after %d ms", ms)
+	}
+	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-j.done:
+		return j.val, nil
+	case <-timer.C:
+		var zero T
+		return zero, fmt.Errorf("job timed out after %d ms", ms)
+	}
+}
+
+`
+
+	cbVoidJobTimeoutRuntimeHelper = `func (j *cbVoidJob) waitTimeout(ms int64) error {
+	if j == nil {
+		return nil
+	}
+	select {
+	case <-j.done:
+		return nil
+	default:
+	}
+	if ms <= 0 {
+		return fmt.Errorf("job timed out after %d ms", ms)
+	}
+	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-j.done:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("job timed out after %d ms", ms)
+	}
+}
+
+`
+
+	cbCancelTokenRuntimeHelper = `type cbCancelToken struct {
+	canceled _cb_atomic.Bool
+	once     sync.Once
+	done     chan struct{}
+}
+
+func cbNewCancelToken() *cbCancelToken {
+	return &cbCancelToken{done: make(chan struct{})}
+}
+
+func (t *cbCancelToken) cancel() {
+	if t == nil {
+		return
+	}
+	t.once.Do(func() {
+		t.canceled.Store(true)
+		close(t.done)
+	})
+}
+
+func (t *cbCancelToken) isCanceled() bool {
+	if t == nil {
+		return false
+	}
+	return t.canceled.Load()
+}
+
 `
 )
 
@@ -80,6 +184,21 @@ func (e *emitter) emitRuntimeHelpers() string {
 	}
 	if e.usedVoidJob {
 		helpers.WriteString(cbVoidJobRuntimeHelper)
+	}
+	if e.usedJobTimeout {
+		e.useImport("fmt")
+		e.useImport("time")
+		helpers.WriteString(cbJobTimeoutRuntimeHelper)
+	}
+	if e.usedVoidJobTimeout {
+		e.useImport("fmt")
+		e.useImport("time")
+		helpers.WriteString(cbVoidJobTimeoutRuntimeHelper)
+	}
+	if e.usedCancelToken {
+		e.useImport("sync")
+		e.useGoImport("sync/atomic", "_cb_atomic")
+		helpers.WriteString(cbCancelTokenRuntimeHelper)
 	}
 	return helpers.String()
 }

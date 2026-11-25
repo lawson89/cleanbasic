@@ -209,10 +209,10 @@ func (a *analyzer) inferTypedEmptyCtorExpr(e *ast.TypedEmptyCtorExpr, scope *Sco
 		return VoidType, err
 	}
 	switch t.Kind {
-	case KindList, KindDict:
+	case KindList, KindDict, KindCancelToken:
 		return t, nil
 	default:
-		return VoidType, newSemaError(e.Pos, "typed container constructor is only supported for list and dict, got %s", t.String())
+		return VoidType, newSemaError(e.Pos, "typed container constructor is only supported for list, dict, and cancelToken, got %s", t.String())
 	}
 }
 

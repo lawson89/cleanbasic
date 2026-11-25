@@ -63,16 +63,17 @@ const (
 	NOT      Kind = "not"
 
 	// Built-in type / container keywords
-	INT   Kind = "int"
-	FLOAT Kind = "float"
-	STR   Kind = "str"
-	BOOL  Kind = "bool"
-	BYTE  Kind = "byte"
-	ERR   Kind = "err"
-	LIST  Kind = "list"
-	DICT  Kind = "dict"
-	JOB   Kind = "job"
-	START Kind = "start"
+	INT          Kind = "int"
+	FLOAT        Kind = "float"
+	STR          Kind = "str"
+	BOOL         Kind = "bool"
+	BYTE         Kind = "byte"
+	ERR          Kind = "err"
+	LIST         Kind = "list"
+	DICT         Kind = "dict"
+	JOB          Kind = "job"
+	CANCEL_TOKEN Kind = "cancelToken"
+	START        Kind = "start"
 
 	// Helper / transitional single words used before two-word coalescing
 	END    Kind = "end"
@@ -130,47 +131,48 @@ type Token struct {
 }
 
 var singleWordKeywords = map[string]Kind{
-	"true":     TRUE,
-	"false":    FALSE,
-	"import":   IMPORT,
-	"as":       AS,
-	"public":   PUBLIC,
-	"const":    CONST,
-	"dim":      DIM,
-	"type":     TYPE,
-	"enum":     ENUM,
-	"fn":       FN,
-	"go":       GO,
-	"byref":    BYREF,
-	"if":       IF,
-	"else":     ELSE,
-	"for":      FOR,
-	"to":       TO,
-	"in":       IN,
-	"while":    WHILE,
-	"case":     CASE,
-	"try":      TRY,
-	"catch":    CATCH,
-	"defer":    DEFER,
-	"return":   RETURN,
-	"break":    BREAK,
-	"continue": CONTINUE,
-	"and":      AND,
-	"or":       OR,
-	"not":      NOT,
-	"int":      INT,
-	"float":    FLOAT,
-	"str":      STR,
-	"bool":     BOOL,
-	"byte":     BYTE,
-	"err":      ERR,
-	"list":     LIST,
-	"dict":     DICT,
-	"job":      JOB,
-	"start":    START,
-	"end":      END,
-	"select":   SELECT,
-	"can":      CAN,
+	"true":        TRUE,
+	"false":       FALSE,
+	"import":      IMPORT,
+	"as":          AS,
+	"public":      PUBLIC,
+	"const":       CONST,
+	"dim":         DIM,
+	"type":        TYPE,
+	"enum":        ENUM,
+	"fn":          FN,
+	"go":          GO,
+	"byref":       BYREF,
+	"if":          IF,
+	"else":        ELSE,
+	"for":         FOR,
+	"to":          TO,
+	"in":          IN,
+	"while":       WHILE,
+	"case":        CASE,
+	"try":         TRY,
+	"catch":       CATCH,
+	"defer":       DEFER,
+	"return":      RETURN,
+	"break":       BREAK,
+	"continue":    CONTINUE,
+	"and":         AND,
+	"or":          OR,
+	"not":         NOT,
+	"int":         INT,
+	"float":       FLOAT,
+	"str":         STR,
+	"bool":        BOOL,
+	"byte":        BYTE,
+	"err":         ERR,
+	"list":        LIST,
+	"dict":        DICT,
+	"job":         JOB,
+	"cancelToken": CANCEL_TOKEN,
+	"start":       START,
+	"end":         END,
+	"select":      SELECT,
+	"can":         CAN,
 }
 
 type twoWordKey struct {
